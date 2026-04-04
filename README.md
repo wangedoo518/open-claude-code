@@ -2,16 +2,15 @@
 
 ![OpenClaudeCode](open-claude-code.png)
 
-`open-claude-code` 当前是一个围绕桌面壳层、Rust 本地服务和若干实验性前端构建的工作区，而不再是单纯的“还原后的 Claude Code CLI 源码快照”。
+`open-claude-code` 当前是一个围绕桌面壳层与 Rust 本地服务构建的工作区，而不再是单纯的“还原后的 Claude Code CLI 源码快照”。
 
-目前仓库的主线实现主要分成三部分：
+目前仓库的主线实现主要分成两部分：
 
 - `apps/desktop-shell`：Tauri + React 桌面应用壳层
 - `rust/`：桌面壳层依赖的本地 Rust 服务与集成层
-- `apps/desktop-web`：面向浏览器的轻量桌面 API 演示前端
 
 其中 Rust 核心能力已经不再 vendored 在本仓库中，而是固定依赖 [`claw-code-parity`](https://github.com/wangedoo518/claw-code-parity)。
-此前仓库里保留的本地 Python 镜像/恢复代码已经清理完成，当前不再维护第二套重复实现。
+此前仓库里保留的本地 Python 镜像/恢复代码和浏览器态 `desktop-web` 镜像前端都已经清理完成，当前只保留 `desktop-shell` 这一条产品前端主线。
 
 ## 当前状态
 
@@ -30,8 +29,7 @@
 ```text
 open-claude-code/
 ├── apps/
-│   ├── desktop-shell/        # 当前主桌面应用（Tauri + React）
-│   └── desktop-web/          # 浏览器版桌面 API 演示前端
+│   └── desktop-shell/        # 当前主桌面应用（Tauri + React）
 ├── rust/                     # Rust 集成层 workspace
 │   └── crates/
 │       ├── desktop-core/     # 会话、provider、持久化、调度等桌面 domain
@@ -85,11 +83,7 @@ open-claude-code/
 
 这些 crate 通过固定 git revision 依赖 `claw-code-parity`，具体见 [rust/Cargo.toml](rust/Cargo.toml) 和 [rust/README.md](rust/README.md)。
 
-### 3. `apps/desktop-web`
-
-一个更轻量的 Web 前端，用于直接消费 `desktop-server` 暴露的桌面 API，适合做接口联调和浏览器态验证。
-
-### 4. `docs/`
+### 3. `docs/`
 
 包含当前仓库的重要设计和迁移结论，建议优先阅读：
 
@@ -163,14 +157,6 @@ cargo run -p desktop-server
 curl http://127.0.0.1:4357/healthz
 ```
 
-### 浏览器演示前端
-
-```bash
-cd apps/desktop-web
-npm install
-npm run dev
-```
-
 ## 验证命令
 
 当前仓库常用验证命令：
@@ -200,7 +186,6 @@ cargo check
 - `claw-code-parity` 负责 Rust 核心能力
 - `open-claude-code/rust` 只负责桌面集成层和产品边界适配
 - `apps/desktop-shell` 负责桌面交互、页面结构和宿主行为
-- `apps/desktop-web` 适合作为 API 调试和轻量验证面
 
 如果要改 Rust 核心行为，优先考虑 upstream 到 parity，而不是在本仓库重新形成 fork。
 
