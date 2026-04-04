@@ -4,6 +4,8 @@ mod agents;
 mod pipeline;
 
 use std::env;
+use std::collections::HashMap;
+use std::fs;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -251,6 +253,59 @@ struct OpenclawGatewayStatusResult {
     port: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeToolsTerminalConfig {
+    id: String,
+    name: String,
+    custom_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeToolSelectedModelPayload {
+    provider_id: String,
+    provider_name: String,
+    provider_type: String,
+    runtime_target: String,
+    base_url: String,
+    protocol: String,
+    model_id: String,
+    display_name: String,
+    managed_provider_id: Option<String>,
+    preset_id: Option<String>,
+    has_stored_credential: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeToolsRunPayload {
+    cli_tool: String,
+    directory: String,
+    terminal: String,
+    auto_update_to_latest: bool,
+    environment_variables: HashMap<String, String>,
+    selected_model: Option<CodeToolSelectedModelPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeToolRunResult {
+    success: bool,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderHubStore {
+    providers: Vec<StoredManagedProviderSecret>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredManagedProviderSecret {
+    id: String,
+    api_key: Option<String>,
+}
+
 /// Check installation matching cherry-studio's checkInstalled():
 /// - Managed binary (~/.warwolf/bin/openclaw) → installed: true
 /// - Found in PATH only → needsMigration: true (old npm install)
@@ -291,6 +346,99 @@ async fn openclaw_get_dashboard_url() -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Code tools commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn is_binary_exist(binary_name: String) -> Result<bool, String> {
+    Ok(binary_exists(&binary_name))
+}
+
+#[tauri::command]
+async fn install_bun_binary() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let status = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "irm bun.sh/install.ps1 | iex",
+            ])
+            .status()
+            .map_err(|error| format!("Failed to start Bun installer: {error}"))?;
+
+        if status.success() {
+            return Ok(());
+        }
+
+        return Err("Bun installer exited with a non-zero status".to_string());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = Command::new("sh")
+            .args(["-c", "curl -fsSL https://bun.sh/install | bash"])
+            .status()
+            .map_err(|error| format!("Failed to start Bun installer: {error}"))?;
+
+        if status.success() {
+            return Ok(());
+        }
+
+        Err("Bun installer exited with a non-zero status".to_string())
+    }
+}
+
+#[tauri::command]
+async fn code_tools_get_available_terminals() -> Result<Vec<CodeToolsTerminalConfig>, String> {
+    Ok(detect_available_terminals())
+}
+
+#[tauri::command]
+async fn code_tools_run(payload: CodeToolsRunPayload) -> Result<CodeToolRunResult, String> {
+    let directory = PathBuf::from(&payload.directory);
+    if !directory.exists() {
+        return Ok(CodeToolRunResult {
+            success: false,
+            message: Some("工作目录不存在".to_string()),
+        });
+    }
+
+    if !binary_exists("bun") {
+        return Ok(CodeToolRunResult {
+            success: false,
+            message: Some("请先安装 Bun 环境".to_string()),
+        });
+    }
+
+    let package_name = package_name_for_cli(&payload.cli_tool)?;
+    let executable_name = executable_name_for_cli(&payload.cli_tool)?;
+    let mut env_map = payload.environment_variables.clone();
+
+    if let Some(selected_model) = &payload.selected_model {
+        inject_model_environment(&payload.cli_tool, &mut env_map, selected_model);
+        inject_managed_provider_api_key(&payload.cli_tool, &mut env_map, selected_model);
+    }
+
+    let shell_command = build_cli_shell_command(
+        &payload.cli_tool,
+        package_name,
+        executable_name,
+        payload.auto_update_to_latest,
+        &env_map,
+        &payload.directory,
+        payload.selected_model.as_ref(),
+    );
+
+    spawn_code_tool_terminal(&payload.terminal, &shell_command, &payload.directory)?;
+
+    Ok(CodeToolRunResult {
+        success: true,
+        message: Some("启动成功".to_string()),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -299,6 +447,371 @@ fn read_install_state() -> Option<serde_json::Value> {
     let state_file = home.join(".warwolf").join("openclaw-install-state.json");
     let content = std::fs::read_to_string(state_file).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
+fn provider_hub_path() -> PathBuf {
+    workspace_root().join("warwolf-provider-hub.json")
+}
+
+fn read_provider_hub_store() -> Option<ProviderHubStore> {
+    let content = fs::read_to_string(provider_hub_path()).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn binary_exists(binary_name: &str) -> bool {
+    which_binary(binary_name).is_some()
+}
+
+fn which_binary(binary_name: &str) -> Option<PathBuf> {
+    let path_value = env::var_os("PATH")?;
+    env::split_paths(&path_value).find_map(|dir| {
+        let candidate = dir.join(binary_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let exe_candidate = dir.join(format!("{binary_name}.exe"));
+            if exe_candidate.exists() {
+                return Some(exe_candidate);
+            }
+        }
+
+        None
+    })
+}
+
+fn detect_available_terminals() -> Vec<CodeToolsTerminalConfig> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut terminals = vec![CodeToolsTerminalConfig {
+            id: "Terminal".to_string(),
+            name: "Terminal".to_string(),
+            custom_path: None,
+        }];
+
+        let iterm_path = PathBuf::from("/Applications/iTerm.app");
+        if iterm_path.exists() {
+            terminals.push(CodeToolsTerminalConfig {
+                id: "iTerm2".to_string(),
+                name: "iTerm2".to_string(),
+                custom_path: None,
+            });
+        }
+
+        return terminals;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut terminals = vec![
+            CodeToolsTerminalConfig {
+                id: "CMD".to_string(),
+                name: "Command Prompt".to_string(),
+                custom_path: None,
+            },
+            CodeToolsTerminalConfig {
+                id: "PowerShell".to_string(),
+                name: "PowerShell".to_string(),
+                custom_path: None,
+            },
+        ];
+        if binary_exists("wt") {
+            terminals.push(CodeToolsTerminalConfig {
+                id: "WindowsTerminal".to_string(),
+                name: "Windows Terminal".to_string(),
+                custom_path: None,
+            });
+        }
+        return terminals;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        vec![CodeToolsTerminalConfig {
+            id: "system".to_string(),
+            name: "Terminal".to_string(),
+            custom_path: None,
+        }]
+    }
+}
+
+fn package_name_for_cli(cli_tool: &str) -> Result<&'static str, String> {
+    match cli_tool {
+        "claude-code" => Ok("@anthropic-ai/claude-code"),
+        "qwen-code" => Ok("@qwen-code/qwen-code"),
+        "gemini-cli" => Ok("@google/gemini-cli"),
+        "openai-codex" => Ok("@openai/codex"),
+        "iflow-cli" => Ok("@iflow-ai/iflow-cli"),
+        "github-copilot-cli" => Ok("@github/copilot"),
+        "kimi-cli" => Ok("kimi-cli"),
+        "opencode" => Ok("opencode-ai"),
+        _ => Err(format!("Unsupported CLI tool: {cli_tool}")),
+    }
+}
+
+fn executable_name_for_cli(cli_tool: &str) -> Result<&'static str, String> {
+    match cli_tool {
+        "claude-code" => Ok("claude"),
+        "qwen-code" => Ok("qwen"),
+        "gemini-cli" => Ok("gemini"),
+        "openai-codex" => Ok("codex"),
+        "iflow-cli" => Ok("iflow"),
+        "github-copilot-cli" => Ok("copilot"),
+        "kimi-cli" => Ok("kimi"),
+        "opencode" => Ok("opencode"),
+        _ => Err(format!("Unsupported CLI tool: {cli_tool}")),
+    }
+}
+
+fn inject_model_environment(
+    cli_tool: &str,
+    env_map: &mut HashMap<String, String>,
+    model: &CodeToolSelectedModelPayload,
+) {
+    if cli_tool == "openai-codex" {
+        return;
+    }
+
+    match model.protocol.as_str() {
+        "anthropic-messages" => {
+            env_map.insert("ANTHROPIC_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert("ANTHROPIC_MODEL".to_string(), model.model_id.clone());
+        }
+        "gemini" => {
+            env_map.insert("GEMINI_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert(
+                "GOOGLE_GEMINI_BASE_URL".to_string(),
+                model.base_url.clone(),
+            );
+            env_map.insert("GEMINI_MODEL".to_string(), model.model_id.clone());
+        }
+        "openai-responses" => {
+            env_map.insert("OPENAI_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert("OPENAI_MODEL".to_string(), model.model_id.clone());
+            env_map.insert(
+                "OPENAI_MODEL_PROVIDER".to_string(),
+                model.provider_id.clone(),
+            );
+            env_map.insert(
+                "OPENAI_MODEL_PROVIDER_NAME".to_string(),
+                model.provider_name.clone(),
+            );
+        }
+        _ => {
+            env_map.insert("OPENAI_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert("OPENAI_MODEL".to_string(), model.model_id.clone());
+            env_map.insert("IFLOW_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert("IFLOW_MODEL_NAME".to_string(), model.model_id.clone());
+            env_map.insert("KIMI_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert("KIMI_MODEL_NAME".to_string(), model.model_id.clone());
+            env_map.insert("OPENCODE_BASE_URL".to_string(), model.base_url.clone());
+            env_map.insert(
+                "OPENCODE_MODEL_NAME".to_string(),
+                model.display_name.clone(),
+            );
+        }
+    }
+}
+
+fn inject_managed_provider_api_key(
+    cli_tool: &str,
+    env_map: &mut HashMap<String, String>,
+    model: &CodeToolSelectedModelPayload,
+) {
+    if cli_tool == "openai-codex" {
+        return;
+    }
+
+    let Some(managed_provider_id) = &model.managed_provider_id else {
+        return;
+    };
+
+    let Some(store) = read_provider_hub_store() else {
+        return;
+    };
+
+    let Some(api_key) = store
+        .providers
+        .iter()
+        .find(|provider| provider.id == *managed_provider_id)
+        .and_then(|provider| provider.api_key.clone())
+    else {
+        return;
+    };
+
+    if api_key.trim().is_empty() {
+        return;
+    }
+
+    match model.protocol.as_str() {
+        "anthropic-messages" => {
+            env_map
+                .entry("ANTHROPIC_API_KEY".to_string())
+                .or_insert(api_key);
+        }
+        "gemini" => {
+            env_map.entry("GEMINI_API_KEY".to_string()).or_insert(api_key);
+        }
+        "openai-responses" | "openai-completions" => {
+            env_map
+                .entry("OPENAI_API_KEY".to_string())
+                .or_insert(api_key.clone());
+            env_map.entry("IFLOW_API_KEY".to_string()).or_insert(api_key.clone());
+            env_map.entry("KIMI_API_KEY".to_string()).or_insert(api_key.clone());
+        }
+        _ => {}
+    }
+}
+
+fn build_cli_shell_command(
+    cli_tool: &str,
+    package_name: &str,
+    _executable_name: &str,
+    auto_update_to_latest: bool,
+    env_map: &HashMap<String, String>,
+    directory: &str,
+    selected_model: Option<&CodeToolSelectedModelPayload>,
+) -> String {
+    let env_reset_prefix = build_code_tool_env_reset_prefix(cli_tool, env_map);
+    let exports = env_map
+        .iter()
+        .map(|(key, value)| format!("export {key}={};", shell_quote(value)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let update_prefix = if auto_update_to_latest {
+        format!(
+            "bun add -g {package_name}@latest >/dev/null 2>&1 || true; "
+        )
+    } else {
+        String::new()
+    };
+    let run_command = build_cli_run_command(cli_tool, package_name, selected_model);
+
+    format!(
+        "export PATH=\"$HOME/.bun/bin:$PATH\"; cd {}; {env_reset_prefix} {exports} {update_prefix}{run_command}; exit",
+        shell_quote(directory)
+    )
+}
+
+fn build_code_tool_env_reset_prefix(cli_tool: &str, env_map: &HashMap<String, String>) -> String {
+    if cli_tool != "openai-codex" {
+        return String::new();
+    }
+
+    // Codex CLI already manages its own ChatGPT/API-key auth in ~/.codex.
+    // Clear inherited OPENAI_* vars unless the user explicitly set them in the form.
+    [
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "OPENAI_MODEL_PROVIDER",
+        "OPENAI_MODEL_PROVIDER_NAME",
+    ]
+    .into_iter()
+    .filter(|key| !env_map.contains_key(*key))
+    .map(|key| format!("unset {key};"))
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn build_cli_run_command(
+    cli_tool: &str,
+    package_name: &str,
+    selected_model: Option<&CodeToolSelectedModelPayload>,
+) -> String {
+    match cli_tool {
+        "openai-codex" => {
+            let mut command = format!("bunx -y {package_name}");
+            if let Some(model) = selected_model {
+                command.push_str(" -m ");
+                command.push_str(&shell_quote(&model.model_id));
+            }
+            command
+        }
+        _ => format!("bunx -y {package_name}"),
+    }
+}
+
+fn spawn_code_tool_terminal(
+    terminal: &str,
+    shell_command: &str,
+    _directory: &str,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let escaped_command = escape_for_applescript(shell_command);
+        let script = if terminal == "iTerm2" && Path::new("/Applications/iTerm.app").exists() {
+            format!(
+                "tell application \"iTerm\" to create window with default profile command \"{escaped_command}\""
+            )
+        } else {
+            format!(
+                "tell application \"Terminal\" to activate\ntell application \"Terminal\" to do script \"{escaped_command}\""
+            )
+        };
+
+        Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn()
+            .map_err(|error| format!("Failed to open terminal: {error}"))?;
+
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = if terminal == "WindowsTerminal" && binary_exists("wt") {
+            Command::new("cmd")
+                .args(["/C", "start", "wt", "-d", directory, "cmd", "/K", shell_command])
+                .spawn()
+        } else if terminal == "PowerShell" {
+            Command::new("cmd")
+                .args([
+                    "/C",
+                    "start",
+                    "powershell",
+                    "-NoExit",
+                    "-Command",
+                    shell_command,
+                ])
+                .spawn()
+        } else {
+            Command::new("cmd")
+                .args(["/C", "start", "cmd", "/K", shell_command])
+                .spawn()
+        };
+
+        status.map_err(|error| format!("Failed to open terminal: {error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Command::new("sh")
+            .arg("-lc")
+            .arg(shell_command)
+            .current_dir(directory)
+            .spawn()
+            .map_err(|error| format!("Failed to start CLI command: {error}"))?;
+        Ok(())
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn escape_for_applescript(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\"', "\\\"")
 }
 
 fn desired_desktop_api_base() -> String {
@@ -442,6 +955,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(PipelineStore::new())
         .invoke_handler(tauri::generate_handler![
             desktop_api_base,
@@ -455,6 +969,10 @@ fn main() {
             openclaw_check_installed,
             openclaw_get_status,
             openclaw_get_dashboard_url,
+            is_binary_exist,
+            install_bun_binary,
+            code_tools_get_available_terminals,
+            code_tools_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OpenClaudeCode desktop shell");

@@ -339,6 +339,40 @@ export interface DesktopProviderConnectionTestResult {
   used_stored_api_key: boolean;
 }
 
+export interface CodeToolsTerminalConfig {
+  id: string;
+  name: string;
+  customPath?: string | null;
+}
+
+export interface CodeToolSelectedModelPayload {
+  providerId: string;
+  providerName: string;
+  providerType: string;
+  runtimeTarget: DesktopProviderRuntimeTarget;
+  baseUrl: string;
+  protocol: string;
+  modelId: string;
+  displayName: string;
+  managedProviderId: string | null;
+  presetId: string | null;
+  hasStoredCredential: boolean;
+}
+
+export interface RunCodeToolPayload {
+  cliTool: string;
+  directory: string;
+  terminal: string;
+  autoUpdateToLatest: boolean;
+  environmentVariables: Record<string, string>;
+  selectedModel: CodeToolSelectedModelPayload | null;
+}
+
+export interface CodeToolRunResult {
+  success: boolean;
+  message: string | null;
+}
+
 export interface DesktopOpenclawConfigWriteResult {
   config_path: string;
   changed: boolean;
@@ -1174,4 +1208,37 @@ export async function openclawGetStatus(): Promise<OpenclawGatewayStatusResult> 
  */
 export async function openclawGetDashboardUrl(): Promise<string> {
   return invoke<string>("openclaw_get_dashboard_url");
+}
+
+// ---------------------------------------------------------------------------
+// Code tools commands
+// ---------------------------------------------------------------------------
+
+export async function isBinaryExist(binaryName: string): Promise<boolean> {
+  return invoke<boolean>("is_binary_exist", { binaryName });
+}
+
+export async function installBunBinary(): Promise<void> {
+  return invoke<void>("install_bun_binary");
+}
+
+export async function getCodeToolAvailableTerminals(): Promise<
+  CodeToolsTerminalConfig[]
+> {
+  return invoke<CodeToolsTerminalConfig[]>("code_tools_get_available_terminals");
+}
+
+export async function runCodeTool(
+  payload: RunCodeToolPayload
+): Promise<CodeToolRunResult> {
+  return invoke<CodeToolRunResult>("code_tools_run", {
+    payload: {
+      cliTool: payload.cliTool,
+      directory: payload.directory,
+      terminal: payload.terminal,
+      autoUpdateToLatest: payload.autoUpdateToLatest,
+      environmentVariables: payload.environmentVariables,
+      selectedModel: payload.selectedModel,
+    },
+  });
 }

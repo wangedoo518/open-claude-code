@@ -12,7 +12,7 @@ import { truncate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { DesktopSessionSection } from "@/lib/tauri";
 
-interface SessionSidebarProps {
+interface SessionWorkbenchSidebarProps {
   sessionSections: DesktopSessionSection[];
   activeSessionId?: string | null;
   projectLabel: string;
@@ -21,14 +21,14 @@ interface SessionSidebarProps {
   isCreatingSession: boolean;
 }
 
-export function SessionSidebar({
+export function SessionWorkbenchSidebar({
   sessionSections,
   activeSessionId,
   projectLabel,
   onSelectSession,
   onCreateSession,
   isCreatingSession,
-}: SessionSidebarProps) {
+}: SessionWorkbenchSidebarProps) {
   const dispatch = useAppDispatch();
 
   return (

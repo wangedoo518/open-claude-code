@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { SessionSidebar } from "./SessionSidebar";
-import { CodeTerminal } from "./CodeTerminal";
+import { SessionWorkbenchSidebar } from "./SessionWorkbenchSidebar";
+import { SessionWorkbenchTerminal } from "./SessionWorkbenchTerminal";
 import { updateTabSession } from "@/store/slices/tabs";
 import {
   appendMessage,
@@ -13,7 +13,7 @@ import {
   type DesktopSessionDetail,
 } from "@/lib/tauri";
 
-interface CodePageProps {
+interface SessionWorkbenchPageProps {
   tabId: string;
   sessionId?: string;
   showSessionSidebar?: boolean;
@@ -21,13 +21,13 @@ interface CodePageProps {
   autoSelectFallbackSession?: boolean;
 }
 
-export function CodePage({
+export function SessionWorkbenchPage({
   tabId,
   sessionId,
   showSessionSidebar,
   syncTabState = true,
   autoSelectFallbackSession = true,
-}: CodePageProps) {
+}: SessionWorkbenchPageProps) {
   const dispatch = useAppDispatch();
   const showSidebarPreference = useAppSelector(
     (s) => s.settings.showSessionSidebar
@@ -192,7 +192,7 @@ export function CodePage({
   return (
     <div className="flex h-full">
       {resolvedShowSidebar && (
-        <SessionSidebar
+        <SessionWorkbenchSidebar
           sessionSections={workbenchQuery.data?.session_sections ?? []}
           activeSessionId={activeSessionId}
           projectLabel={workbenchQuery.data?.project_label ?? "All projects"}
@@ -204,7 +204,7 @@ export function CodePage({
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <CodeTerminal
+        <SessionWorkbenchTerminal
           session={activeSession}
           isLoadingSession={activeSessionQuery.isLoading}
           isSending={sendMessageMutation.isPending}

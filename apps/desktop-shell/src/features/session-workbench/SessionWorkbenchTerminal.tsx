@@ -11,7 +11,7 @@ import type {
 } from "@/lib/tauri";
 import type { ConversationMessage } from "@/store/slices/sessions";
 
-interface CodeTerminalProps {
+interface SessionWorkbenchTerminalProps {
   session: DesktopSessionDetail | null;
   isLoadingSession: boolean;
   isSending: boolean;
@@ -28,7 +28,7 @@ interface CodeTerminalProps {
   projectPath?: string;
 }
 
-export function CodeTerminal({
+export function SessionWorkbenchTerminal({
   session,
   isLoadingSession,
   isSending,
@@ -39,7 +39,7 @@ export function CodeTerminal({
   permissionModeLabel = "Ask permissions",
   environmentLabel = "Local",
   projectPath,
-}: CodeTerminalProps) {
+}: SessionWorkbenchTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messages = useMemo(
     () => flattenSessionMessages(session?.session.messages ?? []),
@@ -64,7 +64,7 @@ export function CodeTerminal({
       />
 
       {messages.length === 0 && !isLoadingSession ? (
-        <WelcomeScreen />
+          <SessionWorkbenchWelcomeScreen />
       ) : (
         <ScrollArea className="flex-1">
           <div ref={scrollRef} className="pb-4">
@@ -107,7 +107,7 @@ export function CodeTerminal({
   );
 }
 
-function WelcomeScreen() {
+function SessionWorkbenchWelcomeScreen() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
       <div className="flex size-16 items-center justify-center rounded-2xl bg-primary/10">

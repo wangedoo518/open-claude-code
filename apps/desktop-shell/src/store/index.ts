@@ -21,6 +21,7 @@ import sessionsReducer from "./slices/sessions";
 import settingsReducer from "./slices/settings";
 import uiReducer from "./slices/ui";
 import minappsReducer from "./slices/minapps";
+import codeToolsReducer from "./slices/codeTools";
 
 const rootReducer = combineReducers({
   tabs: tabsReducer,
@@ -28,6 +29,7 @@ const rootReducer = combineReducers({
   settings: settingsReducer,
   ui: uiReducer,
   minapps: minappsReducer,
+  codeTools: codeToolsReducer,
 });
 
 const persistConfig = {

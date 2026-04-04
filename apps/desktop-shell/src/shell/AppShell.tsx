@@ -3,6 +3,7 @@ import { TabBar } from "./TabBar";
 import { HomePage } from "@/features/workbench/HomePage";
 import { AppsGalleryPage } from "@/features/apps/AppsGalleryPage";
 import { MinAppDetailPage } from "@/features/apps/MinAppDetailPage";
+import { CodeToolsPage } from "@/features/code-tools/CodeToolsPage";
 
 /**
  * Root application shell.
@@ -13,6 +14,7 @@ import { MinAppDetailPage } from "@/features/apps/MinAppDetailPage";
  * Route structure:
  *   /home      -> HomePage (workbench with sessions, search, settings, etc.)
  *   /apps      -> AppsGalleryPage (cherry-studio grid of MinApps)
+ *   /code      -> CodeToolsPage (strict Cherry Code clone entry)
  *   /apps/:id  -> MinAppDetailPage (toolbar + keep-alive content pool)
  */
 export function AppShell() {
@@ -23,6 +25,7 @@ export function AppShell() {
         <Routes>
           <Route path="/home" element={<HomePage />} />
           <Route path="/apps" element={<AppsGalleryPage />} />
+          <Route path="/code" element={<CodeToolsPage />} />
           <Route path="/apps/:appId" element={<MinAppDetailPage />} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>

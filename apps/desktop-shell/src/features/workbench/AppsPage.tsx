@@ -1,7 +1,7 @@
 import { Code } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useAppDispatch } from "@/store";
 import { setViewMode } from "@/store/slices/ui";
-import { openHomeSession } from "./tab-helpers";
 import { CherryOpenClawIcon } from "@/components/icons/CherryIcons";
 
 const APPS = [
@@ -20,6 +20,7 @@ const APPS = [
 ] as const;
 
 export function AppsPage() {
+  const navigate = useNavigate();
   const dispatch = useAppDispatch();
 
   return (
@@ -40,7 +41,7 @@ export function AppsPage() {
                   className="group flex appearance-none flex-col items-center gap-1 rounded-2xl border-0 bg-transparent px-1 py-2 text-center transition-transform duration-200 ease-out hover:scale-[1.05] active:scale-[0.95]"
                   onClick={() => {
                     if (app.id === "code") {
-                      openHomeSession(dispatch, null);
+                      navigate("/code");
                       return;
                     }
 

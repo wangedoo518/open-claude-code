@@ -3,7 +3,6 @@ import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { Webview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getMinAppWebviewLabel } from "@/config/minapps";
-import { CodePage } from "@/features/code/CodePage";
 import { OpenClawPage } from "@/features/workbench/OpenClawPage";
 import type { MinAppType } from "@/types/minapp";
 import { setWebviewLoaded } from "@/utils/webviewStateManager";
@@ -25,14 +24,6 @@ export function NativeAppContainer({ app }: NativeAppContainerProps) {
   const route = app.url.replace("warwolf://", "");
 
   switch (route) {
-    case "code":
-      return (
-        <CodePage
-          tabId={`app-code-${app.id}`}
-          showSessionSidebar={true}
-          syncTabState={false}
-        />
-      );
     case "openclaw":
       return <OpenClawPage />;
     default:

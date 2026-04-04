@@ -23,7 +23,7 @@ import { DispatchPage } from "./DispatchPage";
 import { CustomizePage } from "./CustomizePage";
 import { OpenClawPage } from "./OpenClawPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
-import { CodePage } from "@/features/code/CodePage";
+import { SessionWorkbenchPage } from "@/features/session-workbench/SessionWorkbenchPage";
 
 const PRIMARY_ITEMS = [
   { id: "search", label: "Search", icon: Search },
@@ -157,7 +157,7 @@ export function HomePage() {
         {homeSection === "overview" ? (
           <HomeOverview />
         ) : homeSection === "session" ? (
-          <CodePage
+          <SessionWorkbenchPage
             tabId="home-session"
             sessionId={activeHomeSessionId ?? undefined}
             showSessionSidebar={false}

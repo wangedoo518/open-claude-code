@@ -67,6 +67,7 @@ export function TabBar() {
   // ─── Derived nav state ────────────────────────────────────────
   const isOnHome = pathname === "/home" || pathname === "/";
   const isOnApps = pathname.startsWith("/apps");
+  const isOnCode = pathname === "/code";
   const isSettingsActive =
     isOnHome && viewMode.kind === "nav" && viewMode.section === "settings";
   const isHomeActive = isOnHome && !isSettingsActive;
@@ -84,6 +85,31 @@ export function TabBar() {
     if (appId.startsWith("openclaw")) return "OpenClaw";
     return appId;
   };
+
+  // ─── Route → tab sync (`/code`) ──────────────────────────────
+  useEffect(() => {
+    if (!isOnCode) return;
+
+    const existingTab = tabs.find((tab) => tab.id === "route:code");
+    if (!existingTab) {
+      dispatch(
+        addTab({
+          id: "route:code",
+          type: "code",
+          path: "/code",
+          title: "Code",
+          closable: true,
+        })
+      );
+      return;
+    }
+
+    if (existingTab.title !== "Code") {
+      dispatch(updateTabTitle({ id: "route:code", title: "Code" }));
+    }
+
+    dispatch(setActiveTab("route:code"));
+  }, [dispatch, isOnCode, tabs]);
 
   // ─── Route → tab sync (minapps only) ─────────────────────────
   useEffect(() => {

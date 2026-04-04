@@ -1,5 +1,4 @@
 import type { MinAppType } from "@/types/minapp";
-import WarwolfLogo from "@/assets/warwolf-logo.png";
 import OpenClawLogo from "@/assets/openclaw-logo.svg";
 
 export const MINAPP_ROUTE_PREFIX = "/apps/";
@@ -9,23 +8,11 @@ export const MINAPP_WEBVIEW_PREFIX = "minapp-webview:";
 /**
  * Built-in app definitions.
  *
- * Code uses a special `warwolf://code` protocol URL — the webview
- * container detects this and renders the native CodePage component.
- *
- * OpenClaw uses the same approach — `warwolf://openclaw` renders
- * the native OpenClawPage.
+ * OpenClaw remains a built-in native page rendered through the
+ * MinApp container. `Code` has been promoted to a top-level `/code`
+ * route and is no longer modeled as a MinApp.
  */
 export const BUILTIN_APPS: MinAppType[] = [
-  {
-    id: "code",
-    name: "Code",
-    url: "warwolf://code",
-    logo: WarwolfLogo,
-    type: "builtin",
-    iconName: "Terminal",
-    gradient: "",
-    description: "Claude Code style terminal workspace",
-  },
   {
     id: "openclaw",
     name: "OpenClaw",
