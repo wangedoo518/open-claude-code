@@ -4,9 +4,18 @@ mod agents;
 mod pipeline;
 
 use std::env;
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
-use tauri::State;
 use pipeline::PipelineStore;
+use tauri::State;
+
+const DEFAULT_DESKTOP_API_BASE: &str = "http://127.0.0.1:4357";
+const DEFAULT_DESKTOP_SERVER_ADDR: &str = "127.0.0.1:4357";
+type DesktopServerHandle = Arc<Mutex<Option<Child>>>;
 
 // ---------------------------------------------------------------------------
 // Shared types (mirrored in TypeScript)
@@ -61,8 +70,7 @@ struct ServiceControlResult {
 
 #[tauri::command]
 fn desktop_api_base() -> String {
-    env::var("OPEN_CLAUDE_CODE_DESKTOP_API_BASE")
-        .unwrap_or_else(|_| "http://127.0.0.1:4357".to_string())
+    desired_desktop_api_base()
 }
 
 // ---------------------------------------------------------------------------
@@ -293,11 +301,146 @@ fn read_install_state() -> Option<serde_json::Value> {
     serde_json::from_str(&content).ok()
 }
 
+fn desired_desktop_api_base() -> String {
+    env::var("OPEN_CLAUDE_CODE_DESKTOP_API_BASE")
+        .unwrap_or_else(|_| DEFAULT_DESKTOP_API_BASE.to_string())
+}
+
+fn desired_desktop_server_addr() -> String {
+    env::var("OPEN_CLAUDE_CODE_DESKTOP_ADDR")
+        .unwrap_or_else(|_| DEFAULT_DESKTOP_SERVER_ADDR.to_string())
+}
+
+fn is_desktop_server_available(address: &str) -> bool {
+    let socket = match address.parse::<SocketAddr>() {
+        Ok(socket) => socket,
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&socket, Duration::from_millis(200)).is_ok()
+}
+
+fn wait_for_desktop_server(address: &str, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if is_desktop_server_available(address) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    false
+}
+
+fn desktop_server_binary_candidates(workspace_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        workspace_dir.join("target").join("debug").join("desktop-server"),
+        workspace_dir.join("target").join("release").join("desktop-server"),
+    ];
+
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join("desktop-server"));
+            candidates.push(exe_dir.join("../Resources/desktop-server"));
+            candidates.push(exe_dir.join("../Resources/bin/desktop-server"));
+        }
+    }
+
+    candidates
+}
+
+fn spawn_desktop_server_process(address: &str) -> Result<Child, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = manifest_dir.join("../../../rust");
+    let mut command = if let Some(binary) = desktop_server_binary_candidates(&workspace_dir)
+        .into_iter()
+        .find(|candidate| candidate.exists())
+    {
+        let mut command = Command::new(binary);
+        command.current_dir(&workspace_dir);
+        command
+    } else if cfg!(debug_assertions) {
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(&workspace_dir)
+            .args(["run", "-p", "desktop-server"]);
+        command
+    } else {
+        return Err(
+            "Unable to locate desktop-server binary. Build desktop-server before launching Warwolf."
+                .to_string(),
+        );
+    };
+
+    command
+        .env("OPEN_CLAUDE_CODE_DESKTOP_ADDR", address)
+        .stdin(Stdio::null());
+
+    if cfg!(debug_assertions) {
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
+    command
+        .spawn()
+        .map_err(|error| format!("Failed to launch desktop-server: {error}"))
+}
+
+fn shutdown_desktop_server(handle: &DesktopServerHandle) {
+    let child = {
+        let mut guard = handle.lock().expect("desktop server lock poisoned");
+        guard.take()
+    };
+
+    if let Some(mut child) = child {
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+    }
+}
+
+fn ensure_desktop_server(handle: &DesktopServerHandle) -> Result<(), String> {
+    if env::var_os("OPEN_CLAUDE_CODE_DESKTOP_API_BASE").is_some() {
+        return Ok(());
+    }
+
+    let address = desired_desktop_server_addr();
+    if is_desktop_server_available(&address) {
+        return Ok(());
+    }
+
+    let child = spawn_desktop_server_process(&address)?;
+    {
+        let mut guard = handle.lock().expect("desktop server lock poisoned");
+        *guard = Some(child);
+    }
+
+    let timeout = if cfg!(debug_assertions) {
+        Duration::from_secs(45)
+    } else {
+        Duration::from_secs(10)
+    };
+
+    if wait_for_desktop_server(&address, timeout) {
+        return Ok(());
+    }
+
+    shutdown_desktop_server(handle);
+    Err(format!(
+        "desktop-server did not become ready at {address} before timeout"
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 fn main() {
+    let desktop_server = Arc::new(Mutex::new(None));
+    if let Err(error) = ensure_desktop_server(&desktop_server) {
+        eprintln!("failed to ensure desktop-server: {error}");
+    }
+
     tauri::Builder::default()
         .manage(PipelineStore::new())
         .invoke_handler(tauri::generate_handler![

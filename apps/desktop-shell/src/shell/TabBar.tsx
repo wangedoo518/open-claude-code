@@ -14,6 +14,7 @@ import {
   addTab,
   setActiveTab,
   removeTab,
+  sanitizePersistedTabs,
   updateTabTitle,
   type Tab,
 } from "@/store/slices/tabs";
@@ -59,6 +60,10 @@ export function TabBar() {
 
   const pathname = location.pathname;
 
+  useEffect(() => {
+    dispatch(sanitizePersistedTabs());
+  }, [dispatch]);
+
   // ─── Derived nav state ────────────────────────────────────────
   const isOnHome = pathname === "/home" || pathname === "/";
   const isOnApps = pathname.startsWith("/apps");
@@ -68,7 +73,9 @@ export function TabBar() {
   const isAppsActive = isOnApps;
 
   // Session/minapp tabs only (no system tabs)
-  const sessionTabs = tabs;
+  const sessionTabs = tabs.filter(
+    (tab) => tab.type !== "home" && tab.type !== "apps"
+  );
 
   // ─── MinApp title resolver ────────────────────────────────────
   const resolveMinAppTitle = (appId: string) => {

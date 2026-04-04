@@ -7,15 +7,21 @@ publish.workspace = true
 
 [dependencies]
 api = { path = "../api" }
+axum = "0.8"
+base64 = "0.22"
 plugins = { path = "../plugins" }
 runtime = { path = "../runtime" }
 json5 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
+sha2 = "0.10"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
-tokio = { version = "1", features = ["rt", "sync", "time"] }
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+toml_edit = "0.22"
 tools = { path = "../tools" }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [lints]
 workspace = true

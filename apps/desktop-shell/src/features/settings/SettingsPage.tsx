@@ -44,13 +44,13 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { id: "general", label: "General", icon: Settings },
-  { id: "provider", label: "Provider", icon: Key },
-  { id: "mcp", label: "MCP Servers", icon: Plug },
-  { id: "permissions", label: "Permissions", icon: Shield },
-  { id: "shortcuts", label: "Keyboard", icon: Keyboard },
-  { id: "data", label: "Data", icon: Database },
-  { id: "about", label: "About", icon: Info },
+  { id: "general", label: "常规", icon: Settings },
+  { id: "provider", label: "模型服务", icon: Key },
+  { id: "mcp", label: "MCP 服务", icon: Plug },
+  { id: "permissions", label: "权限", icon: Shield },
+  { id: "shortcuts", label: "快捷键", icon: Keyboard },
+  { id: "data", label: "数据", icon: Database },
+  { id: "about", label: "关于", icon: Info },
 ];
 
 export function SettingsPage() {
@@ -83,7 +83,7 @@ export function SettingsPage() {
     <div className="flex h-full">
       <div className="flex w-[220px] shrink-0 flex-col border-r border-border bg-sidebar-background">
         <div className="px-4 py-3">
-          <h2 className="text-sm font-semibold text-foreground">Settings</h2>
+          <h2 className="text-sm font-semibold text-foreground">设置</h2>
         </div>
         <Separator />
         <nav className="flex-1 px-2 py-2">
@@ -119,7 +119,7 @@ export function SettingsPage() {
           {isLoading && (
             <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
-              <span>Loading desktop settings…</span>
+              <span>正在加载桌面设置...</span>
             </div>
           )}
 
@@ -178,7 +178,7 @@ function SettingsContent({
     default:
       return (
         <div className="py-8 text-center text-sm text-muted-foreground">
-          Coming soon
+          即将支持
         </div>
       );
   }

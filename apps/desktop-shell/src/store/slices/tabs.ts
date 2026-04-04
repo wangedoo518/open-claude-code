@@ -21,6 +21,15 @@ interface TabsState {
   activeTabId: string;
 }
 
+function isLegacySystemTab(tab: Tab) {
+  return (
+    tab.type === "home" ||
+    tab.type === "apps" ||
+    tab.path === "/home" ||
+    tab.path === "/apps"
+  );
+}
+
 /**
  * System tabs are removed — navigation (首页/应用/设置) now lives
  * in Row 1 as fixed buttons driven by ViewMode.
@@ -83,6 +92,16 @@ const tabsSlice = createSlice({
         tab.title = action.payload.title;
       }
     },
+    sanitizePersistedTabs(state) {
+      const nextTabs = state.tabs.filter((tab) => !isLegacySystemTab(tab));
+      if (nextTabs.length === state.tabs.length) {
+        return;
+      }
+      state.tabs = nextTabs;
+      if (!state.tabs.some((tab) => tab.id === state.activeTabId)) {
+        state.activeTabId = state.tabs[state.tabs.length - 1]?.id ?? "";
+      }
+    },
   },
 });
 
@@ -93,5 +112,6 @@ export const {
   reorderTabs,
   updateTabSession,
   updateTabTitle,
+  sanitizePersistedTabs,
 } = tabsSlice.actions;
 export default tabsSlice.reducer;

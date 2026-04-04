@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use desktop_core::{
     AppendDesktopMessageRequest, CreateDesktopDispatchItemRequest,
     CreateDesktopScheduledTaskRequest, CreateDesktopSessionRequest, DesktopBootstrap,
+    DesktopCodexAuthOverview, DesktopCodexLoginSessionSnapshot, DesktopCodexRuntimeState,
     DesktopCustomizeState, DesktopDispatchItem, DesktopDispatchState, DesktopManagedProvider,
     DesktopManagedProviderUpsertInput, DesktopOpenClawConfigWriteResult,
     DesktopOpenClawRuntimeState, DesktopProviderConnectionTestInput,
@@ -128,6 +129,21 @@ pub struct DesktopOpenClawRuntimeResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopCodexRuntimeResponse {
+    pub runtime: DesktopCodexRuntimeState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopCodexAuthOverviewResponse {
+    pub overview: DesktopCodexAuthOverview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopCodexLoginSessionResponse {
+    pub session: DesktopCodexLoginSessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopOpenClawConfigWriteResponse {
     pub result: DesktopOpenClawConfigWriteResult,
 }
@@ -188,6 +204,30 @@ pub fn app(state: AppState) -> Router {
         .route("/api/desktop/workbench", get(workbench))
         .route("/api/desktop/customize", get(customize))
         .route("/api/desktop/openclaw/runtime", get(openclaw_runtime))
+        .route("/api/desktop/codex/runtime", get(codex_runtime))
+        .route("/api/desktop/codex/auth", get(codex_auth_overview))
+        .route(
+            "/api/desktop/codex/auth/import",
+            post(import_codex_auth_profile),
+        )
+        .route("/api/desktop/codex/auth/login", post(begin_codex_login))
+        .route("/api/desktop/codex/auth/login/{id}", get(poll_codex_login))
+        .route(
+            "/api/desktop/codex/auth/profiles/{id}/activate",
+            post(activate_codex_auth_profile),
+        )
+        .route(
+            "/api/desktop/codex/auth/profiles/{id}/refresh",
+            post(refresh_codex_auth_profile),
+        )
+        .route(
+            "/api/desktop/codex/auth/profiles/{id}",
+            delete(remove_codex_auth_profile),
+        )
+        .route(
+            "/api/desktop/codex/import-live",
+            post(import_codex_live_providers),
+        )
         .route("/api/desktop/openclaw/env", post(update_openclaw_env))
         .route("/api/desktop/openclaw/tools", post(update_openclaw_tools))
         .route("/api/desktop/providers/presets", get(provider_presets))
@@ -282,6 +322,98 @@ async fn openclaw_runtime(
     Ok(Json(DesktopOpenClawRuntimeResponse { runtime }))
 }
 
+async fn codex_runtime(
+    State(state): State<AppState>,
+) -> ApiResult<Json<DesktopCodexRuntimeResponse>> {
+    let runtime = state
+        .desktop()
+        .codex_runtime_state()
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexRuntimeResponse { runtime }))
+}
+
+async fn codex_auth_overview(
+    State(state): State<AppState>,
+) -> ApiResult<Json<DesktopCodexAuthOverviewResponse>> {
+    let overview = state
+        .desktop()
+        .codex_auth_overview()
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexAuthOverviewResponse { overview }))
+}
+
+async fn import_codex_auth_profile(
+    State(state): State<AppState>,
+) -> ApiResult<Json<DesktopCodexAuthOverviewResponse>> {
+    let overview = state
+        .desktop()
+        .import_codex_auth_profile()
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexAuthOverviewResponse { overview }))
+}
+
+async fn begin_codex_login(
+    State(state): State<AppState>,
+) -> ApiResult<Json<DesktopCodexLoginSessionResponse>> {
+    let session = state
+        .desktop()
+        .begin_codex_login()
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexLoginSessionResponse { session }))
+}
+
+async fn poll_codex_login(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<DesktopCodexLoginSessionResponse>> {
+    let session = state
+        .desktop()
+        .poll_codex_login(&id)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexLoginSessionResponse { session }))
+}
+
+async fn activate_codex_auth_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<DesktopCodexAuthOverviewResponse>> {
+    let overview = state
+        .desktop()
+        .activate_codex_auth_profile(&id)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexAuthOverviewResponse { overview }))
+}
+
+async fn refresh_codex_auth_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<DesktopCodexAuthOverviewResponse>> {
+    let overview = state
+        .desktop()
+        .refresh_codex_auth_profile(&id)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexAuthOverviewResponse { overview }))
+}
+
+async fn remove_codex_auth_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<DesktopCodexAuthOverviewResponse>> {
+    let overview = state
+        .desktop()
+        .remove_codex_auth_profile(&id)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopCodexAuthOverviewResponse { overview }))
+}
+
 async fn update_openclaw_env(
     State(state): State<AppState>,
     Json(payload): Json<OpenclawEnvUpdateRequest>,
@@ -354,6 +486,18 @@ async fn import_live_providers(
     let providers = state
         .desktop()
         .import_managed_providers_from_openclaw_live(payload.provider_ids)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(DesktopProviderImportResponse { providers }))
+}
+
+async fn import_codex_live_providers(
+    State(state): State<AppState>,
+    Json(payload): Json<ProviderImportRequest>,
+) -> ApiResult<Json<DesktopProviderImportResponse>> {
+    let providers = state
+        .desktop()
+        .import_managed_providers_from_codex_live(payload.provider_ids)
         .await
         .map_err(into_api_error)?;
     Ok(Json(DesktopProviderImportResponse { providers }))

@@ -33,14 +33,20 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{sleep, Duration};
 use tools::GlobalToolRegistry;
 
+mod codex_auth;
 mod provider_hub;
 
+pub use codex_auth::{
+    DesktopCodexAuthOverview, DesktopCodexAuthSource, DesktopCodexInstallationRecord,
+    DesktopCodexLoginSessionSnapshot, DesktopCodexLoginSessionStatus, DesktopCodexProfileSummary,
+};
 pub use provider_hub::{
-    DesktopManagedProvider, DesktopManagedProviderUpsertInput, DesktopOpenClawConfigWriteResult,
+    DesktopCodexLiveProvider, DesktopCodexRuntimeState, DesktopManagedProvider,
+    DesktopManagedProviderUpsertInput, DesktopOpenClawConfigWriteResult,
     DesktopOpenClawDefaultModel, DesktopOpenClawLiveProvider, DesktopOpenClawRuntimeState,
     DesktopProviderConnectionStatus, DesktopProviderConnectionTestInput,
     DesktopProviderConnectionTestResult, DesktopProviderDeleteResult, DesktopProviderModel,
-    DesktopProviderPreset, DesktopProviderSyncResult,
+    DesktopProviderPreset, DesktopProviderRuntimeTarget, DesktopProviderSyncResult,
 };
 
 pub type SessionId = String;
@@ -1256,7 +1262,7 @@ impl DesktopState {
         let project_path = self.current_project_path().await;
         let provider_id = provider_id.to_string();
         tokio::task::spawn_blocking(move || {
-            provider_hub::sync_provider_to_openclaw(&project_path, &provider_id, set_primary)
+            provider_hub::sync_provider_to_runtime(&project_path, &provider_id, set_primary)
         })
         .await
         .map_err(|error| {
@@ -1280,6 +1286,21 @@ impl DesktopState {
         .map_err(DesktopStateError::InvalidProvider)
     }
 
+    pub async fn import_managed_providers_from_codex_live(
+        &self,
+        provider_ids: Option<Vec<String>>,
+    ) -> Result<Vec<DesktopManagedProvider>, DesktopStateError> {
+        let project_path = self.current_project_path().await;
+        tokio::task::spawn_blocking(move || {
+            provider_hub::import_providers_from_codex_live(&project_path, provider_ids)
+        })
+        .await
+        .map_err(|error| {
+            DesktopStateError::InvalidProvider(format!("provider worker crashed: {error}"))
+        })?
+        .map_err(DesktopStateError::InvalidProvider)
+    }
+
     pub async fn openclaw_runtime_state(
         &self,
     ) -> Result<DesktopOpenClawRuntimeState, DesktopStateError> {
@@ -1288,6 +1309,87 @@ impl DesktopState {
             .map_err(|error| {
                 DesktopStateError::InvalidProvider(format!("provider worker crashed: {error}"))
             })?
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn codex_runtime_state(&self) -> Result<DesktopCodexRuntimeState, DesktopStateError> {
+        tokio::task::spawn_blocking(provider_hub::codex_runtime_state)
+            .await
+            .map_err(|error| {
+                DesktopStateError::InvalidProvider(format!("provider worker crashed: {error}"))
+            })?
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn codex_auth_overview(&self) -> Result<DesktopCodexAuthOverview, DesktopStateError> {
+        tokio::task::spawn_blocking(|| codex_auth::overview_get(None))
+            .await
+            .map_err(|error| {
+                DesktopStateError::InvalidProvider(format!("codex auth worker crashed: {error}"))
+            })?
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn import_codex_auth_profile(
+        &self,
+    ) -> Result<DesktopCodexAuthOverview, DesktopStateError> {
+        tokio::task::spawn_blocking(|| codex_auth::profile_import(None))
+            .await
+            .map_err(|error| {
+                DesktopStateError::InvalidProvider(format!("codex auth worker crashed: {error}"))
+            })?
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn activate_codex_auth_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<DesktopCodexAuthOverview, DesktopStateError> {
+        let profile_id = profile_id.to_string();
+        tokio::task::spawn_blocking(move || codex_auth::profile_set_active(profile_id, None))
+            .await
+            .map_err(|error| {
+                DesktopStateError::InvalidProvider(format!("codex auth worker crashed: {error}"))
+            })?
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn remove_codex_auth_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<DesktopCodexAuthOverview, DesktopStateError> {
+        let profile_id = profile_id.to_string();
+        tokio::task::spawn_blocking(move || codex_auth::profile_remove(profile_id, None))
+            .await
+            .map_err(|error| {
+                DesktopStateError::InvalidProvider(format!("codex auth worker crashed: {error}"))
+            })?
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn refresh_codex_auth_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<DesktopCodexAuthOverview, DesktopStateError> {
+        codex_auth::profile_refresh(profile_id.to_string(), None)
+            .await
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn begin_codex_login(
+        &self,
+    ) -> Result<DesktopCodexLoginSessionSnapshot, DesktopStateError> {
+        codex_auth::login_begin(None)
+            .await
+            .map_err(DesktopStateError::InvalidProvider)
+    }
+
+    pub async fn poll_codex_login(
+        &self,
+        session_id: &str,
+    ) -> Result<DesktopCodexLoginSessionSnapshot, DesktopStateError> {
+        codex_auth::login_poll(session_id.to_string())
+            .await
             .map_err(DesktopStateError::InvalidProvider)
     }
 

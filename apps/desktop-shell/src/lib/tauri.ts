@@ -163,9 +163,12 @@ export interface DesktopProviderModel {
   capability_tags: string[];
 }
 
+export type DesktopProviderRuntimeTarget = "open_claw" | "codex";
+
 export interface DesktopProviderPreset {
   id: string;
   name: string;
+  runtime_target: DesktopProviderRuntimeTarget;
   category: string;
   provider_type: string;
   billing_category: string;
@@ -182,6 +185,7 @@ export interface DesktopProviderPreset {
 export interface DesktopManagedProvider {
   id: string;
   name: string;
+  runtime_target: DesktopProviderRuntimeTarget;
   category: string;
   provider_type: string;
   billing_category: string;
@@ -225,9 +229,90 @@ export interface DesktopOpenclawRuntimeState {
   health_warnings: string[];
 }
 
+export interface DesktopCodexRuntimeState {
+  config_dir: string;
+  auth_path: string;
+  config_path: string;
+  active_provider_key: string | null;
+  model: string | null;
+  base_url: string | null;
+  provider_count: number;
+  has_api_key: boolean;
+  has_chatgpt_tokens: boolean;
+  auth_mode: string | null;
+  auth_profile_label: string | null;
+  auth_plan_type: string | null;
+  live_providers: DesktopCodexLiveProvider[];
+  health_warnings: string[];
+}
+
+export interface DesktopCodexLiveProvider {
+  id: string;
+  name: string | null;
+  base_url: string | null;
+  wire_api: string | null;
+  requires_openai_auth: boolean;
+  model: string | null;
+  is_active: boolean;
+}
+
+export type DesktopCodexAuthSource = "imported_auth_json" | "browser_login";
+
+export interface DesktopCodexProfileSummary {
+  id: string;
+  email: string;
+  display_label: string;
+  chatgpt_account_id: string | null;
+  chatgpt_user_id: string | null;
+  chatgpt_plan_type: string | null;
+  auth_source: DesktopCodexAuthSource;
+  active: boolean;
+  applied_to_codex: boolean;
+  last_refresh_epoch: number | null;
+  access_token_expires_at_epoch: number | null;
+  updated_at_epoch: number;
+}
+
+export interface DesktopCodexInstallationRecord {
+  target_id: string;
+  target_label: string;
+  installed: boolean;
+  path: string | null;
+  auth_path: string;
+}
+
+export interface DesktopCodexAuthOverview {
+  profiles: DesktopCodexProfileSummary[];
+  installations: DesktopCodexInstallationRecord[];
+  active_profile_id: string | null;
+  auth_path: string;
+  auth_mode: string | null;
+  has_chatgpt_tokens: boolean;
+  updated_at_epoch: number;
+}
+
+export type DesktopCodexLoginSessionStatus =
+  | "pending"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface DesktopCodexLoginSessionSnapshot {
+  session_id: string;
+  status: DesktopCodexLoginSessionStatus;
+  authorize_url: string;
+  redirect_uri: string;
+  error: string | null;
+  profile: DesktopCodexProfileSummary | null;
+  created_at_epoch: number;
+  updated_at_epoch: number;
+}
+
 export interface DesktopProviderSyncResult {
   provider_id: string;
+  runtime_target: DesktopProviderRuntimeTarget;
   config_path: string;
+  auth_path: string | null;
   model_count: number;
   primary_applied: string | null;
 }
@@ -235,6 +320,8 @@ export interface DesktopProviderSyncResult {
 export interface DesktopProviderDeleteResult {
   deleted: boolean;
   provider_id: string;
+  runtime_target: DesktopProviderRuntimeTarget;
+  live_config_removed: boolean;
 }
 
 export type DesktopProviderConnectionStatus =
@@ -374,6 +461,18 @@ export interface DesktopProviderConnectionTestResponse {
 
 export interface DesktopOpenclawRuntimeResponse {
   runtime: DesktopOpenclawRuntimeState;
+}
+
+export interface DesktopCodexRuntimeResponse {
+  runtime: DesktopCodexRuntimeState;
+}
+
+export interface DesktopCodexAuthOverviewResponse {
+  overview: DesktopCodexAuthOverview;
+}
+
+export interface DesktopCodexLoginSessionResponse {
+  session: DesktopCodexLoginSessionSnapshot;
 }
 
 export interface DesktopOpenclawConfigWriteResponse {
@@ -656,6 +755,7 @@ export async function getManagedProviders(): Promise<DesktopManagedProvidersResp
 export async function upsertManagedProvider(payload: {
   id?: string | null;
   name: string;
+  runtime_target: DesktopProviderRuntimeTarget;
   category: string;
   provider_type: string;
   billing_category: string;
@@ -709,6 +809,17 @@ export async function importLiveProviders(payload?: {
   });
 }
 
+export async function importCodexLiveProviders(payload?: {
+  provider_ids?: string[];
+}): Promise<DesktopProviderImportResponse> {
+  return fetchJson<DesktopProviderImportResponse>("/api/desktop/codex/import-live", {
+    method: "POST",
+    body: JSON.stringify({
+      provider_ids: payload?.provider_ids ?? null,
+    }),
+  });
+}
+
 export async function syncManagedProvider(
   providerId: string,
   payload?: {
@@ -728,6 +839,67 @@ export async function syncManagedProvider(
 
 export async function getOpenclawRuntime(): Promise<DesktopOpenclawRuntimeResponse> {
   return fetchJson<DesktopOpenclawRuntimeResponse>("/api/desktop/openclaw/runtime");
+}
+
+export async function getCodexRuntime(): Promise<DesktopCodexRuntimeResponse> {
+  return fetchJson<DesktopCodexRuntimeResponse>("/api/desktop/codex/runtime");
+}
+
+export async function getCodexAuthOverview(): Promise<DesktopCodexAuthOverviewResponse> {
+  return fetchJson<DesktopCodexAuthOverviewResponse>("/api/desktop/codex/auth");
+}
+
+export async function importCodexAuthProfile(): Promise<DesktopCodexAuthOverviewResponse> {
+  return fetchJson<DesktopCodexAuthOverviewResponse>("/api/desktop/codex/auth/import", {
+    method: "POST",
+  });
+}
+
+export async function activateCodexAuthProfile(
+  profileId: string
+): Promise<DesktopCodexAuthOverviewResponse> {
+  return fetchJson<DesktopCodexAuthOverviewResponse>(
+    `/api/desktop/codex/auth/profiles/${profileId}/activate`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function refreshCodexAuthProfile(
+  profileId: string
+): Promise<DesktopCodexAuthOverviewResponse> {
+  return fetchJson<DesktopCodexAuthOverviewResponse>(
+    `/api/desktop/codex/auth/profiles/${profileId}/refresh`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function removeCodexAuthProfile(
+  profileId: string
+): Promise<DesktopCodexAuthOverviewResponse> {
+  return fetchJson<DesktopCodexAuthOverviewResponse>(
+    `/api/desktop/codex/auth/profiles/${profileId}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+export async function beginCodexLogin(): Promise<DesktopCodexLoginSessionResponse> {
+  return fetchJson<DesktopCodexLoginSessionResponse>("/api/desktop/codex/auth/login", {
+    method: "POST",
+  });
+}
+
+export async function pollCodexLogin(
+  sessionId: string
+): Promise<DesktopCodexLoginSessionResponse> {
+  return fetchJson<DesktopCodexLoginSessionResponse>(
+    `/api/desktop/codex/auth/login/${sessionId}`
+  );
 }
 
 export async function updateOpenclawEnv(payload: {

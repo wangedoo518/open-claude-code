@@ -3,16 +3,33 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::codex_auth::{has_chatgpt_tokens, parse_chatgpt_jwt_claims, read_auth_payload};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::StatusCode;
 use runtime::ConfigLoader;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use toml_edit::{value as toml_value, DocumentMut, InlineTable, Item};
 
 const PROVIDER_HUB_FILE: &str = "warwolf-provider-hub.json";
 const DEFAULT_OPENCLAW_CONFIG_FILE: &str = "openclaw.json";
 const ALTERNATE_OPENCLAW_CONFIG_FILE: &str = "config.json";
+const DEFAULT_CODEX_CONFIG_FILE: &str = "config.toml";
+const DEFAULT_CODEX_AUTH_FILE: &str = "auth.json";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopProviderRuntimeTarget {
+    OpenClaw,
+    Codex,
+}
+
+impl Default for DesktopProviderRuntimeTarget {
+    fn default() -> Self {
+        Self::OpenClaw
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopProviderModel {
@@ -28,6 +45,8 @@ pub struct DesktopProviderModel {
 pub struct DesktopProviderPreset {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub runtime_target: DesktopProviderRuntimeTarget,
     pub category: String,
     pub provider_type: String,
     pub billing_category: String,
@@ -45,6 +64,8 @@ pub struct DesktopProviderPreset {
 pub struct DesktopManagedProvider {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub runtime_target: DesktopProviderRuntimeTarget,
     pub category: String,
     pub provider_type: String,
     pub billing_category: String,
@@ -66,6 +87,8 @@ pub struct DesktopManagedProvider {
 pub struct DesktopManagedProviderUpsertInput {
     pub id: Option<String>,
     pub name: String,
+    #[serde(default)]
+    pub runtime_target: DesktopProviderRuntimeTarget,
     pub category: String,
     pub provider_type: String,
     pub billing_category: String,
@@ -84,12 +107,18 @@ pub struct DesktopManagedProviderUpsertInput {
 pub struct DesktopProviderDeleteResult {
     pub deleted: bool,
     pub provider_id: String,
+    #[serde(default)]
+    pub runtime_target: DesktopProviderRuntimeTarget,
+    pub live_config_removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopProviderSyncResult {
     pub provider_id: String,
+    #[serde(default)]
+    pub runtime_target: DesktopProviderRuntimeTarget,
     pub config_path: String,
+    pub auth_path: Option<String>,
     pub model_count: usize,
     pub primary_applied: Option<String>,
 }
@@ -130,6 +159,35 @@ pub struct DesktopOpenClawConfigWriteResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopCodexLiveProvider {
+    pub id: String,
+    pub name: Option<String>,
+    pub base_url: Option<String>,
+    pub wire_api: Option<String>,
+    pub requires_openai_auth: bool,
+    pub model: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopCodexRuntimeState {
+    pub config_dir: String,
+    pub auth_path: String,
+    pub config_path: String,
+    pub active_provider_key: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub provider_count: usize,
+    pub has_api_key: bool,
+    pub has_chatgpt_tokens: bool,
+    pub auth_mode: Option<String>,
+    pub auth_profile_label: Option<String>,
+    pub auth_plan_type: Option<String>,
+    pub live_providers: Vec<DesktopCodexLiveProvider>,
+    pub health_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopProviderConnectionTestInput {
     pub id: Option<String>,
     pub protocol: String,
@@ -166,6 +224,8 @@ struct ProviderHubStore {
 struct StoredManagedProvider {
     id: String,
     name: String,
+    #[serde(default)]
+    runtime_target: DesktopProviderRuntimeTarget,
     category: String,
     provider_type: String,
     billing_category: String,
@@ -182,6 +242,24 @@ struct StoredManagedProvider {
     updated_at_epoch: i64,
 }
 
+#[derive(Debug, Clone)]
+struct CodexConfigSnapshot {
+    active_provider_key: Option<String>,
+    model: Option<String>,
+    providers: Vec<CodexLiveProviderEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct CodexLiveProviderEntry {
+    key: String,
+    name: Option<String>,
+    base_url: Option<String>,
+    wire_api: Option<String>,
+    requires_openai_auth: bool,
+    model: Option<String>,
+    is_active: bool,
+}
+
 impl StoredManagedProvider {
     fn into_public(self) -> DesktopManagedProvider {
         let api_key_masked = self.api_key.as_deref().map(mask_api_key);
@@ -193,6 +271,7 @@ impl StoredManagedProvider {
         DesktopManagedProvider {
             id: self.id,
             name: self.name,
+            runtime_target: self.runtime_target,
             category: self.category,
             provider_type: self.provider_type,
             billing_category: self.billing_category,
@@ -217,6 +296,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "deepseek",
             "DeepSeek",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "cn_official",
             "deepseek",
             "official",
@@ -249,6 +329,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "zhipu-glm",
             "Zhipu GLM",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "cn_official",
             "zhipu",
             "official",
@@ -271,6 +352,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "qwen-coder",
             "Qwen Coder",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "cn_official",
             "qwen",
             "official",
@@ -293,6 +375,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "kimi-k2-5",
             "Kimi K2.5",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "cn_official",
             "kimi",
             "official",
@@ -315,6 +398,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "stepfun",
             "StepFun",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "cn_official",
             "stepfun",
             "official",
@@ -337,6 +421,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "minimax",
             "MiniMax",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "cn_official",
             "minimax",
             "official",
@@ -359,6 +444,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "openrouter-official",
             "OpenRouter Official API",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "aggregator",
             "openrouter",
             "mixed",
@@ -379,8 +465,174 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
             )],
         ),
         preset(
+            "codex-openai",
+            "OpenAI",
+            DesktopProviderRuntimeTarget::Codex,
+            "official",
+            "codex_openai",
+            "official",
+            "openai-responses",
+            "https://api.openai.com/v1",
+            true,
+            Some("https://platform.openai.com"),
+            Some("OpenAI 官方服务，仅支持通过 Codex 登录态同步到 ~/.codex 配置。"),
+            Some("openai"),
+            Some("#00A67E"),
+            vec![
+                model(
+                    "gpt-5",
+                    "GPT 5",
+                    Some(200000),
+                    Some(16384),
+                    Some("paid"),
+                    &["general", "coding", "reasoning"],
+                ),
+                model(
+                    "gpt-5-mini",
+                    "GPT 5 Mini",
+                    Some(200000),
+                    Some(16384),
+                    Some("paid"),
+                    &["general", "coding"],
+                ),
+                model(
+                    "gpt-5-nano",
+                    "GPT 5 Nano",
+                    Some(200000),
+                    Some(16384),
+                    Some("paid"),
+                    &["general"],
+                ),
+                model(
+                    "gpt-5-pro",
+                    "GPT 5 Pro",
+                    Some(200000),
+                    Some(16384),
+                    Some("paid"),
+                    &["reasoning", "coding"],
+                ),
+                model(
+                    "gpt-5-chat",
+                    "GPT 5 Chat",
+                    Some(200000),
+                    Some(16384),
+                    Some("paid"),
+                    &["general"],
+                ),
+                model(
+                    "gpt-5.1",
+                    "GPT 5.1",
+                    Some(200000),
+                    Some(16384),
+                    Some("paid"),
+                    &["general", "coding", "reasoning"],
+                ),
+                model(
+                    "gpt-image-1",
+                    "GPT Image",
+                    Some(32000),
+                    Some(8192),
+                    Some("paid"),
+                    &["image"],
+                ),
+            ],
+        ),
+        preset(
+            "codex-azure-openai",
+            "Codex Azure OpenAI",
+            DesktopProviderRuntimeTarget::Codex,
+            "official",
+            "azure_openai_codex",
+            "official",
+            "openai-responses",
+            "https://YOUR_RESOURCE_NAME.openai.azure.com/openai",
+            true,
+            Some("https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex"),
+            Some("Azure OpenAI Codex 兼容配置，会保留并写入 Codex 所需的 query params。"),
+            Some("azure"),
+            Some("#0078D4"),
+            vec![model(
+                "gpt-5.4",
+                "GPT-5.4",
+                Some(200000),
+                Some(16384),
+                Some("paid"),
+                &["coding", "reasoning"],
+            )],
+        ),
+        preset(
+            "codex-aihubmix",
+            "Codex AiHubMix",
+            DesktopProviderRuntimeTarget::Codex,
+            "aggregator",
+            "codex_aihubmix",
+            "mixed",
+            "openai-responses",
+            "https://aihubmix.com/v1",
+            false,
+            Some("https://aihubmix.com"),
+            Some("从 clawhub123 迁移的 Codex 聚合通道预设。"),
+            Some("generic"),
+            Some("#2563EB"),
+            vec![model(
+                "gpt-5.4",
+                "GPT-5.4",
+                Some(200000),
+                Some(16384),
+                Some("paid"),
+                &["coding", "reasoning"],
+            )],
+        ),
+        preset(
+            "codex-dmxapi",
+            "Codex DMXAPI",
+            DesktopProviderRuntimeTarget::Codex,
+            "third_party",
+            "codex_dmxapi",
+            "mixed",
+            "openai-responses",
+            "https://www.dmxapi.cn/v1",
+            false,
+            Some("https://www.dmxapi.cn"),
+            Some("从 clawhub123 迁移的 DMXAPI Codex 预设。"),
+            Some("generic"),
+            Some("#7C3AED"),
+            vec![model(
+                "gpt-5.4",
+                "GPT-5.4",
+                Some(200000),
+                Some(16384),
+                Some("paid"),
+                &["coding", "reasoning"],
+            )],
+        ),
+        preset(
+            "codex-openrouter",
+            "Codex OpenRouter",
+            DesktopProviderRuntimeTarget::Codex,
+            "aggregator",
+            "codex_openrouter",
+            "mixed",
+            "openai-responses",
+            "https://openrouter.ai/api/v1",
+            true,
+            Some("https://openrouter.ai"),
+            Some("OpenRouter 的 Codex Responses 兼容入口。"),
+            Some("openrouter"),
+            Some("#6566F1"),
+            vec![model(
+                "openai/gpt-5.4",
+                "GPT-5.4",
+                Some(200000),
+                Some(16384),
+                Some("paid"),
+                &["coding", "reasoning"],
+            )],
+        ),
+        preset(
             "custom-openai",
             "Custom OpenAI Compatible",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "custom",
             "custom_gateway",
             "custom",
@@ -403,6 +655,7 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
         preset(
             "custom-responses",
             "Custom Responses API",
+            DesktopProviderRuntimeTarget::OpenClaw,
             "custom",
             "custom_responses",
             "custom",
@@ -418,6 +671,29 @@ pub fn provider_presets() -> Vec<DesktopProviderPreset> {
                 "GPT-5.2 Codex",
                 Some(128000),
                 Some(8192),
+                None,
+                &["coding", "reasoning"],
+            )],
+        ),
+        preset(
+            "custom-codex",
+            "Custom Codex Provider",
+            DesktopProviderRuntimeTarget::Codex,
+            "custom",
+            "codex_custom_gateway",
+            "custom",
+            "openai-responses",
+            "https://api.example.com/v1",
+            false,
+            None,
+            Some("接入任意兼容 OpenAI Responses 的 Codex provider，并同步到 ~/.codex。"),
+            Some("codex"),
+            Some("#111827"),
+            vec![model(
+                "gpt-5.4",
+                "GPT-5.4",
+                Some(200000),
+                Some(16384),
                 None,
                 &["coding", "reasoning"],
             )],
@@ -475,6 +751,7 @@ pub fn upsert_managed_provider(
     let next = StoredManagedProvider {
         id: provider_id.clone(),
         name: normalized_name,
+        runtime_target: input.runtime_target,
         category: normalized_category,
         provider_type: normalized_provider_type,
         billing_category: normalized_billing_category,
@@ -509,20 +786,34 @@ pub fn delete_managed_provider(
 ) -> Result<DesktopProviderDeleteResult, String> {
     let normalized = normalize_required_text(provider_id, "provider id")?;
     let mut store = read_provider_store(project_path)?;
+    let removed_provider = store
+        .providers
+        .iter()
+        .find(|provider| provider.id == normalized)
+        .cloned()
+        .ok_or_else(|| format!("managed provider not found: {normalized}"))?;
     let before_len = store.providers.len();
     store.providers.retain(|provider| provider.id != normalized);
     if store.providers.len() == before_len {
         return Err(format!("managed provider not found: {normalized}"));
     }
     write_provider_store(project_path, &store)?;
-    remove_provider_from_openclaw_config(normalized.as_str())?;
+    let live_config_removed = match removed_provider.runtime_target {
+        DesktopProviderRuntimeTarget::OpenClaw => {
+            remove_provider_from_openclaw_config(normalized.as_str())?;
+            true
+        }
+        DesktopProviderRuntimeTarget::Codex => false,
+    };
     Ok(DesktopProviderDeleteResult {
         deleted: true,
         provider_id: normalized,
+        runtime_target: removed_provider.runtime_target,
+        live_config_removed,
     })
 }
 
-pub fn sync_provider_to_openclaw(
+pub fn sync_provider_to_runtime(
     project_path: &str,
     provider_id: &str,
     set_primary: bool,
@@ -539,6 +830,16 @@ pub fn sync_provider_to_openclaw(
         return Err("provider has no models configured".to_string());
     }
 
+    match provider.runtime_target {
+        DesktopProviderRuntimeTarget::OpenClaw => sync_provider_to_openclaw(provider, set_primary),
+        DesktopProviderRuntimeTarget::Codex => sync_provider_to_codex(provider),
+    }
+}
+
+fn sync_provider_to_openclaw(
+    provider: StoredManagedProvider,
+    set_primary: bool,
+) -> Result<DesktopProviderSyncResult, String> {
     let (path, mut config) = read_openclaw_config(None)?;
     let providers = ensure_providers_mut(&mut config)?;
     let model_values = provider
@@ -593,7 +894,9 @@ pub fn sync_provider_to_openclaw(
     write_openclaw_config(&path, &config)?;
     Ok(DesktopProviderSyncResult {
         provider_id: provider.id,
+        runtime_target: DesktopProviderRuntimeTarget::OpenClaw,
         config_path: path.display().to_string(),
+        auth_path: None,
         model_count: provider.models.len(),
         primary_applied,
     })
@@ -657,6 +960,10 @@ pub fn import_providers_from_openclaw_live(
         let next = StoredManagedProvider {
             id: normalized_id.clone(),
             name: title_case_provider_name(normalized_id.as_str()),
+            runtime_target: existing
+                .as_ref()
+                .map(|provider| provider.runtime_target)
+                .unwrap_or(DesktopProviderRuntimeTarget::OpenClaw),
             category: existing
                 .as_ref()
                 .map(|provider| provider.category.clone())
@@ -695,6 +1002,129 @@ pub fn import_providers_from_openclaw_live(
             created_at_epoch: existing
                 .as_ref()
                 .map(|provider| provider.created_at_epoch)
+                .unwrap_or(now),
+            updated_at_epoch: now,
+        };
+
+        if let Some(index) = index {
+            store.providers[index] = next.clone();
+        } else {
+            store.providers.push(next.clone());
+        }
+        imported.push(next.into_public());
+    }
+    write_provider_store(project_path, &store)?;
+    imported.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(imported)
+}
+
+pub fn import_providers_from_codex_live(
+    project_path: &str,
+    selected_provider_ids: Option<Vec<String>>,
+) -> Result<Vec<DesktopManagedProvider>, String> {
+    let config_path = resolve_codex_config_dir().join(DEFAULT_CODEX_CONFIG_FILE);
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+    let snapshot = load_codex_config_snapshot(&config_path)?;
+    let selected = selected_provider_ids.map(|ids| {
+        ids.into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+    });
+
+    let mut store = read_provider_store(project_path)?;
+    let now = now_unix_i64();
+    let mut imported = Vec::new();
+    for provider in snapshot.providers {
+        if let Some(selected) = selected.as_ref() {
+            if !selected.iter().any(|one| one == &provider.key) {
+                continue;
+            }
+        }
+        let normalized_id = normalize_required_text(&provider.key, "codex provider id")?;
+        let index = store
+            .providers
+            .iter()
+            .position(|existing| existing.id == normalized_id);
+        let existing = index.and_then(|one| store.providers.get(one).cloned());
+        if existing
+            .as_ref()
+            .map(|item| item.runtime_target != DesktopProviderRuntimeTarget::Codex)
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "managed provider id `{normalized_id}` already exists for another runtime"
+            ));
+        }
+
+        let next = StoredManagedProvider {
+            id: normalized_id.clone(),
+            name: provider
+                .name
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| title_case_provider_name(normalized_id.as_str())),
+            runtime_target: DesktopProviderRuntimeTarget::Codex,
+            category: existing
+                .as_ref()
+                .map(|item| item.category.clone())
+                .unwrap_or_else(|| "custom".to_string()),
+            provider_type: existing
+                .as_ref()
+                .map(|item| item.provider_type.clone())
+                .unwrap_or_else(|| normalized_id.clone()),
+            billing_category: existing
+                .as_ref()
+                .map(|item| item.billing_category.clone())
+                .unwrap_or_else(|| "imported".to_string()),
+            protocol: provider
+                .wire_api
+                .as_deref()
+                .map(codex_wire_api_to_protocol)
+                .unwrap_or("openai-responses")
+                .to_string(),
+            base_url: provider
+                .base_url
+                .as_deref()
+                .map(normalize_base_url)
+                .transpose()?
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            api_key: existing.as_ref().and_then(|item| item.api_key.clone()),
+            enabled: existing.as_ref().map(|item| item.enabled).unwrap_or(true),
+            official_verified: existing
+                .as_ref()
+                .map(|item| item.official_verified)
+                .unwrap_or(false),
+            preset_id: existing.as_ref().and_then(|item| item.preset_id.clone()),
+            website_url: existing.as_ref().and_then(|item| item.website_url.clone()),
+            description: existing
+                .as_ref()
+                .and_then(|item| item.description.clone())
+                .or_else(|| {
+                    Some(
+                        "Imported from ~/.codex/config.toml. Save and refine models before syncing back if needed."
+                            .to_string(),
+                    )
+                }),
+            models: provider
+                .model
+                .as_deref()
+                .map(|model_id| {
+                    vec![DesktopProviderModel {
+                        model_id: model_id.to_string(),
+                        display_name: model_id.to_string(),
+                        context_window: None,
+                        max_output_tokens: None,
+                        billing_kind: None,
+                        capability_tags: vec!["general".to_string()],
+                    }]
+                })
+                .unwrap_or_default(),
+            created_at_epoch: existing
+                .as_ref()
+                .map(|item| item.created_at_epoch)
                 .unwrap_or(now),
             updated_at_epoch: now,
         };
@@ -774,6 +1204,186 @@ pub fn openclaw_runtime_state() -> Result<DesktopOpenClawRuntimeState, String> {
         tool_keys,
         health_warnings,
     })
+}
+
+pub fn codex_runtime_state() -> Result<DesktopCodexRuntimeState, String> {
+    let config_dir = resolve_codex_config_dir();
+    let auth_path = config_dir.join(DEFAULT_CODEX_AUTH_FILE);
+    let config_path = config_dir.join(DEFAULT_CODEX_CONFIG_FILE);
+    let auth = read_auth_payload(None)?;
+    let has_api_key = auth
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_chatgpt_tokens = has_chatgpt_tokens(&auth);
+    let auth_mode = auth
+        .get("auth_mode")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let auth_claims = auth
+        .pointer("/tokens/id_token")
+        .and_then(Value::as_str)
+        .and_then(|jwt| parse_chatgpt_jwt_claims(jwt).ok());
+
+    let mut active_provider_key = None;
+    let mut model = None;
+    let mut base_url = None;
+    let mut live_providers = Vec::new();
+    let mut warnings = Vec::new();
+
+    if !config_path.exists() {
+        warnings.push("Codex config.toml does not exist yet.".to_string());
+    } else {
+        let snapshot = load_codex_config_snapshot(&config_path)?;
+        if snapshot.providers.is_empty()
+            && snapshot.active_provider_key.is_none()
+            && snapshot.model.is_none()
+        {
+            warnings.push("Codex config.toml is empty.".to_string());
+        } else {
+            active_provider_key = snapshot.active_provider_key.clone();
+            model = snapshot.model.clone();
+            base_url = snapshot
+                .providers
+                .iter()
+                .find(|provider| provider.is_active)
+                .and_then(|provider| provider.base_url.clone());
+            live_providers = snapshot
+                .providers
+                .into_iter()
+                .map(|provider| DesktopCodexLiveProvider {
+                    id: provider.key,
+                    name: provider.name,
+                    base_url: provider.base_url,
+                    wire_api: provider.wire_api,
+                    requires_openai_auth: provider.requires_openai_auth,
+                    model: provider.model,
+                    is_active: provider.is_active,
+                })
+                .collect();
+        }
+    }
+
+    if !auth_path.exists() {
+        warnings.push("Codex auth.json does not exist yet.".to_string());
+    }
+    if active_provider_key.is_none() {
+        warnings.push("Codex model_provider is not configured.".to_string());
+    }
+    if model.is_none() {
+        warnings.push("Codex model is not configured.".to_string());
+    }
+    if !has_api_key && !has_chatgpt_tokens {
+        warnings.push(
+            "Codex credentials are missing. Add an API key or sign in with ChatGPT.".to_string(),
+        );
+    }
+    if auth_mode.as_deref() == Some("chatgpt") && !has_chatgpt_tokens {
+        warnings
+            .push("Codex auth_mode is chatgpt but auth.json does not contain tokens.".to_string());
+    }
+
+    Ok(DesktopCodexRuntimeState {
+        config_dir: config_dir.display().to_string(),
+        auth_path: auth_path.display().to_string(),
+        config_path: config_path.display().to_string(),
+        active_provider_key,
+        model,
+        base_url,
+        provider_count: live_providers.len(),
+        has_api_key,
+        has_chatgpt_tokens,
+        auth_mode,
+        auth_profile_label: auth_claims
+            .as_ref()
+            .and_then(|claims| claims.email.clone().or(claims.chatgpt_account_id.clone())),
+        auth_plan_type: auth_claims
+            .as_ref()
+            .and_then(|claims| claims.chatgpt_plan_type.clone()),
+        live_providers,
+        health_warnings: warnings,
+    })
+}
+
+fn load_codex_config_snapshot(config_path: &PathBuf) -> Result<CodexConfigSnapshot, String> {
+    let config_text = fs::read_to_string(config_path).map_err(|error| {
+        format!(
+            "read codex config failed ({}): {error}",
+            config_path.display()
+        )
+    })?;
+    if config_text.trim().is_empty() {
+        return Ok(CodexConfigSnapshot {
+            active_provider_key: None,
+            model: None,
+            providers: Vec::new(),
+        });
+    }
+
+    let document = config_text.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "parse codex config failed ({}): {error}",
+            config_path.display()
+        )
+    })?;
+    let active_provider_key = toml_string(document.get("model_provider"));
+    let model = toml_string(document.get("model"));
+    let providers = document
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(key, item)| {
+                    let table = item.as_table_like()?;
+                    let base_url = table
+                        .get("base_url")
+                        .and_then(Item::as_value)
+                        .and_then(toml_edit::Value::as_str)
+                        .map(str::to_string);
+                    let name = table
+                        .get("name")
+                        .and_then(Item::as_value)
+                        .and_then(toml_edit::Value::as_str)
+                        .map(str::to_string);
+                    let wire_api = table
+                        .get("wire_api")
+                        .and_then(Item::as_value)
+                        .and_then(toml_edit::Value::as_str)
+                        .map(str::to_string);
+                    let requires_openai_auth = table
+                        .get("requires_openai_auth")
+                        .and_then(Item::as_value)
+                        .and_then(toml_edit::Value::as_bool)
+                        .unwrap_or(false);
+                    let is_active = active_provider_key.as_deref() == Some(key);
+                    Some(CodexLiveProviderEntry {
+                        key: key.to_string(),
+                        name,
+                        base_url,
+                        wire_api,
+                        requires_openai_auth,
+                        model: is_active.then(|| model.clone()).flatten(),
+                        is_active,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(CodexConfigSnapshot {
+        active_provider_key,
+        model,
+        providers,
+    })
+}
+
+fn codex_wire_api_to_protocol(wire_api: &str) -> &'static str {
+    match wire_api.trim() {
+        "responses" => "openai-responses",
+        _ => "openai-completions",
+    }
 }
 
 pub fn test_provider_connection(
@@ -865,6 +1475,182 @@ pub fn set_openclaw_tools(tools: Value) -> Result<DesktopOpenClawConfigWriteResu
     })
 }
 
+fn sync_provider_to_codex(
+    provider: StoredManagedProvider,
+) -> Result<DesktopProviderSyncResult, String> {
+    let api_key = provider
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let config_dir = resolve_codex_config_dir();
+    let auth_path = config_dir.join(DEFAULT_CODEX_AUTH_FILE);
+    let config_path = config_dir.join(DEFAULT_CODEX_CONFIG_FILE);
+    let existing_auth = read_auth_payload(None)?;
+    let auth_json = if let Some(api_key) = api_key {
+        build_codex_auth_json(&auth_path, api_key)?
+    } else if has_chatgpt_tokens(&existing_auth) {
+        existing_auth
+    } else {
+        return Err(
+            "codex provider requires an API key or ChatGPT login before syncing".to_string(),
+        );
+    };
+    let config_text = build_codex_config_text(&config_path, &provider)?;
+    write_codex_live_atomic(&auth_json, &config_text, &auth_path, &config_path)?;
+
+    Ok(DesktopProviderSyncResult {
+        provider_id: provider.id,
+        runtime_target: DesktopProviderRuntimeTarget::Codex,
+        config_path: config_path.display().to_string(),
+        auth_path: Some(auth_path.display().to_string()),
+        model_count: provider.models.len(),
+        primary_applied: None,
+    })
+}
+
+fn build_codex_auth_json(auth_path: &PathBuf, api_key: &str) -> Result<Value, String> {
+    let mut auth = read_codex_auth_json(auth_path)?;
+    let object = ensure_object_mut(&mut auth);
+    object.insert(
+        "OPENAI_API_KEY".to_string(),
+        Value::String(api_key.trim().to_string()),
+    );
+    Ok(auth)
+}
+
+fn build_codex_config_text(
+    config_path: &PathBuf,
+    provider: &StoredManagedProvider,
+) -> Result<String, String> {
+    let existing_text = if config_path.exists() {
+        fs::read_to_string(config_path).map_err(|error| {
+            format!(
+                "read codex config failed ({}): {error}",
+                config_path.display()
+            )
+        })?
+    } else {
+        String::new()
+    };
+    let mut document = if existing_text.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing_text.parse::<DocumentMut>().map_err(|error| {
+            format!(
+                "parse codex config failed ({}): {error}",
+                config_path.display()
+            )
+        })?
+    };
+
+    let provider_key = provider.id.as_str();
+    let model_id = provider
+        .models
+        .first()
+        .map(|model| model.model_id.as_str())
+        .ok_or_else(|| "codex provider must define at least one model".to_string())?;
+    document["model_provider"] = toml_value(provider_key);
+    document["model"] = toml_value(model_id);
+    document["model_reasoning_effort"] = toml_value("high");
+    document["disable_response_storage"] = toml_value(true);
+
+    if document.get("model_providers").is_none() {
+        document["model_providers"] = toml_edit::table();
+    }
+    let model_providers = document["model_providers"]
+        .as_table_mut()
+        .ok_or_else(|| "codex model_providers must be a table".to_string())?;
+    if !model_providers.contains_key(provider_key) {
+        model_providers[provider_key] = toml_edit::table();
+    }
+    let provider_table = model_providers[provider_key]
+        .as_table_mut()
+        .ok_or_else(|| "codex provider entry must be a table".to_string())?;
+    let codex_base_url = normalize_codex_base_url(&provider.base_url);
+    provider_table["name"] = toml_value(provider.name.as_str());
+    provider_table["base_url"] = toml_value(codex_base_url.as_str());
+    provider_table["wire_api"] = toml_value("responses");
+    provider_table["requires_openai_auth"] = toml_value(true);
+
+    if is_azure_codex_provider(provider) {
+        provider_table["env_key"] = toml_value("OPENAI_API_KEY");
+        let mut inline_table = InlineTable::default();
+        inline_table.insert("api-version", toml_edit::Value::from("2025-04-01-preview"));
+        provider_table["query_params"] = toml_value(inline_table);
+    } else {
+        provider_table.remove("env_key");
+        provider_table.remove("query_params");
+    }
+
+    Ok(document.to_string())
+}
+
+fn write_codex_live_atomic(
+    auth: &Value,
+    config_text: &str,
+    auth_path: &PathBuf,
+    config_path: &PathBuf,
+) -> Result<(), String> {
+    if let Some(parent) = auth_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "create codex config directory failed ({}): {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let old_auth = if auth_path.exists() {
+        Some(fs::read(auth_path).map_err(|error| {
+            format!("read codex auth failed ({}): {error}", auth_path.display())
+        })?)
+    } else {
+        None
+    };
+    let old_config = if config_path.exists() {
+        Some(fs::read(config_path).map_err(|error| {
+            format!(
+                "read codex config failed ({}): {error}",
+                config_path.display()
+            )
+        })?)
+    } else {
+        None
+    };
+
+    if !config_text.trim().is_empty() {
+        config_text.parse::<DocumentMut>().map_err(|error| {
+            format!(
+                "validate codex config failed ({}): {error}",
+                config_path.display()
+            )
+        })?;
+    }
+    let auth_payload = serde_json::to_string_pretty(auth)
+        .map_err(|error| format!("serialize codex auth failed: {error}"))?;
+
+    fs::write(auth_path, auth_payload)
+        .map_err(|error| format!("write codex auth failed ({}): {error}", auth_path.display()))?;
+
+    if let Err(error) = fs::write(config_path, config_text) {
+        if let Some(bytes) = old_auth {
+            let _ = fs::write(auth_path, bytes);
+        } else {
+            let _ = fs::remove_file(auth_path);
+        }
+        return Err(format!(
+            "write codex config failed ({}): {error}",
+            config_path.display()
+        ));
+    }
+
+    if old_config.is_none() && config_text.is_empty() {
+        let _ = fs::remove_file(config_path);
+    }
+    Ok(())
+}
+
 fn read_provider_store(project_path: &str) -> Result<ProviderHubStore, String> {
     let path = provider_hub_path(project_path);
     if !path.exists() {
@@ -917,6 +1703,7 @@ fn provider_hub_path(project_path: &str) -> PathBuf {
 fn preset(
     id: &str,
     name: &str,
+    runtime_target: DesktopProviderRuntimeTarget,
     category: &str,
     provider_type: &str,
     billing_category: &str,
@@ -932,6 +1719,7 @@ fn preset(
     DesktopProviderPreset {
         id: id.to_string(),
         name: name.to_string(),
+        runtime_target,
         category: category.to_string(),
         provider_type: provider_type.to_string(),
         billing_category: billing_category.to_string(),
@@ -1005,6 +1793,12 @@ fn normalize_optional_text(input: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn toml_string(item: Option<&Item>) -> Option<String> {
+    item.and_then(Item::as_value)
+        .and_then(toml_edit::Value::as_str)
+        .map(str::to_string)
+}
+
 fn resolve_connection_test_api_key(
     project_path: &str,
     provider_id: &Option<String>,
@@ -1035,6 +1829,26 @@ fn normalize_base_url(input: &str) -> Result<String, String> {
     } else {
         Err("base url must start with http:// or https://".to_string())
     }
+}
+
+fn normalize_codex_base_url(input: &str) -> String {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        return trimmed.to_string();
+    }
+
+    match trimmed.split_once("://") {
+        Some((scheme, rest)) => match rest.split_once('/') {
+            Some((_host, path)) if !path.trim_matches('/').is_empty() => trimmed.to_string(),
+            _ => format!("{scheme}://{rest}/v1"),
+        },
+        None => trimmed.to_string(),
+    }
+}
+
+fn is_azure_codex_provider(provider: &StoredManagedProvider) -> bool {
+    provider.provider_type == "azure_openai_codex"
+        || provider.preset_id.as_deref() == Some("codex-azure-openai")
 }
 
 fn connection_probe_candidates(base_url: &str, protocol: &str) -> Vec<String> {
@@ -1252,6 +2066,34 @@ fn mask_api_key(value: &str) -> String {
     let prefix = &trimmed[..4];
     let suffix = &trimmed[trimmed.len() - 4..];
     format!("{prefix}********{suffix}")
+}
+
+fn resolve_codex_config_dir() -> PathBuf {
+    if let Ok(value) = std::env::var("CODEX_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    current_home_dir().join(".codex")
+}
+
+fn read_codex_auth_json(auth_path: &PathBuf) -> Result<Value, String> {
+    if !auth_path.exists() {
+        return Ok(json!({}));
+    }
+    let raw = fs::read_to_string(auth_path)
+        .map_err(|error| format!("read codex auth failed ({}): {error}", auth_path.display()))?;
+    let parsed = serde_json::from_str::<Value>(&raw)
+        .map_err(|error| format!("parse codex auth failed ({}): {error}", auth_path.display()))?;
+    if parsed.is_object() {
+        Ok(parsed)
+    } else {
+        Err(format!(
+            "codex auth root must be a JSON object ({})",
+            auth_path.display()
+        ))
+    }
 }
 
 fn current_home_dir() -> PathBuf {
