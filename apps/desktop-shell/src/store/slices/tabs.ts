@@ -21,26 +21,14 @@ interface TabsState {
   activeTabId: string;
 }
 
-export const SYSTEM_TABS: Tab[] = [
-  {
-    id: "home",
-    type: "home",
-    path: "/home",
-    title: "首页",
-    closable: false,
-  },
-  {
-    id: "apps",
-    type: "apps",
-    path: "/apps",
-    title: "应用",
-    closable: false,
-  },
-];
-
+/**
+ * System tabs are removed — navigation (首页/应用/设置) now lives
+ * in Row 1 as fixed buttons driven by ViewMode.
+ * Only session/minapp tabs remain in Redux for Row 2.
+ */
 const initialState: TabsState = {
-  tabs: SYSTEM_TABS,
-  activeTabId: "home",
+  tabs: [],
+  activeTabId: "",
 };
 
 const tabsSlice = createSlice({
@@ -54,16 +42,6 @@ const tabsSlice = createSlice({
       }
       state.activeTabId = action.payload.id;
     },
-    ensureSystemTabs(state) {
-      for (const sysTab of SYSTEM_TABS) {
-        if (!state.tabs.some((t) => t.id === sysTab.id)) {
-          state.tabs.unshift(sysTab);
-        }
-      }
-      if (!state.tabs.some((t) => t.id === state.activeTabId)) {
-        state.activeTabId = SYSTEM_TABS[0].id;
-      }
-    },
     removeTab(state, action: PayloadAction<string>) {
       const idx = state.tabs.findIndex((t) => t.id === action.payload);
       if (idx === -1) return;
@@ -73,13 +51,11 @@ const tabsSlice = createSlice({
       state.tabs.splice(idx, 1);
       if (state.activeTabId === action.payload) {
         const newIdx = Math.min(idx, state.tabs.length - 1);
-        state.activeTabId = state.tabs[newIdx]?.id ?? SYSTEM_TABS[0].id;
+        state.activeTabId = state.tabs[newIdx]?.id ?? "";
       }
     },
     setActiveTab(state, action: PayloadAction<string>) {
-      if (state.tabs.some((t) => t.id === action.payload)) {
-        state.activeTabId = action.payload;
-      }
+      state.activeTabId = action.payload;
     },
     reorderTabs(
       state,
@@ -112,7 +88,6 @@ const tabsSlice = createSlice({
 
 export const {
   addTab,
-  ensureSystemTabs,
   removeTab,
   setActiveTab,
   reorderTabs,

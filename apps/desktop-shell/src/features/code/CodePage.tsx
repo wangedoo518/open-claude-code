@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { SessionSidebar } from "./SessionSidebar";
 import { CodeTerminal } from "./CodeTerminal";
-import { StatusBar } from "./StatusBar";
 import { updateTabSession } from "@/store/slices/tabs";
 import {
   appendMessage,
@@ -168,8 +167,6 @@ export function CodePage({
   });
 
   const activeSession = activeSessionQuery.data ?? null;
-  const activeSessionIsRunning =
-    activeSession?.turn_state === "running" || sendMessageMutation.isPending;
   const errorMessage = extractErrorMessage(
     workbenchQuery.error,
     activeSessionQuery.error,
@@ -213,8 +210,6 @@ export function CodePage({
           isSending={sendMessageMutation.isPending}
           errorMessage={errorMessage}
           onSend={handleSend}
-        />
-        <StatusBar
           modelLabel={
             activeSession?.model_label ??
             workbenchQuery.data?.composer.model_label ??
@@ -222,14 +217,14 @@ export function CodePage({
           }
           permissionModeLabel={
             workbenchQuery.data?.composer.permission_mode_label ??
-            "Danger full access"
+            "Ask permissions"
           }
           environmentLabel={
             activeSession?.environment_label ??
             workbenchQuery.data?.composer.environment_label ??
             "Local"
           }
-          isRunning={activeSessionIsRunning}
+          projectPath={workbenchQuery.data?.project_label}
         />
       </div>
     </div>

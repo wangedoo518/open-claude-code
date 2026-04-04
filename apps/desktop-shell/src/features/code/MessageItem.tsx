@@ -2,8 +2,6 @@ import { useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
-  User,
-  Bot,
   Terminal as TerminalIcon,
   FileEdit,
   Search,
@@ -37,38 +35,79 @@ export function MessageItem({ message }: MessageItemProps) {
   }
 }
 
+/**
+ * User message — card style with left blue accent bar.
+ *
+ * Uses design tokens:
+ *   --color-msg-user-bg (rgb(240,240,240) light / rgb(55,55,55) dark)
+ *   --color-label-you   (rgb(37,99,235) light / rgb(122,180,232) dark)
+ */
 function UserMessage({ content }: { content: string }) {
   return (
-    <div className="flex gap-3 px-4 py-3">
-      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-terminal-user/10">
-        <User className="size-3.5 text-terminal-user" />
-      </div>
-      <div className="flex-1 pt-0.5">
-        <div className="mb-1 text-xs font-medium text-terminal-user">You</div>
-        <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
-          {content}
+    <div className="mx-4 my-2">
+      <div
+        className="relative overflow-hidden rounded-lg border border-border/50"
+        style={{ backgroundColor: "var(--color-msg-user-bg, var(--color-accent))" }}
+      >
+        {/* Left accent bar */}
+        <div
+          className="absolute left-0 top-0 h-full w-[3px]"
+          style={{ backgroundColor: "var(--color-label-you, rgb(37,99,235))" }}
+        />
+        <div className="py-3 pl-5 pr-4">
+          <div
+            className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--color-label-you, rgb(37,99,235))" }}
+          >
+            You
+          </div>
+          <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+            {content}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
+/**
+ * Assistant message — card style with left orange accent bar.
+ *
+ * Uses design tokens:
+ *   --color-msg-assistant-bg (rgb(250,250,250) light / rgb(35,35,35) dark)
+ *   --color-label-claude     (rgb(215,119,87) — same in both modes)
+ */
 function AssistantMessage({ content }: { content: string }) {
   return (
-    <div className="flex gap-3 px-4 py-3">
-      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10">
-        <Bot className="size-3.5 text-primary" />
-      </div>
-      <div className="flex-1 pt-0.5">
-        <div className="mb-1 text-xs font-medium text-primary">Claude</div>
-        <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
-          {content}
+    <div className="mx-4 my-2">
+      <div
+        className="relative overflow-hidden rounded-lg border border-border/50"
+        style={{ backgroundColor: "var(--color-msg-assistant-bg, var(--color-background))" }}
+      >
+        {/* Left accent bar */}
+        <div
+          className="absolute left-0 top-0 h-full w-[3px]"
+          style={{ backgroundColor: "var(--color-label-claude, rgb(215,119,87))" }}
+        />
+        <div className="py-3 pl-5 pr-4">
+          <div
+            className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--color-label-claude, rgb(215,119,87))" }}
+          >
+            Assistant
+          </div>
+          <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
+            {content}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
+/**
+ * Tool use message — collapsible card with tool name and input preview.
+ */
 function ToolUseMessage({ message }: { message: ConversationMessage }) {
   const [expanded, setExpanded] = useState(false);
   const toolName = message.toolUse?.toolName ?? "Tool";
@@ -79,7 +118,7 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
   return (
     <div className="mx-4 my-1">
       <button
-        className="flex w-full items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs transition-colors hover:bg-muted/50"
+        className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-xs transition-colors hover:bg-muted/50"
         onClick={() => setExpanded(!expanded)}
       >
         {expanded ? (
@@ -96,7 +135,10 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
         )}
       </button>
       {expanded && toolInput && (
-        <div className="mt-1 rounded-b-md border border-t-0 border-border bg-terminal-bg p-3">
+        <div
+          className="mt-1 rounded-b-lg border border-t-0 border-border/50 p-3"
+          style={{ backgroundColor: "var(--color-msg-bash-bg, var(--color-muted))" }}
+        >
           <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-foreground/80">
             {toolInput}
           </pre>
@@ -106,6 +148,9 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
   );
 }
 
+/**
+ * Tool result message — collapsible card with output preview.
+ */
 function ToolResultMessage({ message }: { message: ConversationMessage }) {
   const [expanded, setExpanded] = useState(false);
   const toolName = message.toolResult?.toolName ?? "Result";
@@ -116,10 +161,10 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
     <div className="mx-4 my-1">
       <button
         className={cn(
-          "flex w-full items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors",
+          "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
           isError
             ? "border-destructive/30 bg-destructive/5 hover:bg-destructive/10"
-            : "border-border bg-muted/20 hover:bg-muted/40"
+            : "border-border/50 bg-muted/20 hover:bg-muted/40"
         )}
         onClick={() => setExpanded(!expanded)}
       >
@@ -141,7 +186,10 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
         )}
       </button>
       {expanded && (
-        <div className="mt-1 max-h-[300px] overflow-auto rounded-b-md border border-t-0 border-border bg-terminal-bg p-3">
+        <div
+          className="mt-1 max-h-[300px] overflow-auto rounded-b-lg border border-t-0 border-border/50 p-3"
+          style={{ backgroundColor: "var(--color-msg-bash-bg, var(--color-muted))" }}
+        >
           <pre className="whitespace-pre-wrap font-mono text-xs text-foreground/80">
             {output}
           </pre>
@@ -151,9 +199,12 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
   );
 }
 
+/**
+ * Error message — destructive card.
+ */
 function ErrorMessage({ content }: { content: string }) {
   return (
-    <div className="mx-4 my-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+    <div className="mx-4 my-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
       <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
       <div className="font-mono text-xs text-destructive">{content}</div>
     </div>

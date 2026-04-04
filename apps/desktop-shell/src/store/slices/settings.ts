@@ -11,6 +11,7 @@ export interface ProviderConfig {
 
 export interface AppSettings {
   theme: ThemeMode;
+  warwolfTheme: boolean;
   language: string;
   fontSize: number;
   defaultModel: string;
@@ -22,6 +23,7 @@ export interface AppSettings {
 
 const initialState: AppSettings = {
   theme: "system",
+  warwolfTheme: true,
   language: "en",
   fontSize: 14,
   defaultModel: "claude-opus-4-6",
@@ -41,6 +43,9 @@ const settingsSlice = createSlice({
   reducers: {
     setTheme(state, action: PayloadAction<ThemeMode>) {
       state.theme = action.payload;
+    },
+    setWarwolfTheme(state, action: PayloadAction<boolean>) {
+      state.warwolfTheme = action.payload;
     },
     setLanguage(state, action: PayloadAction<string>) {
       state.language = action.payload;
@@ -71,6 +76,7 @@ const settingsSlice = createSlice({
 
 export const {
   setTheme,
+  setWarwolfTheme,
   setLanguage,
   setFontSize,
   setDefaultModel,

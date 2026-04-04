@@ -97,6 +97,208 @@
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Warwolf Theme — Claude Code Design Tokens (v2.1.88)
+   Dual-track: add class="theme-warwolf" to <html> to activate.
+   Original shadcn theme is fully preserved above.
+   ═══════════════════════════════════════════════════════════════ */
+
+@layer base {
+  .theme-warwolf {
+    /* ── Layout (shadcn overrides) ── */
+    --color-background: rgb(250, 250, 250);
+    --color-foreground: rgb(10, 10, 10);
+    --color-card: rgb(255, 255, 255);
+    --color-card-foreground: rgb(10, 10, 10);
+    --color-popover: rgb(255, 255, 255);
+    --color-popover-foreground: rgb(10, 10, 10);
+    --color-primary: rgb(215, 119, 87);
+    --color-primary-foreground: rgb(255, 255, 255);
+    --color-secondary: rgb(245, 245, 245);
+    --color-secondary-foreground: rgb(10, 10, 10);
+    --color-muted: rgb(245, 245, 245);
+    --color-muted-foreground: rgb(102, 102, 102);
+    --color-accent: rgb(240, 240, 240);
+    --color-accent-foreground: rgb(10, 10, 10);
+    --color-destructive: rgb(171, 43, 63);
+    --color-destructive-foreground: rgb(255, 255, 255);
+    --color-border: rgb(229, 229, 229);
+    --color-input: rgb(229, 229, 229);
+    --color-ring: rgb(215, 119, 87);
+
+    /* ── Sidebar ── */
+    --color-sidebar-background: rgb(245, 245, 245);
+    --color-sidebar-foreground: rgb(102, 102, 102);
+    --color-sidebar-primary: rgb(215, 119, 87);
+    --color-sidebar-primary-foreground: rgb(255, 255, 255);
+    --color-sidebar-accent: rgb(240, 240, 240);
+    --color-sidebar-accent-foreground: rgb(10, 10, 10);
+    --color-sidebar-border: rgb(229, 229, 229);
+    --color-sidebar-ring: rgb(215, 119, 87);
+
+    /* ── Brand ── */
+    --claude-orange: rgb(215, 119, 87);
+    --claude-orange-shimmer: rgb(245, 149, 117);
+    --claude-blue: rgb(87, 105, 247);
+    --claude-blue-shimmer: rgb(137, 155, 255);
+
+    /* ── Semantic feedback ── */
+    --color-success: rgb(44, 122, 57);
+    --color-error: rgb(171, 43, 63);
+    --color-warning: rgb(150, 108, 30);
+
+    /* ── Text ── */
+    --color-text-primary: rgb(0, 0, 0);
+    --color-text-inverse: rgb(255, 255, 255);
+    --color-text-inactive: rgb(102, 102, 102);
+    --color-text-subtle: rgb(175, 175, 175);
+
+    /* ── Message backgrounds ── */
+    --color-msg-user-bg: rgb(240, 240, 240);
+    --color-msg-user-bg-hover: rgb(252, 252, 252);
+    --color-msg-assistant-bg: rgb(250, 250, 250);
+    --color-msg-actions-bg: rgb(232, 236, 244);
+    --color-msg-bash-bg: rgb(250, 245, 250);
+    --color-msg-memory-bg: rgb(230, 245, 250);
+
+    /* ── Selection ── */
+    --color-selection-bg: rgb(180, 213, 255);
+
+    /* ── Borders ── */
+    --color-border-prompt: rgb(153, 153, 153);
+    --color-border-bash: rgb(255, 0, 135);
+
+    /* ── Diff ── */
+    --color-diff-added: rgb(105, 219, 124);
+    --color-diff-removed: rgb(255, 168, 180);
+    --color-diff-added-word: rgb(47, 157, 68);
+    --color-diff-removed-word: rgb(209, 69, 75);
+
+    /* ── Labels ── */
+    --color-label-you: rgb(37, 99, 235);
+    --color-label-claude: rgb(215, 119, 87);
+
+    /* ── Fast mode ── */
+    --color-fast-mode: rgb(255, 106, 0);
+
+    /* ── Rate limit ── */
+    --color-rate-fill: rgb(87, 105, 247);
+    --color-rate-empty: rgb(39, 47, 111);
+
+    /* ── Permission ── */
+    --color-permission: rgb(87, 105, 247);
+    --color-suggestion: rgb(87, 105, 247);
+
+    /* ── Terminal (override) ── */
+    --color-terminal-bg: rgb(250, 250, 250);
+    --color-terminal-user: rgb(37, 99, 235);
+    --color-terminal-tool: rgb(44, 122, 57);
+    --color-terminal-error: rgb(171, 43, 63);
+
+    /* ── Agent palette (mode-independent) ── */
+    --agent-red: rgb(220, 38, 38);
+    --agent-blue: rgb(37, 99, 235);
+    --agent-green: rgb(22, 163, 74);
+    --agent-yellow: rgb(202, 138, 4);
+    --agent-purple: rgb(147, 51, 234);
+    --agent-orange: rgb(234, 88, 12);
+    --agent-pink: rgb(219, 39, 119);
+    --agent-cyan: rgb(8, 145, 178);
+  }
+
+  .theme-warwolf.dark {
+    /* ── Layout (shadcn overrides) ── */
+    --color-background: rgb(25, 25, 25);
+    --color-foreground: rgb(229, 229, 229);
+    --color-card: rgb(30, 30, 30);
+    --color-card-foreground: rgb(229, 229, 229);
+    --color-popover: rgb(30, 30, 30);
+    --color-popover-foreground: rgb(229, 229, 229);
+    --color-primary: rgb(215, 119, 87);
+    --color-primary-foreground: rgb(255, 255, 255);
+    --color-secondary: rgb(45, 45, 45);
+    --color-secondary-foreground: rgb(229, 229, 229);
+    --color-muted: rgb(45, 45, 45);
+    --color-muted-foreground: rgb(153, 153, 153);
+    --color-accent: rgb(55, 55, 55);
+    --color-accent-foreground: rgb(229, 229, 229);
+    --color-destructive: rgb(255, 107, 128);
+    --color-destructive-foreground: rgb(255, 255, 255);
+    --color-border: rgb(64, 64, 64);
+    --color-input: rgb(64, 64, 64);
+    --color-ring: rgb(215, 119, 87);
+
+    /* ── Sidebar ── */
+    --color-sidebar-background: rgb(30, 30, 30);
+    --color-sidebar-foreground: rgb(153, 153, 153);
+    --color-sidebar-primary: rgb(215, 119, 87);
+    --color-sidebar-primary-foreground: rgb(255, 255, 255);
+    --color-sidebar-accent: rgb(55, 55, 55);
+    --color-sidebar-accent-foreground: rgb(229, 229, 229);
+    --color-sidebar-border: rgb(64, 64, 64);
+    --color-sidebar-ring: rgb(215, 119, 87);
+
+    /* ── Brand ── */
+    --claude-orange: rgb(215, 119, 87);
+    --claude-orange-shimmer: rgb(235, 159, 127);
+    --claude-blue: rgb(177, 185, 249);
+    --claude-blue-shimmer: rgb(207, 215, 255);
+
+    /* ── Semantic feedback ── */
+    --color-success: rgb(78, 186, 101);
+    --color-error: rgb(255, 107, 128);
+    --color-warning: rgb(255, 193, 7);
+
+    /* ── Text ── */
+    --color-text-primary: rgb(255, 255, 255);
+    --color-text-inverse: rgb(0, 0, 0);
+    --color-text-inactive: rgb(153, 153, 153);
+    --color-text-subtle: rgb(80, 80, 80);
+
+    /* ── Message backgrounds ── */
+    --color-msg-user-bg: rgb(55, 55, 55);
+    --color-msg-user-bg-hover: rgb(70, 70, 70);
+    --color-msg-assistant-bg: rgb(35, 35, 35);
+    --color-msg-actions-bg: rgb(44, 50, 62);
+    --color-msg-bash-bg: rgb(65, 60, 65);
+    --color-msg-memory-bg: rgb(55, 65, 70);
+
+    /* ── Selection ── */
+    --color-selection-bg: rgb(38, 79, 120);
+
+    /* ── Borders ── */
+    --color-border-prompt: rgb(136, 136, 136);
+    --color-border-bash: rgb(253, 93, 177);
+
+    /* ── Diff ── */
+    --color-diff-added: rgb(34, 92, 43);
+    --color-diff-removed: rgb(122, 41, 54);
+    --color-diff-added-word: rgb(56, 166, 96);
+    --color-diff-removed-word: rgb(179, 89, 107);
+
+    /* ── Labels ── */
+    --color-label-you: rgb(122, 180, 232);
+    --color-label-claude: rgb(215, 119, 87);
+
+    /* ── Fast mode ── */
+    --color-fast-mode: rgb(255, 120, 20);
+
+    /* ── Rate limit ── */
+    --color-rate-fill: rgb(177, 185, 249);
+    --color-rate-empty: rgb(80, 83, 112);
+
+    /* ── Permission ── */
+    --color-permission: rgb(177, 185, 249);
+    --color-suggestion: rgb(177, 185, 249);
+
+    /* ── Terminal (override) ── */
+    --color-terminal-bg: rgb(25, 25, 25);
+    --color-terminal-user: rgb(122, 180, 232);
+    --color-terminal-tool: rgb(78, 186, 101);
+    --color-terminal-error: rgb(255, 107, 128);
+  }
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

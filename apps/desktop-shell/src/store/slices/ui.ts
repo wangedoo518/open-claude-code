@@ -1,27 +1,41 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 
+/**
+ * NavSection — all possible navigation pages inside Home.
+ * "session" is the code-session view (needs a sessionId separately via ViewMode).
+ */
+export type NavSection =
+  | "overview"
+  | "session"
+  | "search"
+  | "scheduled"
+  | "dispatch"
+  | "customize"
+  | "openclaw"
+  | "settings";
+
+/**
+ * ViewMode — unified navigation state that prevents conflicts between
+ * homeSection and activeHomeSessionId. Exactly one of:
+ *   - nav:     viewing a navigation page (overview, search, settings, etc.)
+ *   - session: viewing a specific code session
+ */
+export type ViewMode =
+  | { kind: "nav"; section: NavSection }
+  | { kind: "session"; sessionId: string };
+
 interface UiState {
   sidebarOpen: boolean;
   sidebarWidth: number;
   commandPaletteOpen: boolean;
-  homeSection:
-    | "overview"
-    | "session"
-    | "search"
-    | "scheduled"
-    | "dispatch"
-    | "customize"
-    | "openclaw"
-    | "settings";
-  activeHomeSessionId: string | null;
+  viewMode: ViewMode;
 }
 
 const initialState: UiState = {
   sidebarOpen: true,
   sidebarWidth: 240,
   commandPaletteOpen: false,
-  homeSection: "overview",
-  activeHomeSessionId: null,
+  viewMode: { kind: "nav", section: "overview" },
 };
 
 const uiSlice = createSlice({
@@ -40,11 +54,15 @@ const uiSlice = createSlice({
     setCommandPaletteOpen(state, action: PayloadAction<boolean>) {
       state.commandPaletteOpen = action.payload;
     },
-    setHomeSection(state, action: PayloadAction<UiState["homeSection"]>) {
-      state.homeSection = action.payload;
-    },
-    setActiveHomeSessionId(state, action: PayloadAction<string | null>) {
-      state.activeHomeSessionId = action.payload;
+    /**
+     * Set the unified view mode. Replaces both setHomeSection and setActiveHomeSessionId.
+     *
+     * Usage:
+     *   dispatch(setViewMode({ kind: "nav", section: "settings" }))
+     *   dispatch(setViewMode({ kind: "session", sessionId: "abc-123" }))
+     */
+    setViewMode(state, action: PayloadAction<ViewMode>) {
+      state.viewMode = action.payload;
     },
   },
 });
@@ -54,7 +72,6 @@ export const {
   setSidebarOpen,
   setSidebarWidth,
   setCommandPaletteOpen,
-  setHomeSection,
-  setActiveHomeSessionId,
+  setViewMode,
 } = uiSlice.actions;
 export default uiSlice.reducer;

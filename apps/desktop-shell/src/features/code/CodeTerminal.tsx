@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2, Terminal, Sparkles } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ContentHeader } from "./ContentHeader";
 import { MessageItem } from "./MessageItem";
 import { InputBar } from "./InputBar";
 import type {
@@ -16,6 +17,15 @@ interface CodeTerminalProps {
   isSending: boolean;
   errorMessage?: string;
   onSend: (message: string) => void | Promise<void>;
+  onStop?: () => void;
+  /** Model label for ContentHeader + InputBar */
+  modelLabel?: string;
+  /** Permission mode label for InputBar */
+  permissionModeLabel?: string;
+  /** Environment label for ContentHeader + InputBar */
+  environmentLabel?: string;
+  /** Project path for ContentHeader */
+  projectPath?: string;
 }
 
 export function CodeTerminal({
@@ -24,6 +34,11 @@ export function CodeTerminal({
   isSending,
   errorMessage,
   onSend,
+  onStop,
+  modelLabel = "Opus 4.6",
+  permissionModeLabel = "Ask permissions",
+  environmentLabel = "Local",
+  projectPath,
 }: CodeTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messages = useMemo(
@@ -40,6 +55,14 @@ export function CodeTerminal({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      {/* ContentHeader — transparent, merges with content */}
+      <ContentHeader
+        projectPath={projectPath}
+        modelLabel={modelLabel}
+        environmentLabel={environmentLabel}
+        isStreaming={isRunning}
+      />
+
       {messages.length === 0 && !isLoadingSession ? (
         <WelcomeScreen />
       ) : (
@@ -48,7 +71,7 @@ export function CodeTerminal({
             {isLoadingSession && (
               <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
-                <span>Loading session…</span>
+                <span>Loading session...</span>
               </div>
             )}
             {messages.map((msg) => (
@@ -65,14 +88,21 @@ export function CodeTerminal({
               </div>
             )}
             {errorMessage && (
-              <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              <div className="mx-4 mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                 {errorMessage}
               </div>
             )}
           </div>
         </ScrollArea>
       )}
-      <InputBar onSend={onSend} isBusy={isRunning} />
+
+      <InputBar
+        onSend={onSend}
+        onStop={onStop}
+        isBusy={isRunning}
+        permissionModeLabel={permissionModeLabel}
+        environmentLabel={environmentLabel}
+      />
     </div>
   );
 }
@@ -118,7 +148,7 @@ function WelcomeScreen() {
         ].map((item) => (
           <div
             key={item.title}
-            className="rounded-lg border border-border bg-muted/20 p-3"
+            className="rounded-lg border border-border/50 bg-muted/20 p-3"
           >
             <item.icon className="mb-2 size-4 text-muted-foreground" />
             <div className="text-xs font-medium">{item.title}</div>

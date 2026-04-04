@@ -1,13 +1,24 @@
 import { useAppDispatch, useAppSelector } from "@/store";
-import { setTheme, setFontSize, type ThemeMode } from "@/store/slices/settings";
+import {
+  setTheme,
+  setFontSize,
+  setLanguage,
+  type ThemeMode,
+} from "@/store/slices/settings";
 import { SettingGroup, SettingRow } from "../components/SettingGroup";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+const LANGUAGES = [
+  { value: "en", label: "English" },
+  { value: "zh-CN", label: "简体中文" },
+] as const;
 
 export function GeneralSettings() {
   const dispatch = useAppDispatch();
   const theme = useAppSelector((s) => s.settings.theme);
   const fontSize = useAppSelector((s) => s.settings.fontSize);
+  const language = useAppSelector((s) => s.settings.language);
 
   const themes: { value: ThemeMode; label: string }[] = [
     { value: "light", label: "Light" },
@@ -57,9 +68,19 @@ export function GeneralSettings() {
         description="Application display language"
       >
         <SettingRow label="Language">
-          <Button variant="outline" size="sm" className="text-xs">
-            English
-          </Button>
+          <div className="flex gap-1">
+            {LANGUAGES.map((lang) => (
+              <Button
+                key={lang.value}
+                variant={language === lang.value ? "default" : "outline"}
+                size="sm"
+                className="text-xs"
+                onClick={() => dispatch(setLanguage(lang.value))}
+              >
+                {lang.label}
+              </Button>
+            ))}
+          </div>
         </SettingRow>
       </SettingGroup>
     </div>

@@ -1,10 +1,17 @@
 import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Plus, Sun, Moon, Monitor, Settings } from "lucide-react";
+import {
+  Plus,
+  Sun,
+  Moon,
+  Monitor,
+  House,
+  LayoutGrid,
+  Settings,
+} from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store";
 import {
   addTab,
-  ensureSystemTabs,
   setActiveTab,
   removeTab,
   updateTabTitle,
@@ -14,7 +21,7 @@ import {
   removeOpenedApp,
   setCurrentAppId,
 } from "@/store/slices/minapps";
-import { setActiveHomeSessionId, setHomeSection } from "@/store/slices/ui";
+import { setViewMode } from "@/store/slices/ui";
 import { useTheme } from "@/components/ThemeProvider";
 import {
   getAllMinApps,
@@ -29,59 +36,52 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 /**
- * Top tab bar matching cherry-studio's TabContainer layout:
+ * Dual-row top bar — Claude Code desktop style:
  *
- * [macOS traffic lights] [Tabs...] [+ Add] [Theme] [Settings]
+ * Row 1 (36px): [traffic lights] [Nav: 首页 | 应用 | 设置] [spacer] [Theme toggle]
+ * Row 2 (32px): [traffic lights spacer] [Session tabs...] [+ New]  — conditional
  *
- * - Height: matches --navbar-height
- * - Tabs: 30px height, 90px min-width
- * - Right controls: 30×30px icon buttons
- * - macOS: draggable title bar region
+ * Row 2 auto-hides when no session/minapp tabs are open.
  */
 export function TabBar() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const location = useLocation();
   const { tabs, activeTabId } = useAppSelector((s) => s.tabs);
+  const viewMode = useAppSelector((s) => s.ui.viewMode);
   const openedKeepAliveApps = useAppSelector(
     (s) => s.minapps.openedKeepAliveApps
   );
   const { theme, setThemeMode } = useTheme();
 
+  const pathname = location.pathname;
+
+  // ─── Derived nav state ────────────────────────────────────────
+  const isOnHome = pathname === "/home" || pathname === "/";
+  const isOnApps = pathname.startsWith("/apps");
+  const isSettingsActive =
+    isOnHome && viewMode.kind === "nav" && viewMode.section === "settings";
+  const isHomeActive = isOnHome && !isSettingsActive;
+  const isAppsActive = isOnApps;
+
+  // Session/minapp tabs only (no system tabs)
+  const sessionTabs = tabs;
+
+  // ─── MinApp title resolver ────────────────────────────────────
   const resolveMinAppTitle = (appId: string) => {
     const app = resolveMinApp(appId, openedKeepAliveApps, getAllMinApps());
-    if (app?.name) {
-      return app.name;
-    }
-    if (appId.startsWith("openclaw")) {
-      return "OpenClaw";
-    }
+    if (app?.name) return app.name;
+    if (appId.startsWith("openclaw")) return "OpenClaw";
     return appId;
   };
 
+  // ─── Route → tab sync (minapps only) ─────────────────────────
   useEffect(() => {
-    dispatch(ensureSystemTabs());
-  }, [dispatch]);
-
-  // Sync active tab with current route
-  useEffect(() => {
-    const pathname = location.pathname;
-    if (pathname === "/home" || pathname === "/") {
-      dispatch(setActiveTab("home"));
-      return;
-    }
-
-    if (pathname === "/apps") {
-      dispatch(setActiveTab("apps"));
-      return;
-    }
-
     const minAppId = getMinAppIdFromPath(pathname);
-    if (!minAppId) {
-      return;
-    }
+    if (!minAppId) return;
 
     const tabId = getMinAppTabId(minAppId);
     const title = resolveMinAppTitle(minAppId);
@@ -107,8 +107,24 @@ export function TabBar() {
     }
 
     dispatch(setActiveTab(tabId));
-  }, [dispatch, location.pathname, openedKeepAliveApps, tabs]);
+  }, [dispatch, pathname, openedKeepAliveApps, tabs]);
 
+  // ─── Row 1 nav handlers ──────────────────────────────────────
+  const handleNavHome = () => {
+    dispatch(setViewMode({ kind: "nav", section: "overview" }));
+    navigate("/home");
+  };
+
+  const handleNavApps = () => {
+    navigate("/apps");
+  };
+
+  const handleNavSettings = () => {
+    dispatch(setViewMode({ kind: "nav", section: "settings" }));
+    navigate("/home");
+  };
+
+  // ─── Row 2 tab handlers ──────────────────────────────────────
   const handleTabSelect = (tab: Tab) => {
     const minAppId = getMinAppIdFromPath(tab.path);
     if (minAppId) {
@@ -118,10 +134,8 @@ export function TabBar() {
     navigate(tab.path);
   };
 
-  const handleNewTab = () => {
-    dispatch(setActiveTab("home"));
-    dispatch(setActiveHomeSessionId(null));
-    dispatch(setHomeSection("session"));
+  const handleNewSession = () => {
+    dispatch(setViewMode({ kind: "nav", section: "session" }));
     navigate("/home");
   };
 
@@ -146,25 +160,21 @@ export function TabBar() {
 
     dispatch(removeTab(tabId));
 
-    if (!nextTab) {
-      return;
+    if (nextTab) {
+      const nextAppId = getMinAppIdFromPath(nextTab.path);
+      if (nextAppId) {
+        dispatch(setCurrentAppId(nextAppId));
+      }
+      dispatch(setActiveTab(nextTab.id));
+      navigate(nextTab.path);
+    } else {
+      // No tabs left, go home
+      dispatch(setViewMode({ kind: "nav", section: "overview" }));
+      navigate("/home");
     }
-
-    const nextAppId = getMinAppIdFromPath(nextTab.path);
-    if (nextAppId) {
-      dispatch(setCurrentAppId(nextAppId));
-    }
-
-    dispatch(setActiveTab(nextTab.id));
-    navigate(nextTab.path);
   };
 
-  const handleOpenSettings = () => {
-    dispatch(setActiveTab("home"));
-    dispatch(setHomeSection("settings"));
-    navigate("/home");
-  };
-
+  // ─── Theme cycling ────────────────────────────────────────────
   const cycleTheme = () => {
     const order = ["light", "dark", "system"] as const;
     const idx = order.indexOf(theme);
@@ -175,78 +185,129 @@ export function TabBar() {
     theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
 
   return (
-    <div
-      className="flex h-10 items-center border-b border-border bg-muted/30"
-      data-tauri-drag-region
-    >
-      {/* macOS traffic light spacing */}
-      <div className="w-[78px] shrink-0" data-tauri-drag-region />
-
-      {/* Tab list — scrollable container */}
+    <div className="flex flex-col">
+      {/* ══ Row 1 — Navigation ══════════════════════════════════ */}
       <div
-        className="flex flex-1 items-center gap-0.5 overflow-x-auto px-1 scrollbar-none"
+        className="flex h-9 items-center border-b border-border/50 bg-muted/30"
         data-tauri-drag-region
       >
-        {tabs.map((tab) => (
-          <TabItem
-            key={tab.id}
-            id={tab.id}
-            title={tab.title}
-            type={tab.type}
-            active={tab.id === activeTabId}
-            closable={tab.closable}
-            onSelect={() => handleTabSelect(tab)}
-            onClose={() => handleTabClose(tab.id)}
-            onMiddleClick={() => {
-              if (tab.closable) handleTabClose(tab.id);
-            }}
+        {/* macOS traffic light spacing */}
+        <div className="w-[78px] shrink-0" data-tauri-drag-region />
+
+        {/* Nav buttons */}
+        <nav className="flex items-center gap-0.5 px-1">
+          <NavButton
+            icon={House}
+            label="首页"
+            active={isHomeActive}
+            onClick={handleNavHome}
           />
-        ))}
+          <NavButton
+            icon={LayoutGrid}
+            label="应用"
+            active={isAppsActive}
+            onClick={handleNavApps}
+          />
+          <NavButton
+            icon={Settings}
+            label="设置"
+            active={isSettingsActive}
+            onClick={handleNavSettings}
+          />
+        </nav>
 
-        {/* Add tab button — 30×30px matching cherry-studio */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              className="flex size-[30px] shrink-0 items-center justify-center rounded-md cursor-pointer text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onClick={handleNewTab}
-            >
-              <Plus className="size-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>New Session</TooltipContent>
-        </Tooltip>
+        {/* Draggable spacer */}
+        <div className="flex-1" data-tauri-drag-region />
+
+        {/* Right controls */}
+        <div className="flex shrink-0 items-center gap-1 pr-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="flex size-7 items-center justify-center rounded-md cursor-pointer text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+                onClick={cycleTheme}
+              >
+                <ThemeIcon className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Theme: {theme.charAt(0).toUpperCase() + theme.slice(1)}
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
-      {/* Right controls — matching cherry-studio RightButtonsContainer */}
-      <div className="flex shrink-0 items-center gap-1.5 pr-3">
-        {/* Theme toggle — 30×30px */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              className="flex size-[30px] items-center justify-center rounded-lg cursor-pointer text-foreground transition-colors hover:bg-accent"
-              onClick={cycleTheme}
-            >
-              <ThemeIcon className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            Theme: {theme.charAt(0).toUpperCase() + theme.slice(1)}
-          </TooltipContent>
-        </Tooltip>
+      {/* ══ Row 2 — Session Tabs (conditional) ══════════════════ */}
+      {sessionTabs.length > 0 && (
+        <div
+          className="flex h-8 items-center border-b border-border/30 bg-muted/20 shadow-sm"
+        >
+          {/* Traffic light alignment spacer */}
+          <div className="w-[78px] shrink-0" />
 
-        {/* Settings button — 30×30px */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              className="flex size-[30px] items-center justify-center rounded-lg cursor-pointer text-foreground transition-colors hover:bg-accent"
-              onClick={handleOpenSettings}
-            >
-              <Settings className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Settings</TooltipContent>
-        </Tooltip>
-      </div>
+          {/* Tab list — scrollable */}
+          <div className="flex flex-1 items-center gap-0.5 overflow-x-auto px-1 scrollbar-none">
+            {sessionTabs.map((tab) => (
+              <TabItem
+                key={tab.id}
+                id={tab.id}
+                title={tab.title}
+                type={tab.type}
+                active={tab.id === activeTabId}
+                closable={tab.closable}
+                onSelect={() => handleTabSelect(tab)}
+                onClose={() => handleTabClose(tab.id)}
+                onMiddleClick={() => {
+                  if (tab.closable) handleTabClose(tab.id);
+                }}
+              />
+            ))}
+
+            {/* Add session button */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md cursor-pointer text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={handleNewSession}
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>New Session</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Row 1 navigation button — fixed items (not Redux tabs).
+ */
+function NavButton({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: typeof House;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={cn(
+        "flex h-[26px] items-center gap-1.5 rounded-md px-2 text-[12px] cursor-pointer transition-colors select-none",
+        active
+          ? "bg-background text-foreground shadow-sm font-medium"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+      )}
+      onClick={onClick}
+    >
+      <Icon className="size-3.5" />
+      <span>{label}</span>
+    </button>
   );
 }

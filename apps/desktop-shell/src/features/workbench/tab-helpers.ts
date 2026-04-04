@@ -1,18 +1,17 @@
 import type { AppDispatch } from "@/store";
-import { setActiveTab } from "@/store/slices/tabs";
-import { setActiveHomeSessionId, setHomeSection } from "@/store/slices/ui";
+import { setViewMode } from "@/store/slices/ui";
 
 export function openHomeSession(
   dispatch: AppDispatch,
   sessionId: string | null
 ) {
-  dispatch(setActiveTab("home"));
-  dispatch(setActiveHomeSessionId(sessionId));
-  dispatch(setHomeSection("session"));
+  if (sessionId) {
+    dispatch(setViewMode({ kind: "session", sessionId }));
+  } else {
+    dispatch(setViewMode({ kind: "nav", section: "session" }));
+  }
 }
 
 export function openHomeOverview(dispatch: AppDispatch) {
-  dispatch(setActiveTab("home"));
-  dispatch(setActiveHomeSessionId(null));
-  dispatch(setHomeSection("overview"));
+  dispatch(setViewMode({ kind: "nav", section: "overview" }));
 }

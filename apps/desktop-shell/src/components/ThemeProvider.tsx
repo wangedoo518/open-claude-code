@@ -6,27 +6,33 @@ import {
   type ReactNode,
 } from "react";
 import { useAppSelector, useAppDispatch } from "@/store";
-import { setTheme, type ThemeMode } from "@/store/slices/settings";
+import { setTheme, setWarwolfTheme, type ThemeMode } from "@/store/slices/settings";
 
 type ResolvedTheme = "light" | "dark";
 
 interface ThemeContextValue {
   theme: ThemeMode;
   resolvedTheme: ResolvedTheme;
+  warwolfEnabled: boolean;
   setThemeMode: (theme: ThemeMode) => void;
+  setWarwolf: (enabled: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: "system",
   resolvedTheme: "dark",
+  warwolfEnabled: true,
   setThemeMode: () => {},
+  setWarwolf: () => {},
 });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const dispatch = useAppDispatch();
   const theme = useAppSelector((s) => s.settings.theme);
+  const warwolfTheme = useAppSelector((s) => s.settings.warwolfTheme);
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("dark");
 
+  // Resolve and apply light/dark class
   useEffect(() => {
     const resolve = () => {
       if (theme === "system") {
@@ -46,6 +52,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.add(resolved);
   }, [theme]);
 
+  // Listen for system theme changes
   useEffect(() => {
     if (theme !== "system") return;
 
@@ -61,12 +68,34 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
+  // Apply or remove warwolf theme class
+  useEffect(() => {
+    const root = document.documentElement;
+    if (warwolfTheme) {
+      root.classList.add("theme-warwolf");
+    } else {
+      root.classList.remove("theme-warwolf");
+    }
+  }, [warwolfTheme]);
+
   const setThemeMode = (mode: ThemeMode) => {
     dispatch(setTheme(mode));
   };
 
+  const setWarwolf = (enabled: boolean) => {
+    dispatch(setWarwolfTheme(enabled));
+  };
+
   return (
-    <ThemeContext.Provider value={{ theme, resolvedTheme, setThemeMode }}>
+    <ThemeContext.Provider
+      value={{
+        theme,
+        resolvedTheme,
+        warwolfEnabled: warwolfTheme,
+        setThemeMode,
+        setWarwolf,
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

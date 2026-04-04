@@ -1,7 +1,6 @@
 import { Code } from "lucide-react";
 import { useAppDispatch } from "@/store";
-import { setActiveTab } from "@/store/slices/tabs";
-import { setHomeSection } from "@/store/slices/ui";
+import { setViewMode } from "@/store/slices/ui";
 import { openHomeSession } from "./tab-helpers";
 import { CherryOpenClawIcon } from "@/components/icons/CherryIcons";
 
@@ -45,8 +44,7 @@ export function AppsPage() {
                       return;
                     }
 
-                    dispatch(setHomeSection("openclaw"));
-                    dispatch(setActiveTab("home"));
+                    dispatch(setViewMode({ kind: "nav", section: "openclaw" }));
                   }}
                 >
                   <div className="relative flex h-14 w-14 items-center justify-center">
