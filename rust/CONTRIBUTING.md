@@ -1,17 +1,18 @@
 # Contributing
 
-Thanks for contributing to Claw Code.
+Thanks for contributing to Open Claude Code's Rust integration layer.
 
 ## Development setup
 
 - Install the stable Rust toolchain.
-- Work from the repository root in this Rust workspace. If you started from the parent repo root, `cd rust/` first.
+- Work from `rust/`. If you started from the repository root, `cd rust/` first.
+- Treat `claw-code-parity` as the upstream Rust core. Changes to `api`, `runtime`, `tools`, or `plugins` usually belong there first, then get pulled in here by bumping the pinned Git revision.
 
 ## Build
 
 ```bash
-cargo build
-cargo build --release
+cargo build --workspace
+cargo build --release --workspace
 ```
 
 ## Test and verify
@@ -32,6 +33,7 @@ If you change behavior, add or update the relevant tests in the same pull reques
 - Follow the existing patterns in the touched crate instead of introducing a new style.
 - Format code with `rustfmt`.
 - Keep `clippy` clean for the workspace targets you changed.
+- Keep downstream compatibility shims small and document why they are needed when parity APIs change.
 - Prefer focused diffs over drive-by refactors.
 
 ## Pull requests

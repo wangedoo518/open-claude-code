@@ -1,5 +1,7 @@
 # PARITY GAP ANALYSIS
 
+> Historical note (2026-04-04): this document analyzes the earlier vendored Rust port that used to live under `open-claude-code/rust/crates/{api,runtime,tools,commands,plugins,compat-harness,claw-cli,lsp}`. Those crates are no longer part of the active workspace here; the live Rust core now comes from `claw-code-parity`.
+
 Scope: read-only comparison between the original TypeScript source at `/home/bellman/Workspace/claw-code/src/` and the Rust port under `rust/crates/`.
 
 Method: compared feature surfaces, registries, entrypoints, and runtime plumbing only. No TypeScript source was copied.
