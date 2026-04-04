@@ -732,6 +732,7 @@ export async function openDashboardUrl(url: string): Promise<void> {
 export interface OpenclawInstallCheck {
   installed: boolean;
   path: string | null;
+  needsMigration: boolean;
 }
 
 export interface OpenclawGatewayStatusResult {

@@ -1,4 +1,3 @@
-import { useNavigate } from "react-router-dom";
 import { useMinappPopup } from "@/hooks/useMinappPopup";
 import { MinAppIcon } from "./MinAppIcon";
 import type { MinAppType } from "@/types/minapp";
@@ -19,17 +18,15 @@ interface MinAppProps {
  * Mirrors cherry-studio's MinApp.tsx component.
  */
 export function MinApp({ app, onClick, size = 60 }: MinAppProps) {
-  const { openMinappKeepAlive, openedKeepAliveApps, currentAppId } =
+  const { openSmartMinapp, openedKeepAliveApps, currentAppId } =
     useMinappPopup();
-  const navigate = useNavigate();
 
   const isOpened = openedKeepAliveApps.some((a) => a.id === app.id);
   const isActive = currentAppId === app.id;
 
   const handleClick = () => {
     // Top-tab mode: navigate to the app detail route
-    openMinappKeepAlive(app);
-    navigate(`/apps/${app.id}`);
+    openSmartMinapp(app);
     onClick?.();
   };
 

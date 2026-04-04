@@ -3,10 +3,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useMinappPopup } from "@/hooks/useMinappPopup";
 import { useMinapps } from "@/hooks/useMinapps";
+import { useAppSelector } from "@/store";
 import { MinimalToolbar } from "@/components/MinApp/MinimalToolbar";
 import { MinAppTabsPool } from "@/components/MinApp/MinAppTabsPool";
 import { MinAppIcon } from "@/components/MinApp/MinAppIcon";
-import { getAllMinApps } from "@/config/minapps";
+import { getAllMinApps, resolveMinApp } from "@/config/minapps";
 import {
   getWebviewLoaded,
   onWebviewStateChange,
@@ -27,15 +28,19 @@ export function MinAppDetailPage() {
   const { appId } = useParams<{ appId: string }>();
   const { openMinappKeepAlive } = useMinappPopup();
   const { minapps } = useMinapps();
+  const openedKeepAliveApps = useAppSelector(
+    (s) => s.minapps.openedKeepAliveApps
+  );
   const navigate = useNavigate();
 
   // Find the app from all available sources
   const app = useMemo(() => {
     if (!appId) return null;
     return (
-      [...getAllMinApps(), ...minapps].find((a) => a.id === appId) ?? null
+      resolveMinApp(appId, openedKeepAliveApps, getAllMinApps(), minapps) ??
+      null
     );
-  }, [appId, minapps]);
+  }, [appId, minapps, openedKeepAliveApps]);
 
   // Open app in keep-alive pool on mount
   useEffect(() => {

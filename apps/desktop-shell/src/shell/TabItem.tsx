@@ -1,4 +1,5 @@
 import { X, Terminal, House, LayoutGrid } from "lucide-react";
+import { CherryOpenClawIcon } from "@/components/icons/CherryIcons";
 import { cn } from "@/lib/utils";
 
 interface TabItemProps {
@@ -16,7 +17,7 @@ interface TabItemProps {
  * Tab icon mapping matching cherry-studio's getTabIcon function.
  * Icons are 14px (size-3.5) matching cherry-studio.
  */
-function getTabIcon(type: string) {
+function getTabIcon(type: string, id: string) {
   switch (type) {
     case "home":
       return <House className="size-3.5 shrink-0" />;
@@ -24,6 +25,14 @@ function getTabIcon(type: string) {
       return <LayoutGrid className="size-3.5 shrink-0" />;
     case "code":
       return <Terminal className="size-3.5 shrink-0" />;
+    case "minapp":
+      if (id.includes("openclaw")) {
+        return <CherryOpenClawIcon className="size-3.5 shrink-0" />;
+      }
+      if (id.includes("code")) {
+        return <Terminal className="size-3.5 shrink-0" />;
+      }
+      return <LayoutGrid className="size-3.5 shrink-0" />;
     default:
       return <Terminal className="size-3.5 shrink-0" />;
   }
@@ -41,6 +50,7 @@ function getTabIcon(type: string) {
  * - Close button visible on group hover
  */
 export function TabItem({
+  id,
   title,
   type,
   active,
@@ -68,7 +78,7 @@ export function TabItem({
       }}
     >
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
-        {getTabIcon(type)}
+        {getTabIcon(type, id)}
         <span className="flex-1 truncate">{title}</span>
       </div>
       {closable && (

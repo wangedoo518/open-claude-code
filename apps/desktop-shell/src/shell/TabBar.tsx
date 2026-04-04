@@ -3,13 +3,26 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Plus, Sun, Moon, Monitor, Settings } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store";
 import {
+  addTab,
   ensureSystemTabs,
   setActiveTab,
   removeTab,
+  updateTabTitle,
   type Tab,
 } from "@/store/slices/tabs";
+import {
+  removeOpenedApp,
+  setCurrentAppId,
+} from "@/store/slices/minapps";
 import { setActiveHomeSessionId, setHomeSection } from "@/store/slices/ui";
 import { useTheme } from "@/components/ThemeProvider";
+import {
+  getAllMinApps,
+  getMinAppIdFromPath,
+  getMinAppTabId,
+  resolveMinApp,
+} from "@/config/minapps";
+import { clearWebviewState } from "@/utils/webviewStateManager";
 import { TabItem } from "./TabItem";
 import {
   Tooltip,
@@ -32,7 +45,21 @@ export function TabBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { tabs, activeTabId } = useAppSelector((s) => s.tabs);
+  const openedKeepAliveApps = useAppSelector(
+    (s) => s.minapps.openedKeepAliveApps
+  );
   const { theme, setThemeMode } = useTheme();
+
+  const resolveMinAppTitle = (appId: string) => {
+    const app = resolveMinApp(appId, openedKeepAliveApps, getAllMinApps());
+    if (app?.name) {
+      return app.name;
+    }
+    if (appId.startsWith("openclaw")) {
+      return "OpenClaw";
+    }
+    return appId;
+  };
 
   useEffect(() => {
     dispatch(ensureSystemTabs());
@@ -43,14 +70,50 @@ export function TabBar() {
     const pathname = location.pathname;
     if (pathname === "/home" || pathname === "/") {
       dispatch(setActiveTab("home"));
-    } else if (pathname === "/apps") {
-      dispatch(setActiveTab("apps"));
-    } else if (pathname.startsWith("/apps/")) {
-      dispatch(setActiveTab("apps"));
+      return;
     }
-  }, [location.pathname, dispatch]);
+
+    if (pathname === "/apps") {
+      dispatch(setActiveTab("apps"));
+      return;
+    }
+
+    const minAppId = getMinAppIdFromPath(pathname);
+    if (!minAppId) {
+      return;
+    }
+
+    const tabId = getMinAppTabId(minAppId);
+    const title = resolveMinAppTitle(minAppId);
+    const existingTab = tabs.find((tab) => tab.id === tabId);
+
+    dispatch(setCurrentAppId(minAppId));
+
+    if (!existingTab) {
+      dispatch(
+        addTab({
+          id: tabId,
+          type: "minapp",
+          path: pathname,
+          title,
+          closable: true,
+        })
+      );
+      return;
+    }
+
+    if (existingTab.title !== title) {
+      dispatch(updateTabTitle({ id: tabId, title }));
+    }
+
+    dispatch(setActiveTab(tabId));
+  }, [dispatch, location.pathname, openedKeepAliveApps, tabs]);
 
   const handleTabSelect = (tab: Tab) => {
+    const minAppId = getMinAppIdFromPath(tab.path);
+    if (minAppId) {
+      dispatch(setCurrentAppId(minAppId));
+    }
     dispatch(setActiveTab(tab.id));
     navigate(tab.path);
   };
@@ -63,8 +126,37 @@ export function TabBar() {
   };
 
   const handleTabClose = (tabId: string) => {
+    const closeIndex = tabs.findIndex((tab) => tab.id === tabId);
+    if (closeIndex === -1) return;
+
+    const closingTab = tabs[closeIndex];
+    if (!closingTab.closable) return;
+
+    const remainingTabs = tabs.filter((tab) => tab.id !== tabId);
+    const nextTab =
+      activeTabId === tabId
+        ? remainingTabs[Math.min(closeIndex, remainingTabs.length - 1)] ?? null
+        : null;
+
+    const closingAppId = getMinAppIdFromPath(closingTab.path);
+    if (closingAppId) {
+      dispatch(removeOpenedApp(closingAppId));
+      clearWebviewState(closingAppId);
+    }
+
     dispatch(removeTab(tabId));
-    navigate("/home");
+
+    if (!nextTab) {
+      return;
+    }
+
+    const nextAppId = getMinAppIdFromPath(nextTab.path);
+    if (nextAppId) {
+      dispatch(setCurrentAppId(nextAppId));
+    }
+
+    dispatch(setActiveTab(nextTab.id));
+    navigate(nextTab.path);
   };
 
   const handleOpenSettings = () => {

@@ -52,7 +52,10 @@ export function MinAppTabsPool() {
               : "pointer-events-none invisible"
           )}
         >
-          <AppContainer app={app} />
+          <AppContainer
+            app={app}
+            visible={app.id === currentAppId && shouldShow}
+          />
         </div>
       ))}
     </div>

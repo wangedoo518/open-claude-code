@@ -4,7 +4,7 @@
  * Port from clawhub123/src/v2/features/agents/hooks/useAgentWorkbench.ts
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
   AgentId,
@@ -16,7 +16,7 @@ import {
   buildLoadingWorkbench,
   buildErrorWorkbench,
   resolvePrimaryActionKind,
-  openclawActions,
+  dashboardUrl,
 } from "../services/openclawAgentController";
 import { agentKeys, useAgentDetailQuery } from "../services/agentQueries";
 import {
@@ -25,6 +25,8 @@ import {
   useStopAgentMutation,
   useUninstallAgentMutation,
 } from "../services/agentMutations";
+import { useMinappPopup } from "@/hooks/useMinappPopup";
+import { createOpenClawDashboardApp } from "@/features/workbench/openclawDashboard";
 
 // ---------------------------------------------------------------------------
 // useAgentWorkbench — Returns the computed workbench state
@@ -54,9 +56,11 @@ export function useAgentWorkbench(agentId: AgentId): AgentWorkbenchState {
 
 export function useAgentPanelActions(agentId: AgentId) {
   const queryClient = useQueryClient();
+  const { openSmartMinapp } = useMinappPopup();
   const [actionNotice, setActionNotice] = useState<AgentStatusNotice | null>(
     null
   );
+  const [openDashboardOnRunning, setOpenDashboardOnRunning] = useState(false);
   const workbench = useAgentWorkbench(agentId);
   const installMutation = useInstallAgentMutation(agentId);
   const startMutation = useStartAgentMutation(agentId);
@@ -75,7 +79,42 @@ export function useAgentPanelActions(agentId: AgentId) {
     });
   };
 
-  const stopThenStart = async (notice: AgentStatusNotice) => {
+  const openDashboardTab = useCallback(
+    (url: string) => {
+      openSmartMinapp(createOpenClawDashboardApp(url));
+    },
+    [openSmartMinapp]
+  );
+
+  useEffect(() => {
+    if (!openDashboardOnRunning || workbench.kind !== "supported") {
+      return;
+    }
+
+    if (workbench.detail.product.service_running) {
+      openDashboardTab(dashboardUrl(workbench.detail));
+      setOpenDashboardOnRunning(false);
+      setActionNotice(null);
+      return;
+    }
+
+    if (
+      workbench.detail.serviceStatus.finished &&
+      !workbench.detail.serviceStatus.success
+    ) {
+      setOpenDashboardOnRunning(false);
+      setActionNotice({
+        tone: "error",
+        message:
+          workbench.detail.serviceStatus.hint ?? "启动 OpenClaw 服务失败",
+      });
+    }
+  }, [openDashboardOnRunning, openDashboardTab, workbench]);
+
+  const stopThenStart = async (
+    notice: AgentStatusNotice,
+    options?: { keepNotice?: boolean }
+  ) => {
     setActionNotice(notice);
     try {
       await stopMutation.mutateAsync();
@@ -84,7 +123,9 @@ export function useAgentPanelActions(agentId: AgentId) {
     }
     await startMutation.mutateAsync();
     await refreshDetail();
-    setActionNotice(null);
+    if (!options?.keepNotice) {
+      setActionNotice(null);
+    }
   };
 
   const primaryAction = async () => {
@@ -109,21 +150,26 @@ export function useAgentPanelActions(agentId: AgentId) {
       }
 
       if (nextAction === "start") {
-        await stopThenStart({
-          tone: "info",
-          message: "正在清理旧的 OpenClaw 进程并启动服务...",
-        });
+        setOpenDashboardOnRunning(true);
+        await stopThenStart(
+          {
+            tone: "info",
+            message: "正在清理旧的 OpenClaw 进程并启动服务...",
+          },
+          { keepNotice: true }
+        );
         return;
       }
 
       // Dashboard
       setActionNotice({
         tone: "info",
-        message: "正在通过外部浏览器打开 OpenClaw 对话页...",
+        message: "正在打开 OpenClaw 对话页...",
       });
-      await openclawActions.openDashboard(workbench.detail);
+      openDashboardTab(dashboardUrl(workbench.detail));
       setActionNotice(null);
     } catch (error) {
+      setOpenDashboardOnRunning(false);
       setActionNotice({ tone: "error", message: asErrorMessage(error) });
     }
   };
@@ -136,6 +182,7 @@ export function useAgentPanelActions(agentId: AgentId) {
         message: "正在重启 OpenClaw 服务...",
       });
     } catch (error) {
+      setOpenDashboardOnRunning(false);
       setActionNotice({ tone: "error", message: asErrorMessage(error) });
     }
   };

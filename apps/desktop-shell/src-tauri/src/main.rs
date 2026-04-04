@@ -233,6 +233,8 @@ async fn open_dashboard_url(url: String) -> Result<(), String> {
 struct OpenclawInstallCheck {
     installed: bool,
     path: Option<String>,
+    #[serde(rename = "needsMigration")]
+    needs_migration: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,17 +243,18 @@ struct OpenclawGatewayStatusResult {
     port: u16,
 }
 
+/// Check installation matching cherry-studio's checkInstalled():
+/// - Managed binary (~/.warwolf/bin/openclaw) → installed: true
+/// - Found in PATH only → needsMigration: true (old npm install)
+/// - Not found → installed: false
 #[tauri::command]
 async fn openclaw_check_installed() -> Result<OpenclawInstallCheck, String> {
-    let binary_path = agents::openclaw_cli::find_openclaw_binary();
-    let installed = binary_path
-        .as_ref()
-        .map(|p| agents::openclaw_cli::health_check(p))
-        .unwrap_or(false);
+    let (installed, path, needs_migration) = agents::openclaw_cli::check_installed();
 
     Ok(OpenclawInstallCheck {
         installed,
-        path: binary_path,
+        path,
+        needs_migration,
     })
 }
 

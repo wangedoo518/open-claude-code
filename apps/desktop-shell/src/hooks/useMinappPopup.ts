@@ -46,6 +46,14 @@ export function useMinappPopup() {
     [openMinappKeepAlive, navigate]
   );
 
+  const openSmartMinapp = useCallback(
+    (app: MinAppType) => {
+      openMinappKeepAlive(app);
+      navigate(`/apps/${app.id}`);
+    },
+    [openMinappKeepAlive, navigate]
+  );
+
   const openMinappById = useCallback(
     (id: string) => {
       const app = findAppById(id);
@@ -78,6 +86,7 @@ export function useMinappPopup() {
   return {
     openMinapp,
     openMinappKeepAlive,
+    openSmartMinapp,
     openMinappById,
     closeMinapp,
     closeAllMinapps,

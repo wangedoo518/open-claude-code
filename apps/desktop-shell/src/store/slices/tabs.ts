@@ -3,7 +3,8 @@ import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 export type TabType =
   | "home"
   | "apps"
-  | "code";
+  | "code"
+  | "minapp";
 
 export interface Tab {
   id: string;
