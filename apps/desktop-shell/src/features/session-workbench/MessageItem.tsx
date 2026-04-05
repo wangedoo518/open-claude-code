@@ -19,6 +19,9 @@ import {
   Pencil,
   FileCode,
   BookOpen,
+  File,
+  Folder,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ConversationMessage } from "@/store/slices/sessions";
@@ -308,13 +311,28 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
 
   const inputPreview = useMemo(() => {
     if (parsedInput) {
-      // Show key params inline
+      // Tool-specific previews
       if ("command" in parsedInput) return String(parsedInput.command);
       if ("file_path" in parsedInput) return String(parsedInput.file_path);
-      if ("pattern" in parsedInput) return String(parsedInput.pattern);
+      if ("pattern" in parsedInput) {
+        const path = parsedInput.path ? ` in ${parsedInput.path}` : "";
+        return `${parsedInput.pattern}${path}`;
+      }
+      if ("description" in parsedInput && "prompt" in parsedInput) {
+        // Agent tool
+        const type = parsedInput.subagent_type ? `[${parsedInput.subagent_type}] ` : "";
+        return `${type}${parsedInput.description}`;
+      }
       if ("query" in parsedInput) return String(parsedInput.query);
       if ("url" in parsedInput) return String(parsedInput.url);
+      if ("old_string" in parsedInput && "new_string" in parsedInput) {
+        return `${String(parsedInput.old_string).slice(0, 30)} → ${String(parsedInput.new_string).slice(0, 30)}`;
+      }
+      if ("content" in parsedInput && "file_path" in parsedInput) {
+        return String(parsedInput.file_path);
+      }
       if ("content" in parsedInput) return String(parsedInput.content).slice(0, 60);
+      if ("skill" in parsedInput) return String(parsedInput.skill);
     }
     return toolInput.slice(0, 100);
   }, [parsedInput, toolInput]);
@@ -402,6 +420,8 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
   // Detect if output looks like a diff
   const isDiff = output.includes("@@") && (output.includes("---") || output.includes("+++"));
 
+  const { icon: ToolIcon, color } = getToolMeta(toolName);
+
   return (
     <div className="mx-4 my-1">
       <button
@@ -421,7 +441,7 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
         {isError ? (
           <AlertCircle className="size-3.5 shrink-0" style={{ color: "var(--color-error, rgb(171,43,63))" }} />
         ) : (
-          <CheckCircle2 className="size-3.5 shrink-0" style={{ color: "var(--color-success, rgb(44,122,57))" }} />
+          <ToolIcon className="size-3.5 shrink-0" style={{ color }} />
         )}
         <span className="font-medium">{toolName}</span>
         {!expanded && (
@@ -442,15 +462,157 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
           className="mt-0.5 max-h-[400px] overflow-auto rounded-b-lg border border-t-0 border-border/40"
           style={{ backgroundColor: "var(--color-msg-bash-bg, var(--color-muted))" }}
         >
-          {isDiff ? (
-            <DiffDisplay content={output} />
-          ) : (
-            <pre className="whitespace-pre-wrap p-3 font-mono text-[11px] leading-[1.6] text-foreground/80">
-              {output}
-            </pre>
-          )}
+          <ToolResultContent toolName={toolName} output={output} isDiff={isDiff} isError={isError} />
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── Tool-specific result content ──────────────────────────────── */
+
+function ToolResultContent({
+  toolName,
+  output,
+  isDiff,
+  isError,
+}: {
+  toolName: string;
+  output: string;
+  isDiff: boolean;
+  isError: boolean;
+}) {
+  const lower = toolName.toLowerCase();
+
+  // Glob — render as file list
+  if (lower === "glob") {
+    return <GlobResult output={output} />;
+  }
+
+  // Write / Edit — show file operation result
+  if (lower === "write" || lower === "writefile" || lower === "edit" || lower === "editfile") {
+    if (isDiff) return <DiffDisplay content={output} />;
+    return <FileOpResult output={output} isError={isError} />;
+  }
+
+  // Agent — show subagent result with branding
+  if (lower === "agent") {
+    return <AgentResult output={output} />;
+  }
+
+  // WebFetch / WebSearch — show web result
+  if (lower.includes("webfetch") || lower.includes("web_fetch") || lower.includes("websearch") || lower.includes("web_search")) {
+    return <WebResult output={output} isSearch={lower.includes("search")} />;
+  }
+
+  // Diff detection fallback
+  if (isDiff) return <DiffDisplay content={output} />;
+
+  // Default
+  return (
+    <pre className="whitespace-pre-wrap p-3 font-mono text-[11px] leading-[1.6] text-foreground/80">
+      {output}
+    </pre>
+  );
+}
+
+/* ─── Glob result — file list ───────────────────────────────────── */
+
+function GlobResult({ output }: { output: string }) {
+  const files = output.split("\n").filter((l) => l.trim());
+
+  return (
+    <div className="divide-y divide-border/20 py-1">
+      {files.map((file, i) => {
+        const isDir = file.endsWith("/");
+        const name = file.split("/").pop() ?? file;
+        const dir = file.slice(0, file.length - name.length);
+
+        return (
+          <div
+            key={i}
+            className="flex items-center gap-2 px-3 py-1"
+          >
+            {isDir ? (
+              <Folder className="size-3 shrink-0" style={{ color: "var(--color-warning, rgb(150,108,30))" }} />
+            ) : (
+              <File className="size-3 shrink-0 text-muted-foreground" />
+            )}
+            <span className="font-mono text-[11px] text-muted-foreground/60">
+              {dir}
+            </span>
+            <span className="font-mono text-[11px] text-foreground/80">
+              {name}
+            </span>
+          </div>
+        );
+      })}
+      <div className="px-3 py-1 text-[10px] text-muted-foreground">
+        {files.length} file{files.length !== 1 ? "s" : ""} matched
+      </div>
+    </div>
+  );
+}
+
+/* ─── File operation result ─────────────────────────────────────── */
+
+function FileOpResult({ output, isError }: { output: string; isError: boolean }) {
+  return (
+    <div className="p-3">
+      <div className="flex items-center gap-2 text-[11px]">
+        {isError ? (
+          <AlertCircle className="size-3.5" style={{ color: "var(--color-error, rgb(171,43,63))" }} />
+        ) : (
+          <CheckCircle2 className="size-3.5" style={{ color: "var(--color-success, rgb(44,122,57))" }} />
+        )}
+        <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.6] text-foreground/80">
+          {output}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Agent result ──────────────────────────────────────────────── */
+
+function AgentResult({ output }: { output: string }) {
+  return (
+    <div className="p-3">
+      <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium" style={{ color: "var(--agent-purple, rgb(147,51,234))" }}>
+        <Brain className="size-3" />
+        <span>Subagent Result</span>
+      </div>
+      <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.6] text-foreground/80">
+        {output}
+      </pre>
+    </div>
+  );
+}
+
+/* ─── Web result ────────────────────────────────────────────────── */
+
+function WebResult({ output, isSearch }: { output: string; isSearch: boolean }) {
+  // Try to extract URL from first line
+  const lines = output.split("\n");
+  const urlLine = lines.find((l) => l.startsWith("http"));
+
+  return (
+    <div className="p-3">
+      {urlLine && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-md bg-muted/30 px-2 py-1">
+          <Globe className="size-3 shrink-0" style={{ color: "var(--claude-blue, rgb(87,105,247))" }} />
+          <span className="flex-1 truncate font-mono text-[11px] text-foreground/70">
+            {urlLine}
+          </span>
+          <ExternalLink className="size-3 shrink-0 text-muted-foreground" />
+        </div>
+      )}
+      <div className="mb-1 text-[10px] font-medium text-muted-foreground">
+        {isSearch ? "Search Results" : "Fetched Content"}
+      </div>
+      <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.6] text-foreground/80">
+        {urlLine ? lines.filter((l) => l !== urlLine).join("\n") : output}
+      </pre>
     </div>
   );
 }

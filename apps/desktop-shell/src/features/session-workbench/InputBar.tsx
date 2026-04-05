@@ -5,8 +5,65 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { SendHorizonal, Square, Shield, Monitor, Slash } from "lucide-react";
+import {
+  SendHorizonal,
+  Square,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
+  FileSearch,
+  Monitor,
+  Slash,
+  ChevronDown,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAppDispatch, useAppSelector } from "@/store";
+import {
+  setPermissionMode,
+  type PermissionMode,
+} from "@/store/slices/settings";
+
+/* ─── Permission mode config ────────────────────────────────────── */
+
+const PERMISSION_MODES: {
+  value: PermissionMode;
+  label: string;
+  desc: string;
+  icon: typeof Shield;
+  color?: string;
+}[] = [
+  {
+    value: "default",
+    label: "Ask permissions",
+    desc: "Dangerous operations require confirmation",
+    icon: Shield,
+  },
+  {
+    value: "acceptEdits",
+    label: "Accept edits",
+    desc: "Auto-accept file edits, ask for others",
+    icon: ShieldCheck,
+    color: "var(--color-success, rgb(44,122,57))",
+  },
+  {
+    value: "bypassPermissions",
+    label: "Bypass permissions",
+    desc: "Skip all permission checks",
+    icon: ShieldOff,
+    color: "var(--color-error, rgb(171,43,63))",
+  },
+  {
+    value: "plan",
+    label: "Plan mode",
+    desc: "Plan only, don't execute tools",
+    icon: FileSearch,
+    color: "var(--color-warning, rgb(150,108,30))",
+  },
+];
+
+function getPermissionConfig(mode: PermissionMode) {
+  return PERMISSION_MODES.find((m) => m.value === mode) ?? PERMISSION_MODES[0];
+}
 
 /* ─── Slash commands ─────────────────────────────────────────────── */
 
@@ -32,26 +89,35 @@ const SLASH_COMMANDS = [
 interface InputBarProps {
   onSend: (message: string) => void | Promise<void>;
   onStop?: () => void;
+  onSlashCommand?: (input: string) => boolean;
   isBusy?: boolean;
-  permissionModeLabel?: string;
   environmentLabel?: string;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
 export function InputBar({
   onSend,
   onStop,
+  onSlashCommand,
   isBusy = false,
-  permissionModeLabel = "Ask permissions",
   environmentLabel = "Local",
+  inputRef,
 }: InputBarProps) {
+  const dispatch = useAppDispatch();
+  const permissionMode = useAppSelector((s) => s.settings.permissionMode);
+  const modeConfig = getPermissionConfig(permissionMode);
+
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showCommands, setShowCommands] = useState(false);
   const [commandFilter, setCommandFilter] = useState("");
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showPermissionMenu, setShowPermissionMenu] = useState(false);
+  const internalRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = inputRef ?? internalRef;
   const commandListRef = useRef<HTMLDivElement>(null);
+  const permMenuRef = useRef<HTMLDivElement>(null);
 
   // Filter slash commands based on input
   const filteredCommands = SLASH_COMMANDS.filter((cmd) =>
@@ -71,18 +137,43 @@ export function InputBar({
     }
   }, [value]);
 
+  // Close permission menu on outside click
+  useEffect(() => {
+    if (!showPermissionMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        permMenuRef.current &&
+        !permMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowPermissionMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showPermissionMenu]);
+
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed || isBusy) return;
     // Save to history
     setHistory((prev) => [trimmed, ...prev.slice(0, 49)]);
     setHistoryIndex(-1);
+
+    // Check for slash commands first
+    if (trimmed.startsWith("/") && onSlashCommand?.(trimmed)) {
+      setValue("");
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
+      return;
+    }
+
     void onSend(trimmed);
     setValue("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, isBusy, onSend]);
+  }, [value, isBusy, onSend, onSlashCommand]);
 
   const handleStop = useCallback(() => {
     onStop?.();
@@ -93,11 +184,19 @@ export function InputBar({
       const fullCommand = `/${cmdName}`;
       setShowCommands(false);
       setValue("");
-      void onSend(fullCommand);
       setHistory((prev) => [fullCommand, ...prev.slice(0, 49)]);
+
+      // Try slash command handler first
+      if (onSlashCommand?.(fullCommand)) {
+        textareaRef.current?.focus();
+        return;
+      }
+
+      // Fallback: send as message
+      void onSend(fullCommand);
       textareaRef.current?.focus();
     },
-    [onSend]
+    [onSend, onSlashCommand]
   );
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -170,6 +269,8 @@ export function InputBar({
     textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px";
   };
 
+  const ModeIcon = modeConfig.icon;
+
   return (
     <div className="relative border-t border-border/50 bg-background px-4 py-3">
       {/* Slash command palette */}
@@ -226,7 +327,9 @@ export function InputBar({
           placeholder={
             isBusy
               ? "Waiting for response..."
-              : "Type a message... (/ for commands)"
+              : permissionMode === "plan"
+                ? "Describe what you want to plan..."
+                : "Type a message... (/ for commands)"
           }
           disabled={isBusy}
           rows={2}
@@ -238,10 +341,75 @@ export function InputBar({
       <div className="mt-2 flex items-center justify-between">
         {/* Left: permission + environment */}
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 rounded-lg border border-border/50 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-            <Shield className="size-3" />
-            <span>{permissionModeLabel}</span>
-          </button>
+          {/* Permission mode selector */}
+          <div className="relative" ref={permMenuRef}>
+            <button
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border border-border/50 px-2 py-1 text-[11px] transition-colors hover:bg-accent hover:text-foreground",
+                showPermissionMenu
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground"
+              )}
+              style={modeConfig.color ? { color: modeConfig.color } : undefined}
+              onClick={() => setShowPermissionMenu((prev) => !prev)}
+            >
+              <ModeIcon className="size-3" />
+              <span>{modeConfig.label}</span>
+              <ChevronDown className="size-2.5 opacity-50" />
+            </button>
+
+            {/* Permission mode dropdown */}
+            {showPermissionMenu && (
+              <div className="absolute bottom-full left-0 mb-1 w-[260px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+                <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Permission Mode
+                </div>
+                {PERMISSION_MODES.map((mode) => {
+                  const Icon = mode.icon;
+                  const isActive = permissionMode === mode.value;
+                  return (
+                    <button
+                      key={mode.value}
+                      className={cn(
+                        "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors",
+                        isActive
+                          ? "bg-accent text-accent-foreground"
+                          : "text-foreground hover:bg-accent/50"
+                      )}
+                      onClick={() => {
+                        dispatch(setPermissionMode(mode.value));
+                        setShowPermissionMenu(false);
+                      }}
+                    >
+                      <Icon
+                        className="size-3.5 shrink-0"
+                        style={mode.color ? { color: mode.color } : undefined}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-medium">
+                          {mode.label}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {mode.desc}
+                        </div>
+                      </div>
+                      {isActive && (
+                        <div
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{
+                            backgroundColor:
+                              mode.color ??
+                              "var(--claude-orange, rgb(215,119,87))",
+                          }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <button className="flex items-center gap-1.5 rounded-lg border border-border/50 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
             <Monitor className="size-3" />
             <span>{environmentLabel}</span>
@@ -280,3 +448,5 @@ export function InputBar({
     </div>
   );
 }
+
+export { PERMISSION_MODES, getPermissionConfig };

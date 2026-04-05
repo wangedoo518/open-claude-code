@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Loader2,
   Terminal,
@@ -15,6 +16,22 @@ import { ContentHeader } from "./ContentHeader";
 import { MessageItem } from "./MessageItem";
 import { InputBar } from "./InputBar";
 import { StatusLine } from "./StatusLine";
+import {
+  PermissionDialog,
+  type PermissionAction,
+} from "./PermissionDialog";
+import { executeCommand, type CommandContext } from "./commandExecutor";
+import { SubagentPanel, extractSubagents } from "./SubagentPanel";
+import { exportAsMarkdown, exportAsJson } from "./sessionExport";
+import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
+import { useAppDispatch, useAppSelector } from "@/store";
+import {
+  resolvePermission,
+  setPendingPermission,
+} from "@/store/slices/permissions";
+import {
+  setShowSessionSidebar,
+} from "@/store/slices/settings";
 import type {
   ContentBlock,
   DesktopSessionDetail,
@@ -30,8 +47,8 @@ interface SessionWorkbenchTerminalProps {
   errorMessage?: string;
   onSend: (message: string) => void | Promise<void>;
   onStop?: () => void;
+  onCreateSession?: () => void;
   modelLabel?: string;
-  permissionModeLabel?: string;
   environmentLabel?: string;
   projectPath?: string;
 }
@@ -43,33 +60,166 @@ export function SessionWorkbenchTerminal({
   errorMessage,
   onSend,
   onStop,
+  onCreateSession,
   modelLabel = "Opus 4.6",
-  permissionModeLabel = "Ask permissions",
   environmentLabel = "Local",
   projectPath,
 }: SessionWorkbenchTerminalProps) {
+  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
+  const pendingPermission = useAppSelector(
+    (s) => s.permissions.pendingRequest
+  );
+  const permissionMode = useAppSelector((s) => s.settings.permissionMode);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showDemo, setShowDemo] = useState(false);
+  const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
   const messages = useMemo(
     () => flattenSessionMessages(session?.session.messages ?? []),
     [session?.session.messages]
   );
-  const displayMessages = messages.length > 0 ? messages : showDemo ? MOCK_DEMO_MESSAGES : [];
+  const displayMessages = useMemo(() => {
+    if (messages.length > 0) return [...messages, ...localMessages];
+    if (showDemo) return [...MOCK_DEMO_MESSAGES, ...localMessages];
+    return localMessages;
+  }, [messages, showDemo, localMessages]);
+  const agentCount = useMemo(
+    () => extractSubagents(displayMessages).length,
+    [displayMessages]
+  );
   const isRunning = session?.turn_state === "running" || isSending;
+
+  // Clear local messages when session changes
+  useEffect(() => {
+    setLocalMessages([]);
+  }, [session?.id]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [displayMessages, isRunning]);
+  }, [displayMessages, isRunning, pendingPermission]);
+
+  const handlePermissionDecision = useCallback(
+    (action: PermissionAction) => {
+      if (pendingPermission) {
+        dispatch(
+          resolvePermission({
+            requestId: pendingPermission.id,
+            decision: action,
+          })
+        );
+        // TODO: forward decision to Tauri backend when protocol is available
+      }
+    },
+    [dispatch, pendingPermission]
+  );
+
+  const addSystemMessage = useCallback((text: string) => {
+    setLocalMessages((prev) => [
+      ...prev,
+      {
+        id: `system-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: "system" as const,
+        type: "text" as const,
+        content: text,
+        timestamp: Date.now(),
+      },
+    ]);
+  }, []);
+
+  const handleSlashCommand = useCallback(
+    (input: string): boolean => {
+      const context: CommandContext = {
+        dispatch,
+        messages,
+        permissionMode,
+        modelLabel,
+        sessionId: session?.id,
+        onSendAsPrompt: (prompt) => void onSend(prompt),
+        onInjectSystemMessage: addSystemMessage,
+        onClearMessages: () => setLocalMessages([]),
+        onNavigate: (section) => navigate(`/${section}`),
+      };
+
+      const result = executeCommand(input, context);
+      if (!result) return false;
+
+      switch (result.type) {
+        case "system_message":
+          if (result.message) addSystemMessage(result.message);
+          break;
+        case "navigate":
+          if (result.message) addSystemMessage(result.message);
+          if (result.navigateTo) navigate(`/${result.navigateTo}`);
+          break;
+        case "clear":
+          setLocalMessages([]);
+          break;
+        case "noop":
+          break;
+      }
+
+      return true;
+    },
+    [dispatch, messages, permissionMode, modelLabel, session, onSend, navigate, addSystemMessage]
+  );
+
+  // Export handlers
+  const handleExportMarkdown = useCallback(() => {
+    if (displayMessages.length === 0) return;
+    exportAsMarkdown(displayMessages, session?.title, projectPath);
+  }, [displayMessages, session?.title, projectPath]);
+
+  const handleExportJson = useCallback(() => {
+    if (displayMessages.length === 0) return;
+    exportAsJson(displayMessages, session?.title, projectPath);
+  }, [displayMessages, session?.title, projectPath]);
+
+  // Input ref for focus shortcut
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Keyboard shortcuts
+  const showSidebar = useAppSelector((s) => s.settings.showSessionSidebar);
+  useKeyboardShortcuts({
+    onEscape: useCallback(() => {
+      if (pendingPermission) return; // don't interfere with permission dialog
+      if (isRunning && onStop) onStop();
+    }, [isRunning, onStop, pendingPermission]),
+    onClearMessages: useCallback(() => {
+      setLocalMessages([]);
+      addSystemMessage("Messages cleared.");
+    }, [addSystemMessage]),
+    onNewSession: onCreateSession,
+    onFocusInput: useCallback(() => {
+      inputRef.current?.focus();
+    }, []),
+    onOpenSettings: useCallback(() => {
+      navigate("/settings");
+    }, [navigate]),
+    onToggleSidebar: useCallback(() => {
+      dispatch(setShowSessionSidebar(!showSidebar));
+    }, [dispatch, showSidebar]),
+    onExportSession: handleExportMarkdown,
+    onToggleAgentPanel: useCallback(() => {
+      setShowAgentPanel((v) => !v);
+    }, []),
+  });
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 overflow-hidden">
+     <div className="flex flex-1 flex-col overflow-hidden">
       <ContentHeader
         projectPath={projectPath}
         modelLabel={modelLabel}
         environmentLabel={environmentLabel}
         isStreaming={isRunning}
+        agentCount={agentCount}
+        showAgentPanel={showAgentPanel}
+        onToggleAgentPanel={() => setShowAgentPanel((v) => !v)}
+        onExportMarkdown={displayMessages.length > 0 ? handleExportMarkdown : undefined}
+        onExportJson={displayMessages.length > 0 ? handleExportJson : undefined}
       />
 
       {displayMessages.length === 0 && !isLoadingSession ? (
@@ -82,12 +232,33 @@ export function SessionWorkbenchTerminal({
                 <span className="text-[11px] text-muted-foreground">
                   Demo mode — showing sample conversation
                 </span>
-                <button
-                  className="text-[11px] font-medium text-foreground hover:underline"
-                  onClick={() => setShowDemo(false)}
-                >
-                  Exit demo
-                </button>
+                <div className="flex items-center gap-2">
+                  {!pendingPermission && (
+                    <button
+                      className="text-[11px] font-medium text-muted-foreground hover:text-foreground hover:underline"
+                      onClick={() =>
+                        dispatch(
+                          setPendingPermission({
+                            id: `demo-perm-${Date.now()}`,
+                            toolName: "Bash",
+                            toolInput: {
+                              command: "npm install @radix-ui/react-dialog",
+                            },
+                            riskLevel: "high",
+                          })
+                        )
+                      }
+                    >
+                      Test permission
+                    </button>
+                  )}
+                  <button
+                    className="text-[11px] font-medium text-foreground hover:underline"
+                    onClick={() => setShowDemo(false)}
+                  >
+                    Exit demo
+                  </button>
+                </div>
               </div>
             )}
             {isLoadingSession && (
@@ -99,7 +270,14 @@ export function SessionWorkbenchTerminal({
             {displayMessages.map((msg) => (
               <MessageItem key={msg.id} message={msg} />
             ))}
-            {isRunning && <StreamingSpinner />}
+            {/* Permission dialog — renders inline at end of messages */}
+            {pendingPermission && (
+              <PermissionDialog
+                request={pendingPermission}
+                onDecision={handlePermissionDecision}
+              />
+            )}
+            {isRunning && !pendingPermission && <StreamingSpinner />}
             {errorMessage && (
               <div
                 className="mx-4 mt-3 rounded-lg border px-3 py-2 text-[12px]"
@@ -119,17 +297,26 @@ export function SessionWorkbenchTerminal({
       <InputBar
         onSend={onSend}
         onStop={onStop}
-        isBusy={isRunning}
-        permissionModeLabel={permissionModeLabel}
+        onSlashCommand={handleSlashCommand}
+        isBusy={isRunning || !!pendingPermission}
         environmentLabel={environmentLabel}
+        inputRef={inputRef}
       />
 
       <StatusLine
         modelLabel={modelLabel}
-        permissionMode={permissionModeLabel}
         environmentLabel={environmentLabel}
         isRunning={isRunning}
       />
+     </div>
+
+      {/* Subagent side panel */}
+      {showAgentPanel && (
+        <SubagentPanel
+          messages={displayMessages}
+          onClose={() => setShowAgentPanel(false)}
+        />
+      )}
     </div>
   );
 }

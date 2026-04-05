@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Loader2,
   MessageSquare,
@@ -7,6 +7,9 @@ import {
   Search,
   Clock,
   Zap,
+  FileText,
+  FileJson,
+  Trash2,
 } from "lucide-react";
 import { useAppDispatch } from "@/store";
 import { setShowSessionSidebar } from "@/store/slices/settings";
@@ -18,7 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { truncate, cn } from "@/lib/utils";
-import type { DesktopSessionSection } from "@/lib/tauri";
+import type { DesktopSessionSection, DesktopSessionSummary } from "@/lib/tauri";
 
 interface SessionWorkbenchSidebarProps {
   sessionSections: DesktopSessionSection[];
@@ -26,6 +29,8 @@ interface SessionWorkbenchSidebarProps {
   projectLabel: string;
   onSelectSession: (sessionId: string) => void;
   onCreateSession: () => void;
+  onDeleteSession?: (sessionId: string) => void;
+  onExportSession?: (sessionId: string, format: "markdown" | "json") => void;
   isCreatingSession: boolean;
 }
 
@@ -35,10 +40,38 @@ export function SessionWorkbenchSidebar({
   projectLabel,
   onSelectSession,
   onCreateSession,
+  onDeleteSession,
+  onExportSession,
   isCreatingSession,
 }: SessionWorkbenchSidebarProps) {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState("");
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    session: DesktopSessionSummary;
+  } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [contextMenu]);
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, session: DesktopSessionSummary) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, session });
+    },
+    []
+  );
 
   // Filter sessions by search query
   const filteredSections = sessionSections
@@ -149,6 +182,7 @@ export function SessionWorkbenchSidebar({
                         : "text-sidebar-foreground hover:bg-sidebar-accent/50"
                     )}
                     onClick={() => onSelectSession(session.id)}
+                    onContextMenu={(e) => handleContextMenu(e, session)}
                   >
                     <div className="flex items-center gap-1.5">
                       <MessageSquare className="size-3 shrink-0 opacity-40" />
@@ -213,6 +247,56 @@ export function SessionWorkbenchSidebar({
           New Session
         </Button>
       </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-[100] min-w-[160px] rounded-md border border-border bg-popover py-1 shadow-lg"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {onExportSession && (
+            <>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-accent"
+                onClick={() => {
+                  onExportSession(contextMenu.session.id, "markdown");
+                  setContextMenu(null);
+                }}
+              >
+                <FileText className="size-3" />
+                Export as Markdown
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-accent"
+                onClick={() => {
+                  onExportSession(contextMenu.session.id, "json");
+                  setContextMenu(null);
+                }}
+              >
+                <FileJson className="size-3" />
+                Export as JSON
+              </button>
+            </>
+          )}
+          {onDeleteSession && (
+            <>
+              <div className="my-1 h-px bg-border" />
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] transition-colors hover:bg-accent"
+                style={{ color: "var(--color-error, rgb(171,43,63))" }}
+                onClick={() => {
+                  onDeleteSession(contextMenu.session.id);
+                  setContextMenu(null);
+                }}
+              >
+                <Trash2 className="size-3" />
+                Delete Session
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

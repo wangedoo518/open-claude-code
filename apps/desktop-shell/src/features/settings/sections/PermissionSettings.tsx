@@ -1,6 +1,8 @@
-import { Shield, ShieldAlert, ShieldCheck } from "lucide-react";
 import { SettingGroup } from "../components/SettingGroup";
 import { cn } from "@/lib/utils";
+import { useAppDispatch, useAppSelector } from "@/store";
+import { setPermissionMode } from "@/store/slices/settings";
+import { PERMISSION_MODES } from "@/features/session-workbench/InputBar";
 import type { DesktopCustomizeState } from "@/lib/tauri";
 
 interface PermissionSettingsProps {
@@ -8,67 +10,56 @@ interface PermissionSettingsProps {
   error?: string;
 }
 
-const MODES = [
-  {
-    value: "accept_edits",
-    label: "Accept Edits",
-    desc: "Automatically approve edit operations while still surfacing execution context.",
-    icon: ShieldCheck,
-    color: "text-green-500",
-  },
-  {
-    value: "ask",
-    label: "Ask",
-    desc: "Prompt before tools run.",
-    icon: Shield,
-    color: "text-yellow-500",
-  },
-  {
-    value: "danger_full_access",
-    label: "Danger Full Access",
-    desc: "Execute tools without confirmation.",
-    icon: ShieldAlert,
-    color: "text-destructive",
-  },
-] as const;
-
 export function PermissionSettings({
   customize,
   error,
 }: PermissionSettingsProps) {
-  const activeMode = normalizePermissionMode(customize?.permission_mode);
+  const dispatch = useAppDispatch();
+  const currentMode = useAppSelector((s) => s.settings.permissionMode);
 
   return (
     <div className="space-y-4">
       <SettingGroup
         title="Permission Mode"
-        description="Mirrors the permission mode from the live Rust runtime"
+        description="Controls how tool execution permissions are handled"
       >
         <div className="space-y-2">
-          {MODES.map((mode) => (
-            <div
-              key={mode.value}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-md border p-3 text-left",
-                activeMode === mode.value
-                  ? "border-primary bg-primary/5"
-                  : "border-border"
-              )}
-            >
-              <mode.icon className={cn("size-5", mode.color)} />
-              <div className="flex-1">
-                <div className="text-sm font-medium">{mode.label}</div>
-                <div className="text-xs text-muted-foreground">{mode.desc}</div>
-              </div>
-              {activeMode === mode.value && (
-                <div className="size-2 rounded-full bg-primary" />
-              )}
-            </div>
-          ))}
+          {PERMISSION_MODES.map((mode) => {
+            const Icon = mode.icon;
+            const isActive = currentMode === mode.value;
+            return (
+              <button
+                key={mode.value}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-md border p-3 text-left transition-colors",
+                  isActive
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:bg-muted/30"
+                )}
+                onClick={() => dispatch(setPermissionMode(mode.value))}
+              >
+                <Icon
+                  className="size-5 shrink-0"
+                  style={mode.color ? { color: mode.color } : undefined}
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{mode.label}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {mode.desc}
+                  </div>
+                </div>
+                {isActive && (
+                  <div className="size-2 rounded-full bg-primary" />
+                )}
+              </button>
+            );
+          })}
         </div>
-        <div className="text-xs text-muted-foreground">
-          Current runtime value: {customize?.permission_mode ?? "Unavailable"}
-        </div>
+        {customize?.permission_mode && (
+          <div className="text-xs text-muted-foreground">
+            Runtime value: {customize.permission_mode}
+          </div>
+        )}
       </SettingGroup>
 
       {error && (
@@ -78,11 +69,4 @@ export function PermissionSettings({
       )}
     </div>
   );
-}
-
-function normalizePermissionMode(value: string | undefined) {
-  const normalized = value?.toLowerCase().replace(/\s+/g, "_") ?? "";
-  if (normalized.includes("danger")) return "danger_full_access";
-  if (normalized.includes("ask")) return "ask";
-  return "accept_edits";
 }

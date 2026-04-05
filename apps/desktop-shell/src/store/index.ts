@@ -22,6 +22,7 @@ import settingsReducer from "./slices/settings";
 import uiReducer from "./slices/ui";
 import minappsReducer from "./slices/minapps";
 import codeToolsReducer from "./slices/codeTools";
+import permissionsReducer from "./slices/permissions";
 
 const rootReducer = combineReducers({
   tabs: tabsReducer,
@@ -30,13 +31,14 @@ const rootReducer = combineReducers({
   ui: uiReducer,
   minapps: minappsReducer,
   codeTools: codeToolsReducer,
+  permissions: permissionsReducer,
 });
 
 const persistConfig = {
   key: "open-claude-code",
   version: 1,
   storage,
-  blacklist: ["sessions", "ui"],
+  blacklist: ["sessions", "ui", "permissions"],
 };
 
 const persistedReducer = persistReducer(persistConfig, rootReducer);

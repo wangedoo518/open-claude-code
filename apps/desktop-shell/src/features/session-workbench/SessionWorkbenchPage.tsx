@@ -210,14 +210,11 @@ export function SessionWorkbenchPage({
           isSending={sendMessageMutation.isPending}
           errorMessage={errorMessage}
           onSend={handleSend}
+          onCreateSession={() => void handleCreateSession()}
           modelLabel={
             activeSession?.model_label ??
             workbenchQuery.data?.composer.model_label ??
             "Opus 4.6"
-          }
-          permissionModeLabel={
-            workbenchQuery.data?.composer.permission_mode_label ??
-            "Ask permissions"
           }
           environmentLabel={
             activeSession?.environment_label ??
