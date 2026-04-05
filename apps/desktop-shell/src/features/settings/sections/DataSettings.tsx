@@ -1,4 +1,5 @@
 import { SettingGroup, SettingRow } from "../components/SettingGroup";
+import { ProjectPathSelector } from "@/features/session-workbench/ProjectPathSelector";
 import type { DesktopSettingsState } from "@/lib/tauri";
 
 interface DataSettingsProps {
@@ -11,7 +12,15 @@ export function DataSettings({ settings, error }: DataSettingsProps) {
     <div className="space-y-4">
       <SettingGroup title="Project">
         <SettingRow
-          label="Current Project Path"
+          label="Default Project Path"
+          description="Select the default working directory for new sessions"
+        >
+          <div className="w-full max-w-[420px]">
+            <ProjectPathSelector persistToSettings />
+          </div>
+        </SettingRow>
+        <SettingRow
+          label="Current Runtime Path"
           description="Working directory used by the desktop runtime"
         >
           <div className="max-w-[360px] text-right text-xs text-muted-foreground">

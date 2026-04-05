@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { SessionWorkbenchSidebar } from "./SessionWorkbenchSidebar";
 import { SessionWorkbenchTerminal } from "./SessionWorkbenchTerminal";
+import { useSessionLifecycle } from "./useSessionLifecycle";
 import { updateTabSession } from "@/store/slices/tabs";
 import {
   appendMessage,
@@ -49,6 +50,19 @@ export function SessionWorkbenchPage({
     queryKey: ["desktop-session", activeSessionId],
     queryFn: () => getSession(activeSessionId!),
     enabled: Boolean(activeSessionId),
+  });
+
+  // Session lifecycle (cancel, delete, rename, resume)
+  const lifecycle = useSessionLifecycle({
+    activeSessionId,
+    onSessionDeleted: useCallback(
+      (deletedId: string) => {
+        if (selectedSessionId === deletedId) {
+          setSelectedSessionId(null);
+        }
+      },
+      [selectedSessionId]
+    ),
   });
 
   useEffect(() => {
@@ -171,7 +185,9 @@ export function SessionWorkbenchPage({
     workbenchQuery.error,
     activeSessionQuery.error,
     sendMessageMutation.error,
-    createSessionMutation.error
+    createSessionMutation.error,
+    lifecycle.cancelError,
+    lifecycle.deleteError
   );
 
   async function handleCreateSession() {
@@ -200,6 +216,7 @@ export function SessionWorkbenchPage({
           onCreateSession={() => {
             void handleCreateSession();
           }}
+          onDeleteSession={lifecycle.handleDelete}
           isCreatingSession={createSessionMutation.isPending}
         />
       )}
@@ -210,6 +227,7 @@ export function SessionWorkbenchPage({
           isSending={sendMessageMutation.isPending}
           errorMessage={errorMessage}
           onSend={handleSend}
+          onStop={lifecycle.handleCancel}
           onCreateSession={() => void handleCreateSession()}
           modelLabel={
             activeSession?.model_label ??

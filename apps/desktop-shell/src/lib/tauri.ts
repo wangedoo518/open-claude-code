@@ -770,6 +770,43 @@ export async function appendMessage(
   );
 }
 
+export async function cancelSession(
+  sessionId: string
+): Promise<DesktopSessionDetail> {
+  return fetchJson<DesktopSessionDetail>(
+    `/api/desktop/sessions/${sessionId}/cancel`,
+    { method: "POST", body: JSON.stringify({}) }
+  );
+}
+
+export async function deleteSession(
+  sessionId: string
+): Promise<{ deleted: boolean }> {
+  return fetchJson<{ deleted: boolean }>(
+    `/api/desktop/sessions/${sessionId}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function renameSession(
+  sessionId: string,
+  title: string
+): Promise<DesktopSessionDetail> {
+  return fetchJson<DesktopSessionDetail>(
+    `/api/desktop/sessions/${sessionId}/title`,
+    { method: "POST", body: JSON.stringify({ title }) }
+  );
+}
+
+export async function resumeSession(
+  sessionId: string
+): Promise<DesktopSessionDetail> {
+  return fetchJson<DesktopSessionDetail>(
+    `/api/desktop/sessions/${sessionId}/resume`,
+    { method: "POST", body: JSON.stringify({}) }
+  );
+}
+
 export async function getCustomize(): Promise<DesktopCustomizeResponse> {
   return fetchJson<DesktopCustomizeResponse>("/api/desktop/customize");
 }
