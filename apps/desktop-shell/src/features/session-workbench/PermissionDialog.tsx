@@ -27,6 +27,10 @@ export function PermissionDialog({ request, onDecision }: PermissionDialogProps)
   const dialogRef = useRef<HTMLDivElement>(null);
   const { icon: ToolIcon, label, color } = getPermToolMeta(request.toolName);
 
+  useEffect(() => {
+    setShowDetails(false);
+  }, [request.id]);
+
   // Focus trap and keyboard navigation
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -69,7 +73,7 @@ export function PermissionDialog({ request, onDecision }: PermissionDialogProps)
 
     dialog.addEventListener("keydown", handleKeyDown);
     return () => dialog.removeEventListener("keydown", handleKeyDown);
-  }, [onDecision]);
+  }, [onDecision, request.id]);
 
   const riskConfig = {
     low: {
