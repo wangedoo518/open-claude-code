@@ -2176,11 +2176,12 @@ impl DesktopState {
         prompt: Option<String>,
         enabled: Option<bool>,
     ) -> Result<DesktopScheduledTask, DesktopStateError> {
+        let task_id = task_id.to_string();
         let mut store = self.scheduled_store.write().await;
         let task = store
             .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| DesktopStateError::ScheduledTaskNotFound(task_id.to_string()))?;
+            .get_mut(&task_id)
+            .ok_or_else(|| DesktopStateError::ScheduledTaskNotFound(task_id.clone()))?;
         if let Some(t) = title {
             task.title = t;
         }
@@ -2190,10 +2191,9 @@ impl DesktopState {
         if let Some(e) = enabled {
             task.enabled = e;
         }
-        let result = self.scheduled_task_from_metadata(task);
         drop(store);
         self.persist_scheduled().await;
-        Ok(result)
+        self.get_scheduled_task(&task_id).await
     }
 
     // ── Dispatch item extended CRUD ───────────────────────────────
@@ -2223,11 +2223,12 @@ impl DesktopState {
         body: Option<String>,
         priority: Option<DesktopDispatchPriority>,
     ) -> Result<DesktopDispatchItem, DesktopStateError> {
+        let item_id = item_id.to_string();
         let mut store = self.dispatch_store.write().await;
         let item = store
             .items
-            .get_mut(item_id)
-            .ok_or_else(|| DesktopStateError::DispatchItemNotFound(item_id.to_string()))?;
+            .get_mut(&item_id)
+            .ok_or_else(|| DesktopStateError::DispatchItemNotFound(item_id.clone()))?;
         if let Some(t) = title {
             item.title = t;
         }
@@ -2237,10 +2238,9 @@ impl DesktopState {
         if let Some(p) = priority {
             item.priority = p;
         }
-        let result = self.dispatch_item_from_metadata(item);
         drop(store);
         self.persist_dispatch().await;
-        Ok(result)
+        self.get_dispatch_item(&item_id).await
     }
 
     pub async fn create_session(
@@ -4385,6 +4385,69 @@ mod tests {
         assert_eq!(delivered.status, DesktopDispatchStatus::Delivered);
         assert!(delivered.delivered_at.is_some());
         assert_eq!(state.list_sessions().await.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn scheduled_tasks_can_be_updated() {
+        let state = DesktopState::default();
+        let task = state
+            .create_scheduled_task(CreateDesktopScheduledTaskRequest {
+                title: "Workspace sweep".to_string(),
+                prompt: "Review the workspace and queue the next implementation step.".to_string(),
+                project_name: None,
+                project_path: None,
+                target_session_id: None,
+                schedule: DesktopScheduledSchedule::Hourly { interval_hours: 4 },
+            })
+            .await
+            .expect("scheduled task should be created");
+
+        let updated = state
+            .update_scheduled_task(
+                &task.id,
+                Some("Updated sweep".to_string()),
+                Some("Inspect the current workspace state.".to_string()),
+                Some(false),
+            )
+            .await
+            .expect("scheduled task should be updated");
+
+        assert_eq!(updated.title, "Updated sweep");
+        assert_eq!(updated.prompt, "Inspect the current workspace state.");
+        assert!(!updated.enabled);
+    }
+
+    #[tokio::test]
+    async fn dispatch_items_can_be_updated() {
+        let state = DesktopState::default();
+        let item = state
+            .create_dispatch_item(CreateDesktopDispatchItemRequest {
+                title: "Inbox follow-up".to_string(),
+                body: "Continue the desktop implementation from the dispatch inbox.".to_string(),
+                project_name: None,
+                project_path: None,
+                target_session_id: None,
+                priority: DesktopDispatchPriority::Normal,
+            })
+            .await
+            .expect("dispatch item should be created");
+
+        let updated = state
+            .update_dispatch_item(
+                &item.id,
+                Some("Escalated follow-up".to_string()),
+                Some("Continue from the new managed auth regression.".to_string()),
+                Some(DesktopDispatchPriority::High),
+            )
+            .await
+            .expect("dispatch item should be updated");
+
+        assert_eq!(updated.title, "Escalated follow-up");
+        assert_eq!(
+            updated.body,
+            "Continue from the new managed auth regression."
+        );
+        assert_eq!(updated.priority, DesktopDispatchPriority::High);
     }
 
     #[tokio::test]
