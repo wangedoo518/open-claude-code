@@ -91,11 +91,27 @@ export async function forwardPermissionDecision(
   );
 }
 
+/** Payload for a permission_request SSE event from the agentic loop. */
+export interface PermissionRequestPayload {
+  session_id: string;
+  request_id: string;
+  tool_name: string;
+  tool_input: string;
+}
+
+/** Payload for a text_delta SSE event from the agentic loop. */
+export interface TextDeltaPayload {
+  session_id: string;
+  content: string;
+}
+
 export async function subscribeToSessionEvents(
   sessionId: string,
   handlers: {
     onSnapshot?: (session: DesktopSessionDetail) => void;
     onMessage?: (sessionId: string, message: RuntimeConversationMessage) => void;
+    onPermissionRequest?: (payload: PermissionRequestPayload) => void;
+    onTextDelta?: (payload: TextDeltaPayload) => void;
     onError?: (error: Error) => void;
   }
 ): Promise<() => void> {
@@ -118,6 +134,20 @@ export async function subscribeToSessionEvents(
     if (payload.type === "message") {
       handlers.onMessage?.(payload.session_id, payload.message);
     }
+  });
+
+  source.addEventListener("permission_request", (event) => {
+    const payload = JSON.parse(
+      (event as MessageEvent<string>).data
+    ) as PermissionRequestPayload;
+    handlers.onPermissionRequest?.(payload);
+  });
+
+  source.addEventListener("text_delta", (event) => {
+    const payload = JSON.parse(
+      (event as MessageEvent<string>).data
+    ) as TextDeltaPayload;
+    handlers.onTextDelta?.(payload);
   });
 
   source.onerror = () => {

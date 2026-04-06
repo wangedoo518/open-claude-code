@@ -6,14 +6,18 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { sessionWorkbenchKeys } from "./api/query";
 import { workbenchKeys } from "@/features/workbench/api/query";
 import {
+  type DesktopSessionDetail,
+} from "@/lib/tauri";
+import {
   appendMessage,
   createSession,
   getSession,
-  getWorkbench,
   subscribeToSessionEvents,
-  type DesktopSessionDetail,
-} from "@/lib/tauri";
+} from "./api/client";
+import { getWorkbench } from "@/features/workbench/api/client";
+import { usePermissionsStore } from "@/state/permissions-store";
 import { useSettingsStore } from "@/state/settings-store";
+import { useStreamingStore } from "@/state/streaming-store";
 import { useTabsStore } from "@/state/tabs-store";
 
 interface SessionWorkbenchPageProps {
@@ -109,8 +113,13 @@ export function SessionWorkbenchPage({
       onSnapshot: (session) => {
         queryClient.setQueryData(sessionWorkbenchKeys.detail(session.id), session);
         void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
+        // Track streaming state from turn_state.
+        const isRunning = session.turn_state === "running";
+        useStreamingStore.getState().setStreaming(isRunning);
       },
       onMessage: (nextSessionId, message) => {
+        // Complete message arrived — clear streaming buffer.
+        useStreamingStore.getState().setStreaming(false);
         queryClient.setQueryData(
           sessionWorkbenchKeys.detail(nextSessionId),
           (
@@ -127,6 +136,23 @@ export function SessionWorkbenchPage({
           }
         );
         void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
+      },
+      onTextDelta: (payload) => {
+        useStreamingStore.getState().appendStreamingContent(payload.content);
+      },
+      onPermissionRequest: (payload) => {
+        let parsedInput: Record<string, unknown> = {};
+        try {
+          parsedInput = JSON.parse(payload.tool_input) as Record<string, unknown>;
+        } catch {
+          parsedInput = { raw: payload.tool_input };
+        }
+        usePermissionsStore.getState().setPendingPermission({
+          id: payload.request_id,
+          toolName: payload.tool_name,
+          toolInput: parsedInput,
+          riskLevel: inferRiskLevel(payload.tool_name),
+        });
       },
     }).then((nextDispose) => {
       if (cancelled) {
@@ -265,4 +291,18 @@ function extractErrorMessage(...errors: Array<unknown>): string | undefined {
   }
 
   return undefined;
+}
+
+/** Infer tool risk level for the permission dialog. */
+function inferRiskLevel(
+  toolName: string,
+): "low" | "medium" | "high" {
+  const lower = toolName.toLowerCase();
+  if (lower === "bash" || lower.includes("shell") || lower.includes("powershell")) {
+    return "high";
+  }
+  if (lower === "write_file" || lower === "edit_file" || lower === "write" || lower === "edit") {
+    return "medium";
+  }
+  return "low";
 }

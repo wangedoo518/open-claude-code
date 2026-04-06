@@ -69,20 +69,18 @@ function getPermissionConfig(mode: PermissionMode) {
 const SLASH_COMMANDS = [
   { name: "help", desc: "Get help with using Claude Code" },
   { name: "clear", desc: "Clear conversation history" },
+  { name: "commit", desc: "Commit code changes" },
   { name: "compact", desc: "Compact conversation to save context" },
   { name: "config", desc: "Open configuration" },
   { name: "cost", desc: "Show token usage and costs" },
-  { name: "doctor", desc: "Check system health" },
+  { name: "diff", desc: "Show file changes in this session" },
   { name: "init", desc: "Initialize CLAUDE.md in this project" },
-  { name: "login", desc: "Login to your account" },
-  { name: "logout", desc: "Logout of your account" },
-  { name: "memory", desc: "Edit Claude's memory" },
   { name: "model", desc: "Switch AI model" },
   { name: "permissions", desc: "View and manage permissions" },
   { name: "review", desc: "Review code changes" },
+  { name: "session", desc: "Show session information" },
   { name: "status", desc: "Show session status" },
-  { name: "terminal-setup", desc: "Set up terminal integration" },
-  { name: "vim", desc: "Enter vim mode" },
+  { name: "theme", desc: "Switch theme" },
 ] as const;
 
 interface InputBarProps {
