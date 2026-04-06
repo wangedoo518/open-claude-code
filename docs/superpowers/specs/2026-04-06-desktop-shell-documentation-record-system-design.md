@@ -1,3 +1,15 @@
+---
+title: Desktop Shell Documentation Record System Design
+doc_type: spec
+status: active
+owner: desktop-shell
+last_verified: 2026-04-06
+related:
+  - docs/desktop-shell/README.md
+  - docs/desktop-shell/specs/README.md
+  - docs/superpowers/plans/2026-04-06-desktop-shell-documentation-record-system-plan.md
+---
+
 # Desktop Shell Documentation Record System Design
 
 **Goal**
