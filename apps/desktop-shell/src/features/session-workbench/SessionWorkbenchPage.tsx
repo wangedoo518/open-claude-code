@@ -6,14 +6,6 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { sessionWorkbenchKeys } from "./api/query";
 import { workbenchKeys } from "@/features/workbench/api/query";
 import {
-  setPendingPermission,
-  inferToolRiskLevel,
-} from "@/store/slices/permissions";
-import {
-  appendStreamingContent,
-  setStreaming,
-} from "@/store/slices/sessions";
-import {
   appendMessage,
   createSession,
   getSession,
@@ -119,8 +111,6 @@ export function SessionWorkbenchPage({
         void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
       },
       onMessage: (nextSessionId, message) => {
-        // When a complete message arrives, clear the streaming buffer.
-        dispatch(setStreaming(false));
         queryClient.setQueryData(
           sessionWorkbenchKeys.detail(nextSessionId),
           (
@@ -137,25 +127,6 @@ export function SessionWorkbenchPage({
           }
         );
         void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
-      },
-      onTextDelta: (payload) => {
-        dispatch(appendStreamingContent(payload.content));
-      },
-      onPermissionRequest: (payload) => {
-        let parsedInput: Record<string, unknown> = {};
-        try {
-          parsedInput = JSON.parse(payload.tool_input) as Record<string, unknown>;
-        } catch {
-          parsedInput = { raw: payload.tool_input };
-        }
-        dispatch(
-          setPendingPermission({
-            id: payload.request_id,
-            toolName: payload.tool_name,
-            toolInput: parsedInput,
-            riskLevel: inferToolRiskLevel(payload.tool_name),
-          })
-        );
       },
     }).then((nextDispose) => {
       if (cancelled) {
