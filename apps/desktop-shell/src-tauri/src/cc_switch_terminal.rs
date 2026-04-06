@@ -76,9 +76,9 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    let args = build_ghostty_args(command, cwd);
+    let (program, args) = build_ghostty_command(command, cwd);
 
-    let status = Command::new("open")
+    let status = Command::new(program)
         .args(args.iter().map(String::as_str))
         .status()
         .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
@@ -90,14 +90,18 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+fn build_ghostty_command(command: &str, cwd: Option<&str>) -> (&'static str, Vec<String>) {
+    (
+        "/Applications/Ghostty.app/Contents/MacOS/ghostty",
+        build_ghostty_args(command, cwd),
+    )
+}
+
 fn build_ghostty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
     let full_command = build_shell_command(command, cwd);
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
     vec![
-        "-na".to_string(),
-        "Ghostty".to_string(),
-        "--args".to_string(),
         "--quit-after-last-window-closed=true".to_string(),
         "-e".to_string(),
         shell,
@@ -239,14 +243,12 @@ fn escape_osascript(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::build_ghostty_args;
+    use super::{build_ghostty_args, build_ghostty_command};
 
     #[test]
     fn ghostty_launch_args_open_new_window_and_execute_command() {
         let args = build_ghostty_args("echo hello", Some("/tmp/project"));
 
-        assert!(args.iter().any(|arg| arg == "-na"));
-        assert!(args.iter().any(|arg| arg == "Ghostty"));
         assert!(args.iter().any(|arg| arg == "-e"));
         assert!(
             args.iter()
@@ -257,5 +259,15 @@ mod tests {
             args.iter()
                 .any(|arg| arg.contains("cd \"/tmp/project\" && echo hello"))
         );
+    }
+
+    #[test]
+    fn ghostty_launch_uses_direct_executable_instead_of_open() {
+        let (program, args) = build_ghostty_command("echo hello", Some("/tmp/project"));
+
+        assert_eq!(program, "/Applications/Ghostty.app/Contents/MacOS/ghostty");
+        assert!(!args.iter().any(|arg| arg == "-na"));
+        assert!(!args.iter().any(|arg| arg == "Ghostty"));
+        assert!(!args.iter().any(|arg| arg == "--args"));
     }
 }
