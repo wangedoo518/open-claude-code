@@ -94,6 +94,7 @@ pub struct DesktopManagedAuthRuntimeClient {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopCodeToolLaunchProfile {
     pub environment_variables: HashMap<String, String>,
     pub message: Option<String>,

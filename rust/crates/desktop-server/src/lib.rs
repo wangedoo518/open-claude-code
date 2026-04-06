@@ -113,6 +113,7 @@ pub struct DesktopCodeToolLaunchProfileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopCodeToolLaunchProfileResponse {
     pub launch_profile: DesktopCodeToolLaunchProfile,
 }
