@@ -4,7 +4,9 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { SessionWorkbenchSidebar } from "./SessionWorkbenchSidebar";
 import { SessionWorkbenchTerminal } from "./SessionWorkbenchTerminal";
 import { useSessionLifecycle } from "./useSessionLifecycle";
+import { sessionWorkbenchKeys } from "./api/query";
 import { updateTabSession } from "@/store/slices/tabs";
+import { workbenchKeys } from "@/features/workbench/api/query";
 import {
   appendMessage,
   createSession,
@@ -51,14 +53,14 @@ export function SessionWorkbenchPage({
     (showSessionSidebar ?? showSidebarPreference) && !isNarrow;
 
   const workbenchQuery = useQuery({
-    queryKey: ["desktop-workbench"],
+    queryKey: workbenchKeys.root(),
     queryFn: getWorkbench,
   });
 
   const activeSessionId = sessionId ?? selectedSessionId;
 
   const activeSessionQuery = useQuery({
-    queryKey: ["desktop-session", activeSessionId],
+    queryKey: sessionWorkbenchKeys.detail(activeSessionId),
     queryFn: () => getSession(activeSessionId!),
     enabled: Boolean(activeSessionId),
   });
@@ -105,12 +107,12 @@ export function SessionWorkbenchPage({
 
     void subscribeToSessionEvents(activeSessionId, {
       onSnapshot: (session) => {
-        queryClient.setQueryData(["desktop-session", session.id], session);
-        void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+        queryClient.setQueryData(sessionWorkbenchKeys.detail(session.id), session);
+        void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
       },
       onMessage: (nextSessionId, message) => {
         queryClient.setQueryData(
-          ["desktop-session", nextSessionId],
+          sessionWorkbenchKeys.detail(nextSessionId),
           (
             current: DesktopSessionDetail | undefined
           ): DesktopSessionDetail | undefined => {
@@ -124,7 +126,7 @@ export function SessionWorkbenchPage({
             };
           }
         );
-        void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+        void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
       },
     }).then((nextDispose) => {
       if (cancelled) {
@@ -166,11 +168,11 @@ export function SessionWorkbenchPage({
       }),
     onSuccess: (response) => {
       queryClient.setQueryData(
-        ["desktop-session", response.session.id],
+        sessionWorkbenchKeys.detail(response.session.id),
         response.session
       );
       setSelectedSessionId(response.session.id);
-      void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
     },
   });
 
@@ -184,10 +186,10 @@ export function SessionWorkbenchPage({
     }) => appendMessage(nextSessionId, message),
     onSuccess: (response) => {
       queryClient.setQueryData(
-        ["desktop-session", response.session.id],
+        sessionWorkbenchKeys.detail(response.session.id),
         response.session
       );
-      void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
     },
   });
 

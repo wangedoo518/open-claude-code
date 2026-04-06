@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Select, message } from "antd";
 import { Download, FolderOpen, Loader2, Terminal, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   buildCodeToolsProviderCatalog,
   CLI_TOOLS,
@@ -22,6 +22,7 @@ import {
 } from "@/features/code-tools/components/ModelSelector";
 import { useCodeTools } from "@/hooks/useCodeTools";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
   getCodeToolAvailableTerminals,
   getCodexRuntime,
@@ -31,6 +32,7 @@ import {
   runCodeTool,
   type CodeToolsTerminalConfig,
 } from "@/lib/tauri";
+import { codeToolsKeys } from "./api/query";
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -69,7 +71,6 @@ export function CodeToolsPage() {
     removeDir,
     selectFolder,
   } = useCodeTools();
-  const [api, contextHolder] = message.useMessage();
   const [isBunInstalled, setIsBunInstalled] = useState(false);
   const [isInstallingBun, setIsInstallingBun] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
@@ -80,11 +81,11 @@ export function CodeToolsPage() {
   const [isLoadingTerminals, setIsLoadingTerminals] = useState(false);
 
   const managedAuthProvidersQuery = useQuery({
-    queryKey: ["code-tools-managed-auth-providers"],
+    queryKey: codeToolsKeys.managedAuthProviders(),
     queryFn: async () => (await getManagedAuthProviders()).providers,
   });
   const codexRuntimeQuery = useQuery({
-    queryKey: ["code-tools-codex-runtime"],
+    queryKey: codeToolsKeys.codexRuntime(),
     queryFn: async () => (await getCodexRuntime()).runtime,
   });
 
@@ -206,10 +207,10 @@ export function CodeToolsPage() {
     setIsInstallingBun(true);
     try {
       await installBunBinary();
-      api.success(t("codetools.success.bunInstalled"));
+      toast.success(t("codetools.success.bunInstalled"));
       await checkBunInstallation();
     } catch (error) {
-      api.error(getErrorMessage(error, t("codetools.error.installBunFailed")));
+      toast.error(getErrorMessage(error, t("codetools.error.installBunFailed")));
     } finally {
       setIsInstallingBun(false);
     }
@@ -219,21 +220,21 @@ export function CodeToolsPage() {
     try {
       await selectFolder();
     } catch (error) {
-      api.error(getErrorMessage(error, t("codetools.error.folderSelectorFailed")));
+      toast.error(getErrorMessage(error, t("codetools.error.folderSelectorFailed")));
     }
   };
 
   const handleLaunch = async () => {
     if (!isBunInstalled) {
-      api.warning(t("codetools.warning.bunRequired"));
+      toast.warning(t("codetools.warning.bunRequired"));
       return;
     }
     if (!currentDirectory) {
-      api.warning(t("codetools.warning.workdirRequired"));
+      toast.warning(t("codetools.warning.workdirRequired"));
       return;
     }
     if (requiresModel && !effectiveSelectedModel) {
-      api.warning(t("codetools.warning.modelRequired"));
+      toast.warning(t("codetools.warning.modelRequired"));
       return;
     }
 
@@ -260,12 +261,12 @@ export function CodeToolsPage() {
       });
 
       if (result.success) {
-        api.success(result.message || t("codetools.success.launchSuccess"));
+        toast.success(result.message || t("codetools.success.launchSuccess"));
       } else {
-        api.error(result.message || t("codetools.error.launchFailed"));
+        toast.error(result.message || t("codetools.error.launchFailed"));
       }
     } catch (error) {
-      api.error(getErrorMessage(error, t("codetools.error.launchFailed")));
+      toast.error(getErrorMessage(error, t("codetools.error.launchFailed")));
     } finally {
       setIsLaunching(false);
     }
@@ -278,7 +279,6 @@ export function CodeToolsPage() {
 
   return (
     <div className="flex flex-1 flex-col bg-background">
-      {contextHolder}
       <div className="flex flex-1 overflow-y-auto py-7">
         <div className="mx-auto min-h-fit w-[600px]">
           <h1 className="mb-2 text-xl font-semibold text-foreground">
@@ -326,12 +326,18 @@ export function CodeToolsPage() {
                 {t("codetools.label.cliTool")}
               </div>
               <Select
-                style={{ width: "100%" }}
-                placeholder={t("codetools.placeholder.selectTool")}
                 value={selectedCliTool}
-                options={CLI_TOOLS}
-                onChange={(value) => setCliTool(value as CodeToolId)}
-              />
+                onChange={(event) => setCliTool(event.target.value as CodeToolId)}
+              >
+                <option value="" disabled>
+                  {t("codetools.placeholder.selectTool")}
+                </option>
+                {CLI_TOOLS.map((tool) => (
+                  <option key={tool.value} value={tool.value}>
+                    {tool.label}
+                  </option>
+                ))}
+              </Select>
             </div>
 
             {/* Model */}
@@ -377,39 +383,19 @@ export function CodeToolsPage() {
               </div>
               <div className="flex w-full items-center gap-2">
                 <Select
-                  style={{ flex: 1 }}
-                  placeholder={t("codetools.placeholder.selectWorkdir")}
-                  value={currentDirectory || undefined}
-                  onChange={setCurrentDir}
-                  allowClear
-                  showSearch
-                  filterOption={(input, option) => {
-                    const label =
-                      typeof option?.label === "string"
-                        ? option.label
-                        : String(option?.value ?? "");
-                    return label.toLowerCase().includes(input.toLowerCase());
-                  }}
-                  options={directories.map((directory) => ({
-                    value: directory,
-                    label: directory,
-                  }))}
-                  optionRender={(option) => (
-                    <div className="flex items-center justify-between">
-                      <span className="min-w-0 flex-1 truncate">
-                        {String(option.value)}
-                      </span>
-                      <X
-                        size={14}
-                        className="ml-2 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          removeDir(String(option.value));
-                        }}
-                      />
-                    </div>
-                  )}
-                />
+                  className="min-w-0 flex-1"
+                  value={currentDirectory || ""}
+                  onChange={(event) => setCurrentDir(event.target.value)}
+                >
+                  <option value="">
+                    {t("codetools.placeholder.selectWorkdir")}
+                  </option>
+                  {directories.map((directory) => (
+                    <option key={directory} value={directory}>
+                      {directory}
+                    </option>
+                  ))}
+                </Select>
                 <Button
                   variant="outline"
                   className="shrink-0"
@@ -418,6 +404,27 @@ export function CodeToolsPage() {
                   {t("codetools.button.selectFolder")}
                 </Button>
               </div>
+              {directories.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {directories.map((directory) => (
+                    <button
+                      key={directory}
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/20 px-2.5 py-1 text-xs text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
+                      onClick={() => setCurrentDir(directory)}
+                    >
+                      <span className="max-w-[280px] truncate">{directory}</span>
+                      <X
+                        size={12}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeDir(directory);
+                        }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Environment variables */}
@@ -445,16 +452,20 @@ export function CodeToolsPage() {
                 </div>
                 <div className="flex w-full items-center gap-2">
                   <Select
-                    style={{ flex: 1 }}
-                    placeholder={t("codetools.placeholder.selectTerminal")}
+                    className="min-w-0 flex-1"
                     value={selectedTerminal}
-                    loading={isLoadingTerminals}
-                    onChange={setTerminal}
-                    options={availableTerminals.map((terminal) => ({
-                      value: terminal.id,
-                      label: terminal.name,
-                    }))}
-                  />
+                    onChange={(event) => setTerminal(event.target.value)}
+                    disabled={isLoadingTerminals}
+                  >
+                    <option value="">
+                      {t("codetools.placeholder.selectTerminal")}
+                    </option>
+                    {availableTerminals.map((terminal) => (
+                      <option key={terminal.id} value={terminal.id}>
+                        {terminal.name}
+                      </option>
+                    ))}
+                  </Select>
                   <Button variant="outline" disabled className="shrink-0">
                     <FolderOpen className="mr-1.5 size-4" />
                     {t("codetools.button.terminalPath")}

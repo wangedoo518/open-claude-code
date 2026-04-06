@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { store, persistor } from "@/store";
 import { AppShell } from "@/shell/AppShell";
+import { Toaster } from "sonner";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +26,7 @@ export default function App() {
             <ThemeProvider>
               <TooltipProvider delayDuration={300}>
                 <AppShell />
+                <Toaster richColors position="top-right" />
               </TooltipProvider>
             </ThemeProvider>
           </HashRouter>

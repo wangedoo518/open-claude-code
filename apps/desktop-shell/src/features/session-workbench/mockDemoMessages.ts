@@ -1,4 +1,4 @@
-import type { ConversationMessage } from "@/store/slices/sessions";
+import type { ConversationMessage } from "./types";
 
 /**
  * Mock demo messages showcasing all UI components:

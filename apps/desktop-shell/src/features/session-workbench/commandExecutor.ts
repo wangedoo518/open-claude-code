@@ -8,7 +8,7 @@
  */
 
 import type { AppDispatch } from "@/store";
-import type { ConversationMessage } from "@/store/slices/sessions";
+import type { ConversationMessage } from "./types";
 
 /* ─── Command definitions ───────────────────────────────────────── */
 

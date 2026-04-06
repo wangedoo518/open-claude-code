@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCustomize } from "@/lib/tauri";
+import { workbenchKeys } from "./api/query";
 import { Panel, SummaryCard, SummaryGrid, SurfacePage } from "./shared";
 
 export function CustomizePage() {
   const customizeQuery = useQuery({
-    queryKey: ["desktop-customize"],
+    queryKey: workbenchKeys.customize(),
     queryFn: getCustomize,
   });
 

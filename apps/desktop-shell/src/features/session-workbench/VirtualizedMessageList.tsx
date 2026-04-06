@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { MessageItem } from "./MessageItem";
-import type { ConversationMessage } from "@/store/slices/sessions";
+import type { ConversationMessage } from "./types";
 
 interface VirtualizedMessageListProps {
   messages: ConversationMessage[];

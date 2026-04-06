@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   createScheduledTask,
   getScheduled,
@@ -12,8 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel, SummaryCard, SummaryGrid, SurfacePage, formatTimestamp } from "./shared";
+import { workbenchKeys } from "./api/query";
 import { openHomeSession } from "./tab-helpers";
-import { useAppDispatch } from "@/store";
 
 const WEEKDAY_OPTIONS: Array<{ label: string; value: DesktopWeekday }> = [
   { label: "Mon", value: "monday" },
@@ -26,14 +27,14 @@ const WEEKDAY_OPTIONS: Array<{ label: string; value: DesktopWeekday }> = [
 ];
 
 export function ScheduledPage() {
-  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scheduledQuery = useQuery({
-    queryKey: ["desktop-scheduled"],
+    queryKey: workbenchKeys.scheduled(),
     queryFn: getScheduled,
   });
   const workbenchQuery = useQuery({
-    queryKey: ["desktop-workbench"],
+    queryKey: workbenchKeys.root(),
     queryFn: getWorkbench,
   });
 
@@ -94,8 +95,8 @@ export function ScheduledPage() {
       );
       setError(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["desktop-scheduled"] }),
-        queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.scheduled() }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.root() }),
       ]);
     },
     onError: (mutationError) => {
@@ -108,7 +109,7 @@ export function ScheduledPage() {
       updateScheduledTaskEnabled(taskId, enabled),
     onSuccess: async () => {
       setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["desktop-scheduled"] });
+      await queryClient.invalidateQueries({ queryKey: workbenchKeys.scheduled() });
     },
     onError: (mutationError) => {
       setError(errorMessage(mutationError));
@@ -120,8 +121,8 @@ export function ScheduledPage() {
     onSuccess: async () => {
       setError(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["desktop-scheduled"] }),
-        queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.scheduled() }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.root() }),
       ]);
     },
     onError: (mutationError) => {
@@ -353,7 +354,7 @@ export function ScheduledPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => openHomeSession(dispatch, task.target.session_id!)}
+                      onClick={() => openHomeSession(navigate, task.target.session_id!)}
                     >
                       Open session
                     </Button>

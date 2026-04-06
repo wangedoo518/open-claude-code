@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   createDispatchItem,
   deliverDispatchItem,
@@ -11,22 +12,22 @@ import {
 } from "@/lib/tauri";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAppDispatch } from "@/store";
 import { openHomeSession } from "./tab-helpers";
+import { workbenchKeys } from "./api/query";
 import { Panel, SummaryCard, SummaryGrid, SurfacePage, formatTimestamp } from "./shared";
 import { truncate } from "@/lib/utils";
 
 const PRIORITIES: DesktopDispatchPriority[] = ["low", "normal", "high"];
 
 export function DispatchPage() {
-  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const dispatchQuery = useQuery({
-    queryKey: ["desktop-dispatch"],
+    queryKey: workbenchKeys.dispatch(),
     queryFn: getDispatch,
   });
   const workbenchQuery = useQuery({
-    queryKey: ["desktop-workbench"],
+    queryKey: workbenchKeys.root(),
     queryFn: getWorkbench,
   });
 
@@ -64,8 +65,8 @@ export function DispatchPage() {
         "Review the current workspace state, summarize the next important action, and continue the implementation if the path is clear."
       );
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["desktop-dispatch"] }),
-        queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.dispatch() }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.root() }),
       ]);
     },
     onError: (mutationError) => setError(errorMessage(mutationError)),
@@ -81,7 +82,7 @@ export function DispatchPage() {
     }) => updateDispatchItemStatus(itemId, status),
     onSuccess: async () => {
       setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["desktop-dispatch"] });
+      await queryClient.invalidateQueries({ queryKey: workbenchKeys.dispatch() });
     },
     onError: (mutationError) => setError(errorMessage(mutationError)),
   });
@@ -91,8 +92,8 @@ export function DispatchPage() {
     onSuccess: async () => {
       setError(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["desktop-dispatch"] }),
-        queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.dispatch() }),
+        queryClient.invalidateQueries({ queryKey: workbenchKeys.root() }),
       ]);
     },
     onError: (mutationError) => setError(errorMessage(mutationError)),
@@ -270,7 +271,7 @@ export function DispatchPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => openHomeSession(dispatch, item.target.session_id!)}
+                      onClick={() => openHomeSession(navigate, item.target.session_id!)}
                     >
                       Open session
                     </Button>

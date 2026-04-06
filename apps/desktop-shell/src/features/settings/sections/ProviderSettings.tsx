@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { settingsKeys } from "../api/query";
 import {
   activateCodexAuthProfile,
   beginCodexLogin,
@@ -78,25 +79,25 @@ export function ProviderSettings({ error }: ProviderSettingsProps) {
   const qwenLoginStatusRef = useRef<string | null>(null);
 
   const providersQuery = useQuery({
-    queryKey: ["managed-auth-providers"],
+    queryKey: settingsKeys.managedAuthProviders(),
     queryFn: async () => (await getManagedAuthProviders()).providers,
     refetchOnWindowFocus: false,
   });
 
   const codexRuntimeQuery = useQuery({
-    queryKey: ["codex-runtime"],
+    queryKey: settingsKeys.codexRuntime(),
     queryFn: async () => (await getCodexRuntime()).runtime,
     refetchOnWindowFocus: false,
   });
 
   const codexAuthOverviewQuery = useQuery({
-    queryKey: ["codex-auth-overview"],
+    queryKey: settingsKeys.codexAuthOverview(),
     queryFn: async () => (await getCodexAuthOverview()).overview,
     refetchOnWindowFocus: false,
   });
 
   const qwenAuthQuery = useQuery({
-    queryKey: ["managed-auth-accounts", QWEN_PROVIDER_ID],
+    queryKey: settingsKeys.managedAuthAccounts(QWEN_PROVIDER_ID),
     queryFn: async () => await getManagedAuthAccounts(QWEN_PROVIDER_ID),
     refetchOnWindowFocus: false,
   });

@@ -20,7 +20,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useState } from "react";
-import type { ConversationMessage } from "@/store/slices/sessions";
+import type { ConversationMessage } from "./types";
 
 /* ─── Types ────────────────────────────────────────────────────── */
 

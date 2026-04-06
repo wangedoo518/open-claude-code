@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   BadgeCheck,
   CalendarClock,
@@ -12,13 +13,17 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
-import { useAppDispatch, useAppSelector } from "@/store";
 import { getWorkbench } from "@/lib/tauri";
+import { workbenchKeys } from "./api/query";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { setViewMode, type NavSection } from "@/store/slices/ui";
 import { truncate } from "@/lib/utils";
-import { openHomeSession } from "./tab-helpers";
+import {
+  buildHomeSectionHref,
+  openHomeSession,
+  parseHomeRouteState,
+  type NavSection,
+} from "./tab-helpers";
 import { SearchPage } from "./SearchPage";
 import { ScheduledPage } from "./ScheduledPage";
 import { DispatchPage } from "./DispatchPage";
@@ -36,15 +41,12 @@ const PRIMARY_ITEMS = [
 
 
 export function HomePage() {
-  const dispatch = useAppDispatch();
-  const viewMode = useAppSelector((state) => state.ui.viewMode);
-
-  const homeSection: NavSection =
-    viewMode.kind === "nav" ? viewMode.section : "session";
-  const activeHomeSessionId =
-    viewMode.kind === "session" ? viewMode.sessionId : null;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { section: homeSection, sessionId: activeHomeSessionId } =
+    parseHomeRouteState(location.search);
   const workbenchQuery = useQuery({
-    queryKey: ["desktop-workbench"],
+    queryKey: workbenchKeys.root(),
     queryFn: getWorkbench,
   });
 
@@ -65,7 +67,7 @@ export function HomePage() {
           <Button
             variant="ghost"
             className="h-7 w-full justify-start gap-2 text-body-sm"
-            onClick={() => openHomeSession(dispatch, null)}
+            onClick={() => openHomeSession(navigate, null)}
           >
             <Plus className="size-3" />
             New session
@@ -82,7 +84,7 @@ export function HomePage() {
                   label={item.label}
                   icon={item.icon}
                   active={homeSection === item.id}
-                  onClick={() => dispatch(setViewMode({ kind: "nav", section: item.id }))}
+                  onClick={() => navigate(buildHomeSectionHref(item.id))}
                 />
               ))}
             </nav>
@@ -109,7 +111,7 @@ export function HomePage() {
                       <button
                         key={session.id}
                         className="w-full rounded-md bg-transparent px-2 py-1.5 text-left transition hover:bg-muted/30"
-                        onClick={() => openHomeSession(dispatch, session.id)}
+                        onClick={() => openHomeSession(navigate, session.id)}
                       >
                         <div className="flex items-center gap-1.5">
                           <MessageSquare className="size-3 shrink-0 opacity-30" />
@@ -190,9 +192,9 @@ export function HomePage() {
 }
 
 function HomeOverview() {
-  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const workbenchQuery = useQuery({
-    queryKey: ["desktop-workbench"],
+    queryKey: workbenchKeys.root(),
     queryFn: getWorkbench,
   });
 
@@ -255,7 +257,9 @@ function HomeOverview() {
             <button
               key={card.id}
               className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 text-left transition hover:border-foreground/15 hover:bg-muted/10"
-              onClick={() => dispatch(setViewMode({ kind: "nav", section: card.id as NavSection }))}
+              onClick={() =>
+                navigate(buildHomeSectionHref(card.id as NavSection))
+              }
             >
               <card.icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
@@ -277,7 +281,7 @@ function HomeOverview() {
           <div className="mt-2 grid gap-2 lg:grid-cols-[0.9fr_1.1fr]">
             <Button
               className="h-7 justify-start gap-2 text-body-sm"
-              onClick={() => openHomeSession(dispatch, null)}
+              onClick={() => openHomeSession(navigate, null)}
             >
               <Plus className="size-3" />
               New Code session

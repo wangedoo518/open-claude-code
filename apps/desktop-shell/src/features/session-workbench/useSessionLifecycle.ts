@@ -8,6 +8,7 @@
 
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { workbenchKeys } from "@/features/workbench/api/query";
 import {
   cancelSession,
   deleteSession,
@@ -15,6 +16,7 @@ import {
   resumeSession,
   type DesktopSessionDetail,
 } from "@/lib/tauri";
+import { sessionWorkbenchKeys } from "./api/query";
 
 interface UseSessionLifecycleOptions {
   activeSessionId?: string | null;
@@ -33,8 +35,8 @@ export function useSessionLifecycle({
   const cancelMutation = useMutation({
     mutationFn: (sessionId: string) => cancelSession(sessionId),
     onSuccess: (session) => {
-      queryClient.setQueryData(["desktop-session", session.id], session);
-      void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      queryClient.setQueryData(sessionWorkbenchKeys.detail(session.id), session);
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
       onSessionCancelled?.(session);
     },
   });
@@ -43,8 +45,10 @@ export function useSessionLifecycle({
   const deleteMutation = useMutation({
     mutationFn: (sessionId: string) => deleteSession(sessionId),
     onSuccess: (_result, sessionId) => {
-      queryClient.removeQueries({ queryKey: ["desktop-session", sessionId] });
-      void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      queryClient.removeQueries({
+        queryKey: sessionWorkbenchKeys.detail(sessionId),
+      });
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
       onSessionDeleted?.(sessionId);
     },
   });
@@ -54,8 +58,8 @@ export function useSessionLifecycle({
     mutationFn: ({ sessionId, title }: { sessionId: string; title: string }) =>
       renameSession(sessionId, title),
     onSuccess: (session) => {
-      queryClient.setQueryData(["desktop-session", session.id], session);
-      void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      queryClient.setQueryData(sessionWorkbenchKeys.detail(session.id), session);
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
     },
   });
 
@@ -63,8 +67,8 @@ export function useSessionLifecycle({
   const resumeMutation = useMutation({
     mutationFn: (sessionId: string) => resumeSession(sessionId),
     onSuccess: (session) => {
-      queryClient.setQueryData(["desktop-session", session.id], session);
-      void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      queryClient.setQueryData(sessionWorkbenchKeys.detail(session.id), session);
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
     },
   });
 

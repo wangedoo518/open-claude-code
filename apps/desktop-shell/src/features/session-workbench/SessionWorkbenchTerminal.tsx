@@ -36,7 +36,7 @@ import {
   type DesktopSessionDetail,
   type RuntimeConversationMessage,
 } from "@/lib/tauri";
-import type { ConversationMessage } from "@/store/slices/sessions";
+import type { ConversationMessage } from "./types";
 import { MOCK_DEMO_MESSAGES } from "./mockDemoMessages";
 
 interface SessionWorkbenchTerminalProps {

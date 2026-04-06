@@ -24,7 +24,6 @@ import {
   removeOpenedApp,
   setCurrentAppId,
 } from "@/store/slices/minapps";
-import { setViewMode } from "@/store/slices/ui";
 import { useTheme } from "@/components/ThemeProvider";
 import {
   getAllMinApps,
@@ -39,6 +38,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  buildHomeSectionHref,
+  buildHomeSessionHref,
+  parseHomeRouteState,
+} from "@/features/workbench/tab-helpers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -55,13 +59,13 @@ export function TabBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { tabs, activeTabId } = useAppSelector((s) => s.tabs);
-  const viewMode = useAppSelector((s) => s.ui.viewMode);
   const openedKeepAliveApps = useAppSelector(
     (s) => s.minapps.openedKeepAliveApps
   );
   const { theme, setThemeMode } = useTheme();
 
   const pathname = location.pathname;
+  const homeRoute = parseHomeRouteState(location.search);
 
   useEffect(() => {
     dispatch(sanitizePersistedTabs());
@@ -71,8 +75,7 @@ export function TabBar() {
   const isOnHome = pathname === "/home" || pathname === "/";
   const isOnApps = pathname.startsWith("/apps");
   const isOnCode = pathname === "/code";
-  const isSettingsActive =
-    isOnHome && viewMode.kind === "nav" && viewMode.section === "settings";
+  const isSettingsActive = isOnHome && homeRoute.section === "settings";
   const isHomeActive = isOnHome && !isSettingsActive;
   const isAppsActive = isOnApps;
   const isCodeActive = isOnCode;
@@ -123,8 +126,7 @@ export function TabBar() {
 
   // ─── Row 1 nav handlers ──────────────────────────────────────
   const handleNavHome = () => {
-    dispatch(setViewMode({ kind: "nav", section: "overview" }));
-    navigate("/home");
+    navigate(buildHomeSectionHref("overview"));
   };
 
   const handleNavApps = () => {
@@ -136,8 +138,7 @@ export function TabBar() {
   };
 
   const handleNavSettings = () => {
-    dispatch(setViewMode({ kind: "nav", section: "settings" }));
-    navigate("/home");
+    navigate(buildHomeSectionHref("settings"));
   };
 
   // ─── Row 2 tab handlers ──────────────────────────────────────
@@ -151,8 +152,7 @@ export function TabBar() {
   };
 
   const handleNewSession = () => {
-    dispatch(setViewMode({ kind: "nav", section: "session" }));
-    navigate("/home");
+    navigate(buildHomeSessionHref(null));
   };
 
   const handleTabClose = (tabId: string) => {
@@ -185,8 +185,7 @@ export function TabBar() {
       navigate(nextTab.path);
     } else {
       // No tabs left, go home
-      dispatch(setViewMode({ kind: "nav", section: "overview" }));
-      navigate("/home");
+      navigate(buildHomeSectionHref("overview"));
     }
   };
 

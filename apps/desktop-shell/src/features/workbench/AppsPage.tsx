@@ -1,9 +1,8 @@
 import { Code } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { useAppDispatch } from "@/store";
-import { setViewMode } from "@/store/slices/ui";
 import { CherryOpenClawIcon } from "@/components/icons/CherryIcons";
+import { buildHomeSectionHref } from "./tab-helpers";
 
 const APPS = [
   {
@@ -23,7 +22,6 @@ const APPS = [
 export function AppsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
 
   return (
     <div className="h-full overflow-auto bg-background">
@@ -47,7 +45,7 @@ export function AppsPage() {
                       return;
                     }
 
-                    dispatch(setViewMode({ kind: "nav", section: "openclaw" }));
+                    navigate(buildHomeSectionHref("openclaw"));
                   }}
                 >
                   <div className="relative flex h-14 w-14 items-center justify-center">

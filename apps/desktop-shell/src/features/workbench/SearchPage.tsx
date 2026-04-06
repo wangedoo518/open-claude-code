@@ -1,22 +1,23 @@
 import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { Search as SearchIcon } from "lucide-react";
-import { useAppDispatch } from "@/store";
 import { Input } from "@/components/ui/input";
 import { getWorkbench, searchSessions } from "@/lib/tauri";
+import { workbenchKeys } from "./api/query";
 import { openHomeSession } from "./tab-helpers";
 import { Panel, SurfacePage } from "./shared";
 
 export function SearchPage() {
-  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const workbenchQuery = useQuery({
-    queryKey: ["desktop-workbench"],
+    queryKey: workbenchKeys.root(),
     queryFn: getWorkbench,
   });
   const searchQuery = useQuery({
-    queryKey: ["desktop-search", deferredQuery],
+    queryKey: workbenchKeys.search(deferredQuery),
     queryFn: () => searchSessions(deferredQuery),
     enabled: deferredQuery.trim().length > 0,
   });
@@ -51,7 +52,7 @@ export function SearchPage() {
                   <button
                     key={`${result.session_id}-${result.updated_at}`}
                     className="w-full rounded-2xl border border-border bg-muted/20 px-4 py-3 text-left transition hover:border-foreground/20 hover:bg-muted/30"
-                    onClick={() => openHomeSession(dispatch, result.session_id)}
+                    onClick={() => openHomeSession(navigate, result.session_id)}
                   >
                     <div className="text-sm font-medium text-foreground">
                       {result.title}
@@ -82,7 +83,7 @@ export function SearchPage() {
                       <button
                         key={session.id}
                         className="w-full rounded-xl border border-border bg-background px-3 py-2 text-left transition hover:border-foreground/20"
-                        onClick={() => openHomeSession(dispatch, session.id)}
+                        onClick={() => openHomeSession(navigate, session.id)}
                       >
                         <div className="text-sm font-medium text-foreground">
                           {session.title}

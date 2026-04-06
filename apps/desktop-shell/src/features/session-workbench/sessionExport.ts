@@ -2,7 +2,7 @@
  * Session Export — converts session messages to Markdown or JSON for download.
  */
 
-import type { ConversationMessage } from "@/store/slices/sessions";
+import type { ConversationMessage } from "./types";
 import type { DesktopSessionDetail } from "@/lib/tauri";
 
 /* ─── Markdown export ─────────────────────────────────────────── */

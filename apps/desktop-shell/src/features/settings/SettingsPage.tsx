@@ -22,6 +22,7 @@ import { PermissionSettings } from "./sections/PermissionSettings";
 import { DataSettings } from "./sections/DataSettings";
 import { ShortcutsSettings } from "./sections/ShortcutsSettings";
 import { AboutSection } from "./sections/AboutSection";
+import { settingsKeys } from "./api/query";
 import {
   getBootstrap,
   getCustomize,
@@ -67,17 +68,17 @@ export function SettingsPage() {
   }, [language, i18n]);
 
   const bootstrapQuery = useQuery({
-    queryKey: ["desktop-bootstrap"],
+    queryKey: settingsKeys.bootstrap(),
     queryFn: getBootstrap,
   });
 
   const settingsQuery = useQuery({
-    queryKey: ["desktop-settings"],
+    queryKey: settingsKeys.settings(),
     queryFn: getSettings,
   });
 
   const customizeQuery = useQuery({
-    queryKey: ["desktop-customize"],
+    queryKey: settingsKeys.customize(),
     queryFn: getCustomize,
   });
 

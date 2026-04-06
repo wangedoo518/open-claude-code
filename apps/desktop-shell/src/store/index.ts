@@ -19,7 +19,6 @@ import {
 import { CODE_TOOL_IDS, DEFAULT_CODE_TOOL } from "@/features/code-tools";
 
 import tabsReducer from "./slices/tabs";
-import sessionsReducer from "./slices/sessions";
 import settingsReducer from "./slices/settings";
 import uiReducer from "./slices/ui";
 import minappsReducer from "./slices/minapps";
@@ -28,7 +27,6 @@ import permissionsReducer from "./slices/permissions";
 
 const rootReducer = combineReducers({
   tabs: tabsReducer,
-  sessions: sessionsReducer,
   settings: settingsReducer,
   ui: uiReducer,
   minapps: minappsReducer,
@@ -104,7 +102,7 @@ const persistConfig = {
   key: "open-claude-code",
   version: 1,
   storage,
-  blacklist: ["sessions", "ui", "permissions"],
+  blacklist: ["ui", "permissions"],
   transforms: [sanitizeSettingsTransform, normalizeCodeToolsTransform],
 };
 
