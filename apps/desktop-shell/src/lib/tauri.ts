@@ -1109,11 +1109,25 @@ export async function forwardPermissionDecision(
   );
 }
 
+export interface PermissionRequestPayload {
+  session_id: string;
+  request_id: string;
+  tool_name: string;
+  tool_input: string;
+}
+
+export interface TextDeltaPayload {
+  session_id: string;
+  content: string;
+}
+
 export async function subscribeToSessionEvents(
   sessionId: string,
   handlers: {
     onSnapshot?: (session: DesktopSessionDetail) => void;
     onMessage?: (sessionId: string, message: RuntimeConversationMessage) => void;
+    onPermissionRequest?: (payload: PermissionRequestPayload) => void;
+    onTextDelta?: (payload: TextDeltaPayload) => void;
     onError?: (error: Error) => void;
   }
 ): Promise<() => void> {
@@ -1135,6 +1149,28 @@ export async function subscribeToSessionEvents(
     ) as DesktopSessionEvent;
     if (payload.type === "message") {
       handlers.onMessage?.(payload.session_id, payload.message);
+    }
+  });
+
+  source.addEventListener("permission_request", (event) => {
+    try {
+      const payload = JSON.parse(
+        (event as MessageEvent<string>).data
+      ) as PermissionRequestPayload;
+      handlers.onPermissionRequest?.(payload);
+    } catch {
+      // Ignore malformed permission events
+    }
+  });
+
+  source.addEventListener("text_delta", (event) => {
+    try {
+      const payload = JSON.parse(
+        (event as MessageEvent<string>).data
+      ) as TextDeltaPayload;
+      handlers.onTextDelta?.(payload);
+    } catch {
+      // Ignore malformed text delta events
     }
   });
 

@@ -6,6 +6,10 @@ import { SessionWorkbenchTerminal } from "./SessionWorkbenchTerminal";
 import { useSessionLifecycle } from "./useSessionLifecycle";
 import { updateTabSession } from "@/store/slices/tabs";
 import {
+  setPendingPermission,
+  inferToolRiskLevel,
+} from "@/store/slices/permissions";
+import {
   appendMessage,
   createSession,
   getSession,
@@ -125,6 +129,22 @@ export function SessionWorkbenchPage({
           }
         );
         void queryClient.invalidateQueries({ queryKey: ["desktop-workbench"] });
+      },
+      onPermissionRequest: (payload) => {
+        let parsedInput: Record<string, unknown> = {};
+        try {
+          parsedInput = JSON.parse(payload.tool_input) as Record<string, unknown>;
+        } catch {
+          parsedInput = { raw: payload.tool_input };
+        }
+        dispatch(
+          setPendingPermission({
+            id: payload.request_id,
+            toolName: payload.tool_name,
+            toolInput: parsedInput,
+            riskLevel: inferToolRiskLevel(payload.tool_name),
+          })
+        );
       },
     }).then((nextDispose) => {
       if (cancelled) {
