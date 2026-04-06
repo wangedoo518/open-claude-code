@@ -24,12 +24,9 @@ import { exportAsMarkdown, exportAsJson } from "./sessionExport";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { useAppDispatch, useAppSelector } from "@/store";
 import {
-  resolvePermission,
-  setPendingPermission,
-} from "@/store/slices/permissions";
-import {
   setShowSessionSidebar,
 } from "@/store/slices/settings";
+import { usePermissionsStore } from "@/state/permissions-store";
 import {
   forwardPermissionDecision,
   type ContentBlock,
@@ -66,8 +63,14 @@ export function SessionWorkbenchTerminal({
 }: SessionWorkbenchTerminalProps) {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const pendingPermission = useAppSelector(
-    (s) => s.permissions.pendingRequest
+  const pendingPermission = usePermissionsStore(
+    (state) => state.pendingRequest
+  );
+  const setPendingPermission = usePermissionsStore(
+    (state) => state.setPendingPermission
+  );
+  const resolvePermission = usePermissionsStore(
+    (state) => state.resolvePermission
   );
   const permissionMode = useAppSelector((s) => s.settings.permissionMode);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -104,12 +107,10 @@ export function SessionWorkbenchTerminal({
   const handlePermissionDecision = useCallback(
     (action: PermissionAction) => {
       if (pendingPermission) {
-        dispatch(
-          resolvePermission({
-            requestId: pendingPermission.id,
-            decision: action,
-          })
-        );
+        resolvePermission({
+          requestId: pendingPermission.id,
+          decision: action,
+        });
         // Forward decision to Tauri backend
         if (session?.id) {
           void forwardPermissionDecision(session.id, {
@@ -121,7 +122,7 @@ export function SessionWorkbenchTerminal({
         }
       }
     },
-    [dispatch, pendingPermission, session?.id]
+    [pendingPermission, resolvePermission, session?.id]
   );
 
   const addSystemMessage = useCallback((text: string) => {
@@ -247,16 +248,14 @@ export function SessionWorkbenchTerminal({
                     <button
                       className="text-label font-medium text-muted-foreground hover:text-foreground hover:underline"
                       onClick={() =>
-                        dispatch(
-                          setPendingPermission({
-                            id: `demo-perm-${Date.now()}`,
-                            toolName: "Bash",
-                            toolInput: {
-                              command: "npm install @radix-ui/react-dialog",
-                            },
-                            riskLevel: "high",
-                          })
-                        )
+                        setPendingPermission({
+                          id: `demo-perm-${Date.now()}`,
+                          toolName: "Bash",
+                          toolInput: {
+                            command: "npm install @radix-ui/react-dialog",
+                          },
+                          riskLevel: "high",
+                        })
                       }
                     >
                       Test permission
