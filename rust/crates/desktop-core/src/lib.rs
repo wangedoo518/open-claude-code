@@ -2419,6 +2419,26 @@ impl DesktopState {
                     claude_md.as_deref(),
                 );
 
+                // Build incremental persistence callback.
+                let persist_state = state.clone();
+                let persist_session_id = session_id.clone();
+                let on_iteration_complete: Arc<dyn Fn(&RuntimeSession) + Send + Sync> =
+                    Arc::new(move |updated_session: &RuntimeSession| {
+                        let s = persist_state.clone();
+                        let sid = persist_session_id.clone();
+                        let session_snapshot = updated_session.clone();
+                        // Fire-and-forget async persist from sync callback.
+                        tokio::spawn(async move {
+                            let mut store = s.store.write().await;
+                            if let Some(record) = store.sessions.get_mut(&sid) {
+                                record.session = session_snapshot;
+                                record.metadata.updated_at = unix_timestamp_millis();
+                            }
+                            drop(store);
+                            s.persist().await;
+                        });
+                    });
+
                 let config = agentic_loop::AgenticLoopConfig {
                     bridge_base_url,
                     bearer_token: client.bearer_token,
@@ -2426,6 +2446,7 @@ impl DesktopState {
                     project_path: project_path_buf,
                     system_prompt: Some(system_prompt_text),
                     bypass_permissions: true, // TODO: read from settings
+                    on_iteration_complete: Some(on_iteration_complete),
                 };
 
                 let mut session_for_loop = session;

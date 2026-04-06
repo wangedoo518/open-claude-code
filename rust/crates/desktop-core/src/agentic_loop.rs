@@ -31,6 +31,9 @@ const PERMISSION_TIMEOUT_SECS: u64 = 300;
 /// Default model label when model cannot be determined.
 const DEFAULT_MODEL_LABEL: &str = "unknown";
 
+/// Maximum size of a single tool output before truncation (100 KB).
+const MAX_TOOL_OUTPUT_CHARS: usize = 100_000;
+
 // ── Permission types ─────────────────────────────────────────────────
 
 /// Decision returned by the frontend (or auto-resolved by policy).
@@ -214,6 +217,9 @@ pub struct AgenticLoopConfig {
     pub system_prompt: Option<String>,
     /// Whether to bypass all permissions (DangerFullAccess mode).
     pub bypass_permissions: bool,
+    /// Optional callback invoked after each loop iteration with the
+    /// current session state, for incremental persistence.
+    pub on_iteration_complete: Option<Arc<dyn Fn(&RuntimeSession) + Send + Sync>>,
 }
 
 /// Run the async agentic conversation loop.
@@ -243,7 +249,28 @@ pub async fn run_agentic_loop(
         // ── Check limits ─────────────────────────────────────────
         iterations += 1;
         if iterations > MAX_LOOP_ITERATIONS {
-            return Err(AgenticError::MaxIterationsExceeded);
+            // Append a system message explaining the limit, then return gracefully.
+            let limit_msg = ConversationMessage {
+                role: runtime::MessageRole::Assistant,
+                blocks: vec![ContentBlock::Text {
+                    text: format!(
+                        "⚠️ Agentic loop reached the maximum of {MAX_LOOP_ITERATIONS} iterations. \
+                         Stopping to prevent runaway execution. You can continue by sending another message."
+                    ),
+                }],
+                usage: None,
+            };
+            let _ = current_session.push_message(limit_msg.clone());
+            let _ = event_sender.send(DesktopSessionEvent::Message {
+                session_id: session_id.clone(),
+                message: DesktopConversationMessage::from(&limit_msg),
+            });
+            return Ok(AgenticTurnResult {
+                session: current_session,
+                model_label,
+                iterations,
+                was_cancelled: false,
+            });
         }
         if cancel_token.is_cancelled() {
             return Ok(AgenticTurnResult {
@@ -263,17 +290,41 @@ pub async fn run_agentic_loop(
         );
 
         // ── Call LLM via code-tools-bridge (streaming SSE) ──────
-        let (assistant_message, stop_reason, response_model) =
-            call_llm_api_streaming(
-                &client,
-                &config.bridge_base_url,
-                &config.bearer_token,
-                &api_request,
-                &event_sender,
-                &session_id,
-            )
-            .await
-            .map_err(AgenticError::ApiError)?;
+        let api_result = call_llm_api_streaming(
+            &client,
+            &config.bridge_base_url,
+            &config.bearer_token,
+            &api_request,
+            &event_sender,
+            &session_id,
+        )
+        .await;
+
+        let (assistant_message, stop_reason, response_model) = match api_result {
+            Ok(result) => result,
+            Err(api_error) => {
+                // API error: append error message to session and return gracefully
+                // so the user sees what happened and can retry.
+                let error_msg = ConversationMessage {
+                    role: runtime::MessageRole::Assistant,
+                    blocks: vec![ContentBlock::Text {
+                        text: format!("⚠️ LLM API error: {api_error}"),
+                    }],
+                    usage: None,
+                };
+                let _ = current_session.push_message(error_msg.clone());
+                let _ = event_sender.send(DesktopSessionEvent::Message {
+                    session_id: session_id.clone(),
+                    message: DesktopConversationMessage::from(&error_msg),
+                });
+                return Ok(AgenticTurnResult {
+                    session: current_session,
+                    model_label,
+                    iterations,
+                    was_cancelled: false,
+                });
+            }
+        };
 
         if let Some(m) = response_model {
             model_label = m;
@@ -342,13 +393,13 @@ pub async fn run_agentic_loop(
                         Ok(output) => ConversationMessage::tool_result(
                             tool_use_id.clone(),
                             tool_name.clone(),
-                            output,
+                            truncate_tool_output(output),
                             false,
                         ),
                         Err(error) => ConversationMessage::tool_result(
                             tool_use_id.clone(),
                             tool_name.clone(),
-                            error,
+                            truncate_tool_output(error),
                             true,
                         ),
                     }
@@ -371,6 +422,11 @@ pub async fn run_agentic_loop(
                 session_id: session_id.clone(),
                 message: DesktopConversationMessage::from(&tool_result_message),
             });
+        }
+
+        // ── Incremental persistence ──────────────────────────────
+        if let Some(ref callback) = config.on_iteration_complete {
+            callback(&current_session);
         }
 
         // Check if stop_reason was not tool_use (shouldn't happen since we
@@ -800,5 +856,16 @@ fn is_read_only_tool(name: &str) -> bool {
     matches!(
         name,
         "read_file" | "glob_search" | "grep_search" | "Read" | "Glob" | "Grep"
+    )
+}
+
+/// Truncate tool output to prevent huge payloads from overwhelming SSE/LLM context.
+fn truncate_tool_output(output: String) -> String {
+    if output.len() <= MAX_TOOL_OUTPUT_CHARS {
+        return output;
+    }
+    let truncated = &output[..MAX_TOOL_OUTPUT_CHARS];
+    format!(
+        "{truncated}\n\n... [output truncated at {MAX_TOOL_OUTPUT_CHARS} characters]"
     )
 }
