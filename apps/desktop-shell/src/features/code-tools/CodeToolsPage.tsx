@@ -61,7 +61,6 @@ export function CodeToolsPage() {
     environmentVariables,
     directories,
     currentDirectory,
-    canLaunch,
     setCliTool,
     setModel,
     setTerminal,
@@ -106,6 +105,13 @@ export function CodeToolsPage() {
   const selectedAvailableModel = useMemo(
     () => findSelectedModel(availableProviders, selectedModelValue),
     [availableProviders, selectedModelValue]
+  );
+  const effectiveSelectedModel = selectedAvailableModel ?? selectedModel;
+  const canLaunchWithCurrentSelection = Boolean(
+    selectedCliTool &&
+      currentDirectory &&
+      (!requiresModel ||
+        (effectiveSelectedModel && effectiveSelectedModel.hasStoredCredential))
   );
   const codexAuthReady =
     codexRuntimeQuery.data?.has_chatgpt_tokens ||
@@ -174,6 +180,24 @@ export function CodeToolsPage() {
     requiresModel,
   ]);
 
+  useEffect(() => {
+    if (!selectedAvailableModel || !selectedModel) {
+      return;
+    }
+
+    if (
+      selectedAvailableModel.hasStoredCredential ===
+        selectedModel.hasStoredCredential &&
+      selectedAvailableModel.displayName === selectedModel.displayName &&
+      selectedAvailableModel.providerId === selectedModel.providerId &&
+      selectedAvailableModel.modelId === selectedModel.modelId
+    ) {
+      return;
+    }
+
+    setModel(selectedAvailableModel);
+  }, [selectedAvailableModel, selectedModel, setModel]);
+
   const handleModelChange = (value: string | undefined) => {
     setModel(findSelectedModel(availableProviders, value));
   };
@@ -208,7 +232,7 @@ export function CodeToolsPage() {
       api.warning(t("codetools.warning.workdirRequired"));
       return;
     }
-    if (requiresModel && !selectedModel) {
+    if (requiresModel && !effectiveSelectedModel) {
       api.warning(t("codetools.warning.modelRequired"));
       return;
     }
@@ -221,16 +245,16 @@ export function CodeToolsPage() {
         terminal: selectedTerminal,
         autoUpdateToLatest,
         environmentVariables: parseEnvironmentVariables(environmentVariables),
-        selectedModel: selectedModel
+        selectedModel: effectiveSelectedModel
           ? {
-              providerId: selectedModel.providerId,
-              providerName: selectedModel.providerName,
-              providerType: selectedModel.providerType,
-              baseUrl: selectedModel.baseUrl,
-              protocol: selectedModel.protocol,
-              modelId: selectedModel.modelId,
-              displayName: selectedModel.displayName,
-              hasStoredCredential: selectedModel.hasStoredCredential,
+              providerId: effectiveSelectedModel.providerId,
+              providerName: effectiveSelectedModel.providerName,
+              providerType: effectiveSelectedModel.providerType,
+              baseUrl: effectiveSelectedModel.baseUrl,
+              protocol: effectiveSelectedModel.protocol,
+              modelId: effectiveSelectedModel.modelId,
+              displayName: effectiveSelectedModel.displayName,
+              hasStoredCredential: effectiveSelectedModel.hasStoredCredential,
             }
           : null,
       });
@@ -458,10 +482,10 @@ export function CodeToolsPage() {
             </div>
           </div>
 
-          <Button
+            <Button
             className="h-10 w-full"
             onClick={() => void handleLaunch()}
-            disabled={!canLaunch || !isBunInstalled || isLaunching}
+            disabled={!canLaunchWithCurrentSelection || !isBunInstalled || isLaunching}
           >
             {isLaunching ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
