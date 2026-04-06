@@ -32,8 +32,10 @@ use time::{
 };
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 use tools::GlobalToolRegistry;
 
+pub mod agentic_loop;
 mod codex_auth;
 mod managed_auth;
 mod oauth_runtime;
@@ -858,6 +860,16 @@ pub enum DesktopSessionEvent {
         session_id: SessionId,
         message: DesktopConversationMessage,
     },
+    PermissionRequest {
+        session_id: SessionId,
+        request_id: String,
+        tool_name: String,
+        tool_input: String,
+    },
+    TextDelta {
+        session_id: SessionId,
+        content: String,
+    },
 }
 
 impl DesktopSessionEvent {
@@ -866,6 +878,8 @@ impl DesktopSessionEvent {
         match self {
             Self::Snapshot { .. } => "snapshot",
             Self::Message { .. } => "message",
+            Self::PermissionRequest { .. } => "permission_request",
+            Self::TextDelta { .. } => "text_delta",
         }
     }
 }
@@ -1089,6 +1103,10 @@ pub struct DesktopState {
     scheduled_persistence: Option<Arc<DesktopScheduledPersistence>>,
     dispatch_persistence: Option<Arc<DesktopDispatchPersistence>>,
     scheduler_started: Arc<AtomicBool>,
+    /// Per-session permission gates for the async agentic loop.
+    permission_gates: Arc<RwLock<HashMap<SessionId, Arc<agentic_loop::PermissionGate>>>>,
+    /// Per-session cancellation tokens for the async agentic loop.
+    cancel_tokens: Arc<RwLock<HashMap<SessionId, CancellationToken>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1225,6 +1243,8 @@ impl DesktopState {
             scheduled_persistence,
             dispatch_persistence,
             scheduler_started: Arc::new(AtomicBool::new(false)),
+            permission_gates: Arc::new(RwLock::new(HashMap::new())),
+            cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -2136,16 +2156,30 @@ impl DesktopState {
     pub async fn forward_permission_decision(
         &self,
         session_id: &str,
-        _request_id: &str,
-        _decision: &str,
+        request_id: &str,
+        decision: &str,
     ) -> Result<(), DesktopStateError> {
-        // Validate session exists
-        let store = self.store.read().await;
-        let _record = store
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| DesktopStateError::SessionNotFound(session_id.to_string()))?;
-        // TODO: forward decision to runtime permission gate when available
+        // Validate session exists.
+        {
+            let store = self.store.read().await;
+            let _record = store
+                .sessions
+                .get(session_id)
+                .ok_or_else(|| DesktopStateError::SessionNotFound(session_id.to_string()))?;
+        }
+
+        // Forward to the permission gate (if one exists for this session).
+        let gates = self.permission_gates.read().await;
+        if let Some(gate) = gates.get(session_id) {
+            let decision = match decision {
+                "allow" => agentic_loop::PermissionDecision::Allow,
+                "allow_always" => agentic_loop::PermissionDecision::AllowAlways,
+                _ => agentic_loop::PermissionDecision::Deny {
+                    reason: "user denied".into(),
+                },
+            };
+            gate.resolve(request_id, decision).await;
+        }
         Ok(())
     }
 
