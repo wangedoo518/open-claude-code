@@ -60,7 +60,7 @@
 - [x] L-08 两个独立的 CWD process lock (Phase 6.2)
 
 ### 欺骗性完成 (4)
-- [x] L-09 MCP init 只 discover 不 register (Phase 3.1 — marked honest, not fixed)
+- [x] L-09 MCP init 只 discover 不 register (Phase 3.1 marked honest → medium-term real fix with bypass approach)
 - [x] L-10 fork_session 用 default() 丢失状态 (Phase 7.1)
 - [x] L-11 /compact 乐观 UI 无回滚 (Phase 1.3)
 - [x] L-12 hooks 系统 config 源未接入 (short-term fix)

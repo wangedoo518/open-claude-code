@@ -20,10 +20,11 @@ use plugins::{PluginManager, PluginManagerConfig};
 use runtime::{
     credentials_path, load_system_prompt, ApiClient as RuntimeApiClient, ApiRequest,
     AssistantEvent, ConfigLoader, ConfigSource, ContentBlock, ConversationMessage,
-    ConversationRuntime, McpServerConfig, MessageRole, PermissionMode, PermissionPolicy,
-    ResolvedPermissionMode, RuntimeConfig, RuntimeError, RuntimeFeatureConfig,
-    Session as RuntimeSession, SessionCompaction as RuntimeSessionCompaction,
-    SessionFork as RuntimeSessionFork, TokenUsage, ToolError, ToolExecutor as RuntimeToolExecutor,
+    ConversationRuntime, ManagedMcpTool, McpServerConfig, McpServerManager, MessageRole,
+    PermissionMode, PermissionPolicy, ResolvedPermissionMode, RuntimeConfig, RuntimeError,
+    RuntimeFeatureConfig, Session as RuntimeSession,
+    SessionCompaction as RuntimeSessionCompaction, SessionFork as RuntimeSessionFork,
+    TokenUsage, ToolError, ToolExecutor as RuntimeToolExecutor,
 };
 use serde::{Deserialize, Serialize};
 use time::{
@@ -1112,6 +1113,15 @@ pub struct DesktopState {
     /// Constructing a new client per turn costs DNS + TCP + TLS handshake.
     /// This single client maintains a connection pool for keep-alive.
     http_client: reqwest::Client,
+    /// Persistent MCP server manager. Kept alive for the lifetime of the
+    /// process so subprocess connections stay warm between tool calls.
+    /// Initialized lazily on first use. Bypasses the vendored crate's
+    /// crate-private global registry (see docs/audit-lessons.md L-09).
+    mcp_manager: Arc<Mutex<Option<McpServerManager>>>,
+    /// Discovered MCP tools, indexed by qualified_name (`mcp__server__tool`).
+    /// Populated by `ensure_mcp_initialized`, consumed by the agentic loop
+    /// when building the system prompt and validating tool_use dispatch.
+    mcp_tools: Arc<RwLock<Vec<ManagedMcpTool>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1268,6 +1278,8 @@ impl DesktopState {
                 .pool_idle_timeout(Duration::from_secs(90))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            mcp_manager: Arc::new(Mutex::new(None)),
+            mcp_tools: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -2452,6 +2464,113 @@ impl DesktopState {
         Ok(detail)
     }
 
+    /// Initialize the persistent MCP server manager from the project's
+    /// `.claw/settings.json` configuration.
+    ///
+    /// Idempotent — if the manager is already initialized, this is a no-op
+    /// and returns the previously discovered tool list. On first call, it:
+    ///   1. Loads runtime config via `ConfigLoader`
+    ///   2. Creates a `McpServerManager` from the configured MCP servers
+    ///   3. Calls `discover_tools()` to spawn subprocesses + list tools
+    ///   4. Stores the manager + discovered tools for subsequent calls
+    ///
+    /// Returns the list of `ManagedMcpTool` available for the LLM to call.
+    /// On failure, logs to stderr and returns an empty list (graceful degrade).
+    pub async fn ensure_mcp_initialized(
+        &self,
+        project_path: &Path,
+    ) -> Vec<ManagedMcpTool> {
+        // Fast path: already initialized.
+        {
+            let tools = self.mcp_tools.read().await;
+            let manager_guard = self.mcp_manager.lock().await;
+            if manager_guard.is_some() {
+                return tools.clone();
+            }
+        }
+
+        // Load MCP config from the project.
+        let loader = ConfigLoader::default_for(project_path);
+        let runtime_config = match loader.load() {
+            Ok(rc) => rc,
+            Err(error) => {
+                eprintln!("[MCP init] failed to load runtime config: {error}");
+                return Vec::new();
+            }
+        };
+
+        let servers = runtime_config.mcp().servers();
+        if servers.is_empty() {
+            // No MCP servers configured. Store an empty manager so we
+            // don't retry on every call.
+            let mut guard = self.mcp_manager.lock().await;
+            *guard = Some(McpServerManager::from_servers(servers));
+            return Vec::new();
+        }
+
+        let mut manager = McpServerManager::from_servers(servers);
+        let discovered = match manager.discover_tools().await {
+            Ok(tools) => {
+                eprintln!(
+                    "[MCP init] connected {} server(s), discovered {} tool(s)",
+                    servers.len(),
+                    tools.len()
+                );
+                tools
+            }
+            Err(e) => {
+                eprintln!("[MCP init] tool discovery error: {e}");
+                Vec::new()
+            }
+        };
+
+        // Store manager and discovered tools for later use.
+        {
+            let mut guard = self.mcp_manager.lock().await;
+            *guard = Some(manager);
+        }
+        {
+            let mut tools_guard = self.mcp_tools.write().await;
+            *tools_guard = discovered.clone();
+        }
+
+        discovered
+    }
+
+    /// Call a tool on the initialized MCP server manager.
+    ///
+    /// `qualified_tool_name` is the full `mcp__server__tool` identifier.
+    /// Returns the formatted tool result as a string, or an error message.
+    pub async fn mcp_call_tool(
+        &self,
+        qualified_tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<String, String> {
+        let mut guard = self.mcp_manager.lock().await;
+        let manager = guard
+            .as_mut()
+            .ok_or_else(|| "MCP manager not initialized".to_string())?;
+
+        match manager
+            .call_tool(qualified_tool_name, Some(arguments))
+            .await
+        {
+            Ok(response) => {
+                // McpToolCallResult has content: Vec<McpToolCallContent>,
+                // structured_content, is_error. Format as JSON for the LLM.
+                if let Some(result) = response.result {
+                    serde_json::to_string_pretty(&result)
+                        .map_err(|e| format!("failed to serialize MCP result: {e}"))
+                } else if let Some(error) = response.error {
+                    Err(format!("MCP error: {}", error.message))
+                } else {
+                    Ok("{}".to_string())
+                }
+            }
+            Err(e) => Err(format!("MCP call failed: {e}")),
+        }
+    }
+
     pub async fn create_session(
         &self,
         request: CreateDesktopSessionRequest,
@@ -2689,6 +2808,12 @@ impl DesktopState {
                     }
                 };
 
+                // Initialize MCP servers on first use (idempotent).
+                // This spawns subprocess connections for MCP servers
+                // declared in .claw/settings.json and keeps them alive
+                // for subsequent tool calls. See docs/audit-lessons.md L-09.
+                let _ = self.ensure_mcp_initialized(&project_path_buf).await;
+
                 // Build incremental persistence callback.
                 //
                 // The callback is invoked synchronously from inside the
@@ -2736,9 +2861,11 @@ impl DesktopState {
                     system_prompt: Some(system_prompt_text),
                     bypass_permissions,
                     on_iteration_complete: Some(on_iteration_complete),
-                    mcp_servers: Vec::new(), // TODO: populate from frontend settings
+                    mcp_servers: Vec::new(), // legacy field, unused now
                     hooks: hooks_config,
                     http_client: self.http_client.clone(),
+                    mcp_manager: Arc::clone(&self.mcp_manager),
+                    mcp_tools: self.mcp_tools.read().await.clone(),
                 };
 
                 let mut session_for_loop = session;
@@ -5047,6 +5174,57 @@ mod tests {
         assert_eq!(detail.session.messages.len(), 1);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn mcp_call_before_init_returns_error() {
+        let state = DesktopState::with_executor(
+            Arc::new(super::MockTurnExecutor),
+            None,
+            None,
+            None,
+        );
+        // Manager is None until ensure_mcp_initialized runs.
+        let result = state
+            .mcp_call_tool("mcp__foo__bar", serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("MCP manager not initialized"));
+    }
+
+    #[tokio::test]
+    async fn mcp_init_with_empty_config_is_idempotent() {
+        let state = DesktopState::with_executor(
+            Arc::new(super::MockTurnExecutor),
+            None,
+            None,
+            None,
+        );
+        // Use a temp dir with no .claw/settings.json → empty config.
+        let tmp = std::env::temp_dir().join(format!(
+            "mcp-empty-{}-{}",
+            std::process::id(),
+            super::unix_timestamp_millis()
+        ));
+        let _ = fs::create_dir_all(&tmp);
+
+        let tools_1 = state.ensure_mcp_initialized(&tmp).await;
+        assert!(tools_1.is_empty(), "empty config → no tools");
+
+        // Second call is idempotent (no re-init, returns cached).
+        let tools_2 = state.ensure_mcp_initialized(&tmp).await;
+        assert!(tools_2.is_empty());
+
+        // mcp_call_tool should now fail with "unknown tool" instead of
+        // "manager not initialized" because the manager is set (empty).
+        let result = state
+            .mcp_call_tool("mcp__foo__bar", serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]

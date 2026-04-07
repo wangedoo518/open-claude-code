@@ -78,7 +78,7 @@
 | L-06 | 真相源分裂 | High | UI 改权限后端不生效 | 6249672 |
 | L-07 | 真相源分裂 | High | StreamingIndicator 闪烁 | 06e8734 |
 | L-08 | 真相源分裂 | High | 两个独立 CWD 锁等于没锁 | 631307b |
-| L-09 | 欺骗性完成 | Critical | MCP "discovered X tools" 但全部不可用 | 13c038b |
+| L-09 | 欺骗性完成 | Critical | MCP "discovered X tools" 但全部不可用 | 13c038b (降级) → pending (真修) |
 | L-10 | 欺骗性完成 | High | fork 后会话重复压缩 | 56d377f |
 | L-11 | 真相源分裂 | High | /compact 失败后 UI 已清空 | 157dc64 |
 | L-12 | 欺骗性完成 | Medium | hooks 系统 config 源未接入 | pending |
@@ -167,13 +167,37 @@
 
 ---
 
-### L-09: MCP init 只 discover 不 register (欺骗性完成)
+### L-09: MCP init 只 discover 不 register (欺骗性完成 → 真修复)
 
 - **严重度**: Critical
 - **类别**: 欺骗性完成
 - **发现日期**: 2026-04-07
-- **修复 commit**: pending (Phase 3.1 — honest downgrade, not fixed)
-- **涉及文件**: `rust/crates/desktop-core/src/agentic_loop.rs:977-1022`
+- **初次降级 commit**: 13c038b (Phase 3.1)
+- **真修复 commit**: pending (medium-term MCP fix)
+- **涉及文件**: `rust/crates/desktop-core/src/agentic_loop.rs`, `rust/crates/desktop-core/src/lib.rs`
+
+#### 真修复方案（绕过 crate-private API）
+1. `DesktopState` 新增持久化字段：
+   - `mcp_manager: Arc<Mutex<Option<McpServerManager>>>`
+   - `mcp_tools: Arc<RwLock<Vec<ManagedMcpTool>>>`
+2. 新增 `ensure_mcp_initialized(project_path)` 方法：
+   - 从 `.claw/settings.json` 加载 MCP 配置
+   - 创建 `McpServerManager`，调用 `discover_tools()` 连接子进程
+   - **manager 持久化保存**（不再临时创建后 drop）
+3. 新增 `mcp_call_tool(qualified_name, args)` 方法直接调用 manager
+4. Agentic loop 在工具执行时：
+   - 检测 `mcp__*` 前缀 → 路由到 `call_mcp_tool` 辅助函数
+   - 其他工具 → 走 `execute_tool_in_workspace` 正常路径
+5. `build_api_request` 的 tools 列表**追加** discovered MCP tools 的 qualified_name，LLM 就能看到并调用
+6. `append_user_message` 首次调用时 `ensure_mcp_initialized`（懒初始化）
+
+**效果**：完全绕过 `tools::global_mcp_registry()`，MCP 工具现在是可用的，且 subprocess 连接跨调用复用（性能好）。
+
+#### 防护
+- [ ] **审查 checklist**：commit message 里的"完成"必须对应"功能可用"，不是"编译通过"
+- [ ] log 里的 "discovered X items" 必须意味着 X 真的可用——否则前缀 `[PROBE]` 或 `[VALIDATION]`
+- [ ] 依赖第三方 crate 的 private 全局状态是**反模式**——必须识别并绕过
+- [ ] 任何标记为"已完成"的 Phase 必须有端到端手测验证
 
 #### 症状
 Commit message 声称 "Phase 16 MCP Client Runtime 完成"。日志显示 "MCP: discovered 3 tools from 1 servers"。但 LLM 调用 MCP 工具时返回 `{"server": "...", "status": "disconnected", "message": "Server not registered. Use MCP tool to connect first."}`。

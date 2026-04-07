@@ -11,8 +11,8 @@ use std::time::Duration;
 use reqwest::Response;
 use runtime::{
     should_compact, compact_session, CompactionConfig,
-    ContentBlock, ConversationMessage, HookRunner, RuntimeHookConfig,
-    Session as RuntimeSession,
+    ContentBlock, ConversationMessage, HookRunner, ManagedMcpTool, McpServerManager,
+    RuntimeHookConfig, Session as RuntimeSession,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -297,6 +297,13 @@ pub struct AgenticLoopConfig {
     /// Shared HTTP client — pass from DesktopState.http_client to
     /// avoid constructing a new client per turn.
     pub http_client: reqwest::Client,
+    /// Shared MCP server manager, pre-initialized by
+    /// `DesktopState::ensure_mcp_initialized`. The agentic loop uses this
+    /// to route `mcp__*` tool calls without going through the vendored
+    /// crate's private global registry.
+    pub mcp_manager: Arc<Mutex<Option<McpServerManager>>>,
+    /// Discovered MCP tools to include in the LLM's tool list.
+    pub mcp_tools: Vec<ManagedMcpTool>,
 }
 
 /// Run the async agentic conversation loop.
@@ -399,6 +406,7 @@ pub async fn run_agentic_loop(
             &config.model,
             config.system_prompt.as_deref(),
             &tool_specs,
+            &config.mcp_tools,
         );
 
         // ── Call LLM via code-tools-bridge (streaming SSE) ──────
@@ -513,10 +521,41 @@ pub async fn run_agentic_loop(
                             "Tool execution blocked by PreToolUse hook.".to_string(),
                             true,
                         )
+                    } else if is_mcp_tool_name(&tool_name) {
+                        // MCP tool: route to the persistent McpServerManager
+                        // bypassing tools::execute_tool (which uses the
+                        // crate-private global registry that we cannot
+                        // populate). See docs/audit-lessons.md L-09.
+                        let result = call_mcp_tool(
+                            &config.mcp_manager,
+                            &tool_name,
+                            tool_input_value.clone(),
+                        )
+                        .await;
+
+                        let (output, is_error) = match result {
+                            Ok(output) => (truncate_tool_output(output), false),
+                            Err(error) => (truncate_tool_output(error), true),
+                        };
+
+                        // PostToolUse hook runs for MCP tools too.
+                        if let Some(ref runner) = hook_runner {
+                            if is_error {
+                                runner.run_post_tool_use_failure(&tool_name, &tool_input_str, &output);
+                            } else {
+                                runner.run_post_tool_use(&tool_name, &tool_input_str, &output, false);
+                            }
+                        }
+
+                        ConversationMessage::tool_result(
+                            tool_use_id.clone(),
+                            tool_name.clone(),
+                            output,
+                            is_error,
+                        )
                     } else {
-                        // Execute the tool in a blocking thread under the
-                        // process-wide workspace lock with CWD save/restore.
-                        // This prevents cross-session CWD races.
+                        // Built-in tool: execute via the vendored crate under
+                        // the process-wide workspace lock with CWD save/restore.
                         let name = tool_name.clone();
                         let input_value = tool_input_value.clone();
                         let tool_cwd = config.project_path.clone();
@@ -596,6 +635,7 @@ fn build_api_request(
     model: &str,
     system_prompt: Option<&str>,
     tool_specs: &[tools::ToolSpec],
+    mcp_tools: &[ManagedMcpTool],
 ) -> Value {
     let messages: Vec<Value> = session
         .messages
@@ -646,8 +686,17 @@ fn build_api_request(
         })
         .collect();
 
-    let tools: Vec<Value> = tool_specs
+    let mut tools: Vec<Value> = tool_specs
         .iter()
+        // Filter out the broken MCP proxy tools from the built-in specs
+        // (they point at the crate-private global registry). Actual MCP
+        // tools are added below from mcp_tools.
+        .filter(|spec| {
+            !matches!(
+                spec.name,
+                "ListMcpResources" | "ReadMcpResource" | "McpAuth" | "MCP"
+            )
+        })
         .map(|spec| {
             serde_json::json!({
                 "name": spec.name,
@@ -656,6 +705,26 @@ fn build_api_request(
             })
         })
         .collect();
+
+    // Append discovered MCP tools with their qualified names so the LLM
+    // knows what's available and calls them as `mcp__server__tool`.
+    for mcp in mcp_tools {
+        let description = mcp
+            .tool
+            .description
+            .clone()
+            .unwrap_or_else(|| format!("MCP tool from server {}", mcp.server_name));
+        let input_schema = mcp
+            .tool
+            .input_schema
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({"type": "object"}));
+        tools.push(serde_json::json!({
+            "name": mcp.qualified_name,
+            "description": description,
+            "input_schema": input_schema
+        }));
+    }
 
     let mut request = serde_json::json!({
         "model": model,
@@ -1190,6 +1259,66 @@ fn execute_tool_in_workspace(
     let _ = std::env::set_current_dir(&original);
 
     result
+}
+
+/// Returns `true` if the tool name follows the MCP naming convention.
+///
+/// MCP tools are always named `mcp__<server>__<tool>`. This is a quick
+/// prefix check — qualified_name validation happens inside the manager.
+pub(crate) fn is_mcp_tool_name(name: &str) -> bool {
+    name.starts_with("mcp__") && name.matches("__").count() >= 2
+}
+
+/// Call an MCP tool via the shared server manager.
+///
+/// Returns the serialized result as a pretty-printed JSON string, or
+/// an error message on failure. Does NOT hold the manager lock across
+/// calls — each call acquires and releases the lock.
+async fn call_mcp_tool(
+    manager: &Arc<Mutex<Option<McpServerManager>>>,
+    qualified_tool_name: &str,
+    arguments: Value,
+) -> Result<String, String> {
+    let mut guard = manager.lock().await;
+    let mgr = guard
+        .as_mut()
+        .ok_or_else(|| "MCP manager not initialized".to_string())?;
+
+    match mgr.call_tool(qualified_tool_name, Some(arguments)).await {
+        Ok(response) => {
+            if let Some(result) = response.result {
+                serde_json::to_string_pretty(&result)
+                    .map_err(|e| format!("failed to serialize MCP result: {e}"))
+            } else if let Some(error) = response.error {
+                Err(format!("MCP error: {}", error.message))
+            } else {
+                Ok("{}".to_string())
+            }
+        }
+        Err(e) => Err(format!("MCP call failed: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod mcp_routing_tests {
+    use super::is_mcp_tool_name;
+
+    #[test]
+    fn detects_mcp_prefix() {
+        assert!(is_mcp_tool_name("mcp__github__list_repos"));
+        assert!(is_mcp_tool_name("mcp__playwright__screenshot"));
+        assert!(is_mcp_tool_name("mcp__s__t"));
+    }
+
+    #[test]
+    fn rejects_non_mcp_names() {
+        assert!(!is_mcp_tool_name("bash"));
+        assert!(!is_mcp_tool_name("read_file"));
+        assert!(!is_mcp_tool_name("mcp"));
+        assert!(!is_mcp_tool_name("mcp__"));
+        assert!(!is_mcp_tool_name("mcp__only_one_underscore"));
+        assert!(!is_mcp_tool_name("some_mcp__thing"));
+    }
 }
 
 /// Returns `true` for tools that are read-only and never need permission.
