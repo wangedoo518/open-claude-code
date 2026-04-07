@@ -268,6 +268,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/desktop/sessions/{id}/fork", post(fork_session))
         .route("/api/desktop/sessions/{id}/lifecycle", post(set_session_lifecycle_handler))
         .route("/api/desktop/sessions/{id}/flag", post(set_session_flag_handler))
+        .route("/api/desktop/attachments/process", post(process_attachment_handler))
         .route("/api/desktop/settings/permission-mode", post(set_permission_mode_handler).get(get_permission_mode_handler))
         .route("/api/desktop/debug/mcp/probe", post(debug_mcp_probe_handler))
         .route("/api/desktop/debug/mcp/call", post(debug_mcp_call_handler))
@@ -886,6 +887,77 @@ async fn set_session_flag_handler(
         .await
         .map_err(into_api_error)?;
     Ok(Json(serde_json::json!({ "session": session })))
+}
+
+/// Process a file attachment (drag-drop upload from the frontend).
+///
+/// Body schema:
+/// ```json
+/// {
+///   "filename": "report.pdf",
+///   "base64": "JVBERi0xLjcK..."
+/// }
+/// ```
+///
+/// The file is decoded from base64, dispatched by extension (PDF
+/// extraction, image encoding, plain-text decode), and the result
+/// is returned for the frontend to inject as message prefix context
+/// or a vision block.
+async fn process_attachment_handler(
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use base64::Engine;
+    use desktop_core::attachments::{process_attachment, AttachmentKind};
+
+    let filename = body
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "missing filename".to_string(),
+                }),
+            )
+        })?;
+
+    let base64_data = body
+        .get("base64")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "missing base64 payload".to_string(),
+                }),
+            )
+        })?;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid base64 payload: {e}"),
+                }),
+            )
+        })?;
+
+    let result = process_attachment(filename, &bytes);
+    let kind_str = match result.kind {
+        AttachmentKind::Text => "text",
+        AttachmentKind::ImageBase64 => "image_base64",
+        AttachmentKind::BinaryStub => "binary_stub",
+    };
+
+    Ok(Json(serde_json::json!({
+        "filename": result.filename,
+        "content": result.content,
+        "truncated": result.truncated,
+        "kind": kind_str,
+        "byte_size": bytes.len(),
+    })))
 }
 
 /// Debug endpoint: initialize MCP from `.claw/settings.json` at the given

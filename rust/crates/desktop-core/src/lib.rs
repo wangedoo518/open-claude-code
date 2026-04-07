@@ -37,6 +37,7 @@ use tokio_util::sync::CancellationToken;
 use tools::GlobalToolRegistry;
 
 pub mod agentic_loop;
+pub mod attachments;
 mod codex_auth;
 mod managed_auth;
 mod oauth_runtime;
