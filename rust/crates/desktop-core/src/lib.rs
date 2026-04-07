@@ -1193,9 +1193,22 @@ impl DesktopState {
                 }
             },
         );
-        let sessions = seeded
+        // Reconcile sessions stuck in Running state from a previous crash
+        // or shutdown. Without this, sessions can stay "Running" forever
+        // after a kill -9 or panic, and the user cannot send new messages
+        // (they hit SessionBusy).
+        let sessions: HashMap<_, _> = seeded
             .into_iter()
-            .map(|record| (record.metadata.id.clone(), record))
+            .map(|mut record| {
+                if record.metadata.turn_state == DesktopTurnState::Running {
+                    eprintln!(
+                        "[startup reconcile] session {} was Running at load — resetting to Idle (crash recovery)",
+                        record.metadata.id
+                    );
+                    record.metadata.turn_state = DesktopTurnState::Idle;
+                }
+                (record.metadata.id.clone(), record)
+            })
             .collect();
         let (next_task_id, scheduled_tasks) = scheduled_persistence.as_ref().map_or_else(
             || (1_u64, Vec::new()),
@@ -2692,8 +2705,11 @@ impl DesktopState {
                 session_for_loop.messages.push(user_message);
 
                 tokio::spawn(async move {
-                    // Drop guard: ensures gates/tokens are cleaned up even
-                    // if the future panics mid-execution.
+                    // Drop guard: best-effort synchronous cleanup using
+                    // try_write so we don't deadlock if the runtime is
+                    // shutting down. If try_write fails, the startup
+                    // reconciliation pass (see with_executor) will reset
+                    // any stuck session state on the next launch.
                     struct SessionCleanupGuard {
                         state: DesktopState,
                         session_id: SessionId,
@@ -2704,20 +2720,23 @@ impl DesktopState {
                             if self.fired {
                                 return;
                             }
-                            // On panic path: spawn cleanup task (we can't
-                            // await inside Drop).
-                            let state = self.state.clone();
-                            let sid = self.session_id.clone();
-                            tokio::spawn(async move {
-                                state.permission_gates.write().await.remove(&sid);
-                                state.cancel_tokens.write().await.remove(&sid);
-                                // Also reset turn state so the session is
-                                // not stuck in Running forever.
-                                let mut store = state.store.write().await;
-                                if let Some(record) = store.sessions.get_mut(&sid) {
+                            // Sync try_write — will not block if a writer
+                            // is already holding the lock (which can happen
+                            // on shutdown).
+                            if let Ok(mut gates) = self.state.permission_gates.try_write() {
+                                gates.remove(&self.session_id);
+                            }
+                            if let Ok(mut tokens) = self.state.cancel_tokens.try_write() {
+                                tokens.remove(&self.session_id);
+                            }
+                            if let Ok(mut store) = self.state.store.try_write() {
+                                if let Some(record) = store.sessions.get_mut(&self.session_id) {
                                     record.metadata.turn_state = DesktopTurnState::Idle;
                                 }
-                            });
+                            }
+                            // If any try_write fails, the session may be
+                            // left in Running state but will be reconciled
+                            // at next startup.
                         }
                     }
 
@@ -4980,6 +4999,61 @@ mod tests {
         assert_eq!(detail.session.created_at_ms, 1774960754306);
         assert_eq!(detail.session.updated_at_ms, 1774967954306);
         assert_eq!(detail.session.messages.len(), 1);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn startup_reconcile_resets_stuck_running_sessions() {
+        // Simulates a crash scenario: persistence file contains a session
+        // that was in turn_state=Running when the process died. On load,
+        // the reconcile pass should reset it to Idle so the user can
+        // continue sending messages.
+        let path = legacy_sessions_fixture_path();
+        let payload = r#"{
+  "next_session_id": 10,
+  "sessions": [
+    {
+      "metadata": {
+        "id": "desktop-session-stuck",
+        "title": "Was running",
+        "preview": "Preview",
+        "bucket": "today",
+        "created_at": 1774960754306,
+        "updated_at": 1774967954306,
+        "project_name": "Test",
+        "project_path": "/tmp/test",
+        "environment_label": "Local",
+        "model_label": "Opus 4.6",
+        "turn_state": "running"
+      },
+      "session": {
+        "version": 1,
+        "messages": []
+      }
+    }
+  ]
+}"#;
+        fs::write(&path, payload).expect("fixture should be written");
+
+        let state = DesktopState::with_executor(
+            Arc::new(super::MockTurnExecutor),
+            Some(Arc::new(DesktopPersistence { path: path.clone() })),
+            None,
+            None,
+        );
+
+        let detail = state
+            .get_session("desktop-session-stuck")
+            .await
+            .expect("stuck session should load");
+
+        // The turn state should have been reset to Idle by the reconcile pass.
+        assert_eq!(
+            detail.turn_state,
+            DesktopTurnState::Idle,
+            "startup reconcile must reset Running → Idle"
+        );
 
         let _ = fs::remove_file(path);
     }
