@@ -906,9 +906,14 @@ async fn list_workspace_skills_handler(
             }),
         )
     })?;
-    let skills = desktop_core::system_prompt::find_workspace_skills(
-        std::path::Path::new(project_path),
-    );
+    // S-02: validate path (no traversal, must exist, must be a directory).
+    let validated = desktop_core::validate_project_path(project_path).map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let skills = desktop_core::system_prompt::find_workspace_skills(&validated);
     let summary: Vec<serde_json::Value> = skills
         .iter()
         .map(|s| {
@@ -1014,10 +1019,14 @@ async fn debug_mcp_probe_handler(
                 }),
             )
         })?;
-    let tools = state
-        .desktop
-        .ensure_mcp_initialized(std::path::Path::new(project_path))
-        .await;
+    // S-02: validate path
+    let validated = desktop_core::validate_project_path(project_path).map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let tools = state.desktop.ensure_mcp_initialized(&validated).await;
     let summary: Vec<serde_json::Value> = tools
         .iter()
         .map(|t| {
@@ -1082,6 +1091,13 @@ async fn set_permission_mode_handler(
                 }),
             )
         })?;
+    // S-02: validate path
+    let validated = desktop_core::validate_project_path(project_path).map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     let mode = body
         .get("mode")
         .and_then(|v| v.as_str())
@@ -1095,7 +1111,7 @@ async fn set_permission_mode_handler(
         })?;
     state
         .desktop
-        .set_permission_mode(project_path, mode)
+        .set_permission_mode(&validated.display().to_string(), mode)
         .await
         .map_err(into_api_error)?;
     Ok(Json(serde_json::json!({ "ok": true, "mode": mode })))
@@ -1105,7 +1121,19 @@ async fn get_permission_mode_handler(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // GET is read-only and uses an empty default if no path. Validation is
+    // skipped here because the empty case is benign — get_permission_mode
+    // returns "default" without touching disk in that case.
     let project_path = params.get("project_path").cloned().unwrap_or_default();
+    if !project_path.is_empty() {
+        // Validate non-empty paths to fail fast on typos / traversal attempts.
+        desktop_core::validate_project_path(&project_path).map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
+    }
     let mode = state
         .desktop
         .get_permission_mode(&project_path)

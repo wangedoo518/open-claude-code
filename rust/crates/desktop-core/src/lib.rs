@@ -2418,9 +2418,13 @@ impl DesktopState {
     /// This is the authoritative source of truth for the permission mode.
     /// The agentic loop reads this on each turn via `ConfigLoader::load()`.
     ///
-    /// Accepts one of: `"default"`, `"acceptEdits"`, `"bypassPermissions"`,
-    /// `"plan"`. Values are normalized to the on-disk keys the runtime
-    /// config loader recognizes.
+    /// Accepts both naming styles for symmetry with the lifecycle status
+    /// API (S-01):
+    ///   - camelCase:  `default` | `acceptEdits` | `bypassPermissions` | `plan`
+    ///   - snake_case: `default` | `accept_edits` | `bypass_permissions` | `plan`
+    ///
+    /// Values are normalized to the on-disk keys the runtime config
+    /// loader recognizes.
     pub async fn set_permission_mode(
         &self,
         project_path: &str,
@@ -2428,14 +2432,17 @@ impl DesktopState {
     ) -> Result<(), DesktopStateError> {
         // Normalize frontend mode labels to config-file labels that
         // `parse_optional_permission_mode` in the runtime crate accepts.
+        // Both camelCase and snake_case forms are accepted as input.
         let normalized = match mode {
             "default" => "default",
-            "acceptEdits" => "acceptEdits",
-            "bypassPermissions" => "danger-full-access",
+            "acceptEdits" | "accept_edits" => "acceptEdits",
+            "bypassPermissions" | "bypass_permissions" => "danger-full-access",
             "plan" => "plan",
             other => {
                 return Err(DesktopStateError::InvalidProvider(format!(
-                    "unsupported permission mode: {other}"
+                    "unsupported permission mode: {other} \
+                     (expected: default | acceptEdits | bypassPermissions | plan, \
+                     or snake_case: accept_edits | bypass_permissions)"
                 )));
             }
         };
@@ -3932,6 +3939,56 @@ fn default_auth_source(
         .map_err(|error| error.to_string())
 }
 
+/// Validate a `project_path` query parameter from an HTTP request.
+///
+/// Defends against path traversal abuse (S-02) by enforcing:
+///   1. Path is non-empty
+///   2. Path does NOT contain `..` segments (which could escape any
+///      sandbox we add later)
+///   3. Path is canonicalizable to a directory that exists
+///
+/// Returns the canonical absolute path on success.
+///
+/// **Note**: this is intentionally permissive — we don't restrict to
+/// the user's home directory because legitimate use cases include
+/// system-wide projects (e.g. `/opt/myapp`). The main goal is to
+/// prevent obvious traversal patterns and to fail fast on typos.
+pub fn validate_project_path(input: &str) -> Result<PathBuf, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("project_path is empty".to_string());
+    }
+
+    // Reject path traversal segments. Note: this is a string-level
+    // check and not a security boundary on its own — but combined
+    // with canonicalize() below, it makes it harder to construct
+    // surprising paths via concatenation in callers.
+    let path = Path::new(trimmed);
+    for component in path.components() {
+        use std::path::Component;
+        if matches!(component, Component::ParentDir) {
+            return Err(format!(
+                "project_path contains '..' segment which is not allowed: {trimmed}"
+            ));
+        }
+    }
+
+    // Canonicalize to an absolute path. This both validates that the
+    // directory exists AND collapses any symlink shenanigans.
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("project_path does not exist or is unreadable: {trimmed} ({e})"))?;
+
+    if !canonical.is_dir() {
+        return Err(format!(
+            "project_path is not a directory: {}",
+            canonical.display()
+        ));
+    }
+
+    Ok(canonical)
+}
+
 /// Resolve credentials for the agentic loop in priority order:
 ///
 /// 1. `ANTHROPIC_API_KEY` env var → direct mode (no managed_auth)
@@ -5386,6 +5443,100 @@ mod tests {
         assert_eq!(detail.session.messages.len(), 1);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn validate_project_path_rejects_empty() {
+        let r = super::validate_project_path("");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn validate_project_path_rejects_traversal() {
+        let r = super::validate_project_path("/tmp/../etc");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains(".."));
+
+        let r2 = super::validate_project_path("./..");
+        assert!(r2.is_err());
+    }
+
+    #[test]
+    fn validate_project_path_rejects_nonexistent() {
+        let r = super::validate_project_path("/this/path/does/not/exist/anywhere");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn validate_project_path_accepts_temp_dir() {
+        // std::env::temp_dir() always exists
+        let tmp = std::env::temp_dir();
+        let result = super::validate_project_path(&tmp.display().to_string());
+        assert!(
+            result.is_ok(),
+            "expected temp dir to be accepted, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_project_path_rejects_files() {
+        // Create a temporary file and verify validation rejects it.
+        let path = std::env::temp_dir().join(format!(
+            "validate-test-file-{}-{}",
+            std::process::id(),
+            super::unix_timestamp_millis()
+        ));
+        fs::write(&path, b"hello").unwrap();
+        let result = super::validate_project_path(&path.display().to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not a directory"));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn permission_mode_accepts_snake_case() {
+        // Cannot easily test set_permission_mode without async + filesystem.
+        // Instead, verify the normalization logic by direct comparison —
+        // call the public API on a temp dir to confirm both forms are accepted.
+        // Async version below.
+    }
+
+    #[tokio::test]
+    async fn permission_mode_accepts_both_naming_styles() {
+        let state = super::DesktopState::with_executor(
+            std::sync::Arc::new(super::MockTurnExecutor),
+            None,
+            None,
+            None,
+        );
+
+        // Need a real directory for set_permission_mode to write to.
+        let tmp = std::env::temp_dir().join(format!(
+            "perm-mode-test-{}-{}",
+            std::process::id(),
+            super::unix_timestamp_millis()
+        ));
+        fs::create_dir_all(&tmp).unwrap();
+        let path_str = tmp.display().to_string();
+
+        // Both camelCase forms.
+        for mode in ["default", "acceptEdits", "bypassPermissions", "plan"] {
+            let result = state.set_permission_mode(&path_str, mode).await;
+            assert!(result.is_ok(), "camelCase {mode} should be accepted: {result:?}");
+        }
+
+        // Both snake_case forms (the new compatibility additions).
+        for mode in ["accept_edits", "bypass_permissions"] {
+            let result = state.set_permission_mode(&path_str, mode).await;
+            assert!(result.is_ok(), "snake_case {mode} should be accepted: {result:?}");
+        }
+
+        // Invalid still rejected.
+        let bad = state.set_permission_mode(&path_str, "workspaceWrite").await;
+        assert!(bad.is_err());
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
