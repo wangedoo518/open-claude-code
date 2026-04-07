@@ -2,7 +2,11 @@
 
 ![OpenClaudeCode](open-claude-code.png)
 
-`open-claude-code` 当前是一个围绕桌面壳层与 Rust 本地服务构建的工作区，而不再是单纯的“还原后的 Claude Code CLI 源码快照”。
+> **0.2.0** — 15 个审计漏洞全部修复 + 5 项 craft-agents-oss 借鉴功能
+> （会话工作流、Workspace Skills、加密凭据、`ocl` CLI、拖拽附件）。
+> 详见 [`CHANGELOG.md`](CHANGELOG.md) 与 [`docs/getting-started.md`](docs/getting-started.md)。
+
+`open-claude-code` 当前是一个围绕桌面壳层与 Rust 本地服务构建的工作区，而不再是单纯的”还原后的 Claude Code CLI 源码快照”。
 
 目前仓库的主线实现主要分成两部分：
 
