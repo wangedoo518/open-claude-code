@@ -266,6 +266,8 @@ pub fn app(state: AppState) -> Router {
         .route("/api/desktop/sessions/{id}/resume", post(resume_session))
         .route("/api/desktop/sessions/{id}/compact", post(compact_session))
         .route("/api/desktop/sessions/{id}/fork", post(fork_session))
+        .route("/api/desktop/sessions/{id}/lifecycle", post(set_session_lifecycle_handler))
+        .route("/api/desktop/sessions/{id}/flag", post(set_session_flag_handler))
         .route("/api/desktop/settings/permission-mode", post(set_permission_mode_handler).get(get_permission_mode_handler))
         .route("/api/desktop/debug/mcp/probe", post(debug_mcp_probe_handler))
         .route("/api/desktop/debug/mcp/call", post(debug_mcp_call_handler))
@@ -825,6 +827,62 @@ async fn fork_session(
     let session = state
         .desktop
         .fork_session(&id, message_index)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(serde_json::json!({ "session": session })))
+}
+
+/// Update a session's lifecycle status (Todo / InProgress / NeedsReview
+/// / Done / Archived). Body: `{ "status": "needs_review" }`.
+async fn set_session_lifecycle_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let status_str = body
+        .get("status")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "missing status field".to_string(),
+                }),
+            )
+        })?;
+    let status = match status_str {
+        "todo" => desktop_core::DesktopLifecycleStatus::Todo,
+        "in_progress" => desktop_core::DesktopLifecycleStatus::InProgress,
+        "needs_review" => desktop_core::DesktopLifecycleStatus::NeedsReview,
+        "done" => desktop_core::DesktopLifecycleStatus::Done,
+        "archived" => desktop_core::DesktopLifecycleStatus::Archived,
+        other => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid status value: {other}"),
+                }),
+            ));
+        }
+    };
+    let session = state
+        .desktop
+        .set_session_lifecycle_status(&id, status)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(serde_json::json!({ "session": session })))
+}
+
+/// Toggle the flagged bit on a session. Body: `{ "flagged": true }`.
+async fn set_session_flag_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let flagged = body.get("flagged").and_then(|v| v.as_bool()).unwrap_or(false);
+    let session = state
+        .desktop
+        .set_session_flagged(&id, flagged)
         .await
         .map_err(into_api_error)?;
     Ok(Json(serde_json::json!({ "session": session })))

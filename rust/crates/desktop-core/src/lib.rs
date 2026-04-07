@@ -160,6 +160,10 @@ pub struct DesktopSessionSummary {
     pub environment_label: String,
     pub model_label: String,
     pub turn_state: DesktopTurnState,
+    #[serde(default = "default_lifecycle_status")]
+    pub lifecycle_status: DesktopLifecycleStatus,
+    #[serde(default = "default_flagged")]
+    pub flagged: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -216,6 +220,10 @@ pub struct DesktopSessionDetail {
     pub environment_label: String,
     pub model_label: String,
     pub turn_state: DesktopTurnState,
+    #[serde(default = "default_lifecycle_status")]
+    pub lifecycle_status: DesktopLifecycleStatus,
+    #[serde(default = "default_flagged")]
+    pub flagged: bool,
     pub session: DesktopSessionData,
 }
 
@@ -507,6 +515,37 @@ pub enum DesktopTurnState {
 
 fn default_turn_state() -> DesktopTurnState {
     DesktopTurnState::Idle
+}
+
+/// Session lifecycle / workflow status, independent of `turn_state`.
+///
+/// `turn_state` is "is the LLM processing this session right now?"
+/// `lifecycle_status` is "what's my relationship to this session?"
+///
+/// Inspired by craft-agents-oss's inbox model (Todo → InProgress →
+/// NeedsReview → Done). Lets users manage multiple concurrent agent
+/// tasks without forgetting which ones need attention.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopLifecycleStatus {
+    /// Not yet started working on it.
+    Todo,
+    /// Currently working (either LLM running or user actively reading).
+    InProgress,
+    /// Agent finished; user should review the output.
+    NeedsReview,
+    /// User confirmed the work is complete.
+    Done,
+    /// Archived out of the main inbox view.
+    Archived,
+}
+
+fn default_lifecycle_status() -> DesktopLifecycleStatus {
+    DesktopLifecycleStatus::InProgress
+}
+
+fn default_flagged() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -907,6 +946,10 @@ struct SessionMetadata {
     model_label: String,
     #[serde(default = "default_turn_state")]
     turn_state: DesktopTurnState,
+    #[serde(default = "default_lifecycle_status")]
+    lifecycle_status: DesktopLifecycleStatus,
+    #[serde(default = "default_flagged")]
+    flagged: bool,
 }
 
 #[derive(Debug, Default)]
@@ -2181,6 +2224,56 @@ impl DesktopState {
         Ok(())
     }
 
+    /// Update a session's lifecycle status (Inbox workflow: Todo →
+    /// InProgress → NeedsReview → Done → Archived). Inspired by
+    /// craft-agents-oss.
+    pub async fn set_session_lifecycle_status(
+        &self,
+        session_id: &str,
+        status: DesktopLifecycleStatus,
+    ) -> Result<DesktopSessionDetail, DesktopStateError> {
+        let mut store = self.store.write().await;
+        let record = store
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| DesktopStateError::SessionNotFound(session_id.to_string()))?;
+        record.metadata.lifecycle_status = status;
+        record.metadata.updated_at = unix_timestamp_millis();
+        let detail = record.detail();
+        let sender = record.events.clone();
+        drop(store);
+        self.persist().await;
+        let _ = sender.send(DesktopSessionEvent::Snapshot {
+            session: detail.clone(),
+        });
+        Ok(detail)
+    }
+
+    /// Toggle or set the flagged bit on a session. Flagged sessions
+    /// are highlighted in the sidebar so users can mark important
+    /// ones for later attention.
+    pub async fn set_session_flagged(
+        &self,
+        session_id: &str,
+        flagged: bool,
+    ) -> Result<DesktopSessionDetail, DesktopStateError> {
+        let mut store = self.store.write().await;
+        let record = store
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| DesktopStateError::SessionNotFound(session_id.to_string()))?;
+        record.metadata.flagged = flagged;
+        record.metadata.updated_at = unix_timestamp_millis();
+        let detail = record.detail();
+        let sender = record.events.clone();
+        drop(store);
+        self.persist().await;
+        let _ = sender.send(DesktopSessionEvent::Snapshot {
+            session: detail.clone(),
+        });
+        Ok(detail)
+    }
+
     pub async fn resume_session(
         &self,
         session_id: &str,
@@ -2603,6 +2696,8 @@ impl DesktopState {
             environment_label: DEFAULT_ENVIRONMENT_LABEL.to_string(),
             model_label: DEFAULT_MODEL_LABEL.to_string(),
             turn_state: DesktopTurnState::Idle,
+            lifecycle_status: DesktopLifecycleStatus::Todo,
+            flagged: false,
         });
 
         let detail = record.detail();
@@ -2672,6 +2767,8 @@ impl DesktopState {
             environment_label: parent_metadata.environment_label.clone(),
             model_label: parent_metadata.model_label.clone(),
             turn_state: DesktopTurnState::Idle,
+            lifecycle_status: DesktopLifecycleStatus::Todo,
+            flagged: false,
         });
 
         let mut store_record = record;
@@ -2719,6 +2816,17 @@ impl DesktopState {
             record.metadata.preview = truncate_preview(&message);
             record.metadata.bucket = DesktopSessionBucket::Today;
             record.metadata.turn_state = DesktopTurnState::Running;
+            // Auto-transition lifecycle: Todo → InProgress on first message,
+            // Done/Archived → InProgress if user resumes an old session.
+            // NeedsReview stays (user is responding to the review).
+            if matches!(
+                record.metadata.lifecycle_status,
+                DesktopLifecycleStatus::Todo
+                    | DesktopLifecycleStatus::Done
+                    | DesktopLifecycleStatus::Archived
+            ) {
+                record.metadata.lifecycle_status = DesktopLifecycleStatus::InProgress;
+            }
             if record.metadata.title == "New session" {
                 record.metadata.title = session_title_from_message(&message);
             }
@@ -3369,6 +3477,12 @@ impl DesktopState {
             record.metadata.bucket = DesktopSessionBucket::Today;
             record.metadata.turn_state = DesktopTurnState::Idle;
             record.metadata.model_label = model_label;
+            // Auto-transition to NeedsReview when turn ends successfully,
+            // so the inbox flags it for user attention. If user already
+            // marked as Done/Archived, don't override.
+            if record.metadata.lifecycle_status == DesktopLifecycleStatus::InProgress {
+                record.metadata.lifecycle_status = DesktopLifecycleStatus::NeedsReview;
+            }
             record.session = new_session;
             record.detail()
         };
@@ -3397,6 +3511,8 @@ impl DesktopSessionRecord {
             environment_label: self.metadata.environment_label.clone(),
             model_label: self.metadata.model_label.clone(),
             turn_state: self.metadata.turn_state,
+            lifecycle_status: self.metadata.lifecycle_status,
+            flagged: self.metadata.flagged,
             session: DesktopSessionData::from(&self.session),
         }
     }
@@ -3414,6 +3530,8 @@ impl DesktopSessionRecord {
             environment_label: self.metadata.environment_label.clone(),
             model_label: self.metadata.model_label.clone(),
             turn_state: self.metadata.turn_state,
+            lifecycle_status: self.metadata.lifecycle_status,
+            flagged: self.metadata.flagged,
         }
     }
 
@@ -4858,6 +4976,8 @@ fn seeded_record(
             environment_label: DEFAULT_ENVIRONMENT_LABEL.to_string(),
             model_label: DEFAULT_MODEL_LABEL.to_string(),
             turn_state: DesktopTurnState::Idle,
+            lifecycle_status: DesktopLifecycleStatus::Todo,
+            flagged: false,
         },
         session: {
             let mut session = RuntimeSession::new();
@@ -4926,8 +5046,9 @@ mod tests {
     use super::{
         AppendDesktopMessageRequest, CreateDesktopDispatchItemRequest,
         CreateDesktopScheduledTaskRequest, CreateDesktopSessionRequest, DesktopDispatchPriority,
-        DesktopDispatchStatus, DesktopPersistence, DesktopScheduledRunStatus,
-        DesktopScheduledSchedule, DesktopState, DesktopTurnState,
+        DesktopDispatchStatus, DesktopLifecycleStatus, DesktopPersistence,
+        DesktopScheduledRunStatus, DesktopScheduledSchedule, DesktopState, DesktopStateError,
+        DesktopTurnState,
     };
     use tokio::time::{sleep, Duration};
 
@@ -5182,6 +5303,71 @@ mod tests {
         assert_eq!(detail.session.messages.len(), 1);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn session_lifecycle_defaults_and_transitions() {
+        let state = DesktopState::with_executor(
+            Arc::new(super::MockTurnExecutor),
+            None,
+            None,
+            None,
+        );
+
+        // New sessions start as Todo, unflagged.
+        let created = state
+            .create_session(super::CreateDesktopSessionRequest {
+                title: Some("lifecycle test".into()),
+                project_name: None,
+                project_path: None,
+            })
+            .await;
+        assert_eq!(created.lifecycle_status, DesktopLifecycleStatus::Todo);
+        assert!(!created.flagged);
+
+        // Explicit status update.
+        let updated = state
+            .set_session_lifecycle_status(&created.id, DesktopLifecycleStatus::NeedsReview)
+            .await
+            .expect("lifecycle update should succeed");
+        assert_eq!(
+            updated.lifecycle_status,
+            DesktopLifecycleStatus::NeedsReview
+        );
+
+        // Flag toggle.
+        let flagged = state
+            .set_session_flagged(&created.id, true)
+            .await
+            .expect("flag update should succeed");
+        assert!(flagged.flagged);
+
+        let unflagged = state
+            .set_session_flagged(&created.id, false)
+            .await
+            .expect("unflag should succeed");
+        assert!(!unflagged.flagged);
+
+        // Cycle through all status values.
+        for status in [
+            DesktopLifecycleStatus::Todo,
+            DesktopLifecycleStatus::InProgress,
+            DesktopLifecycleStatus::NeedsReview,
+            DesktopLifecycleStatus::Done,
+            DesktopLifecycleStatus::Archived,
+        ] {
+            let out = state
+                .set_session_lifecycle_status(&created.id, status)
+                .await
+                .expect("status transition should succeed");
+            assert_eq!(out.lifecycle_status, status);
+        }
+
+        // Unknown session → error.
+        let err = state
+            .set_session_lifecycle_status("nonexistent", DesktopLifecycleStatus::Done)
+            .await;
+        assert!(matches!(err, Err(DesktopStateError::SessionNotFound(_))));
     }
 
     #[tokio::test]
