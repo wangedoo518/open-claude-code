@@ -40,6 +40,7 @@ pub mod agentic_loop;
 mod codex_auth;
 mod managed_auth;
 mod oauth_runtime;
+pub mod secure_storage;
 pub mod system_prompt;
 
 pub use codex_auth::{
