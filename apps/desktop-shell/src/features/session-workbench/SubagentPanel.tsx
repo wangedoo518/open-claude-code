@@ -119,7 +119,7 @@ export function extractSubagents(
       for (let i = agents.length - 1; i >= 0; i--) {
         if (agents[i].status === "running") {
           agents[i].status = msg.toolResult.isError ? "error" : "completed";
-          agents[i].resultPreview = msg.toolResult.output?.slice(0, 200);
+          agents[i].resultPreview = msg.toolResult.output;
           break;
         }
       }
@@ -251,7 +251,7 @@ function AgentCard({ agent }: { agent: SubagentInfo }) {
       </button>
 
       {expanded && agent.resultPreview && (
-        <div className="border-t border-border/30 px-2.5 py-2">
+        <div className="max-h-[300px] overflow-auto border-t border-border/30 px-2.5 py-2">
           <pre className="whitespace-pre-wrap font-mono text-caption leading-relaxed text-muted-foreground">
             {agent.resultPreview}
           </pre>

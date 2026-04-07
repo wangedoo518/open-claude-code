@@ -11,7 +11,8 @@ use std::time::Duration;
 use reqwest::Response;
 use runtime::{
     should_compact, compact_session, CompactionConfig,
-    ContentBlock, ConversationMessage, Session as RuntimeSession,
+    ContentBlock, ConversationMessage, HookRunner, RuntimeHookConfig,
+    Session as RuntimeSession,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -205,6 +206,15 @@ impl std::fmt::Display for AgenticError {
 
 // ── Core agentic loop ────────────────────────────────────────────────
 
+/// A simplified MCP server descriptor from the frontend settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+    pub transport: String,
+    pub target: String,
+    pub enabled: bool,
+}
+
 /// Configuration for the agentic loop.
 pub struct AgenticLoopConfig {
     /// Base URL for the code-tools-bridge endpoint.
@@ -223,6 +233,10 @@ pub struct AgenticLoopConfig {
     /// Optional callback invoked after each loop iteration with the
     /// current session state, for incremental persistence.
     pub on_iteration_complete: Option<Arc<dyn Fn(&RuntimeSession) + Send + Sync>>,
+    /// MCP servers to connect at loop startup.
+    pub mcp_servers: Vec<McpServerEntry>,
+    /// Hook configuration for PreToolUse/PostToolUse lifecycle hooks.
+    pub hooks: Option<RuntimeHookConfig>,
 }
 
 /// Run the async agentic conversation loop.
@@ -247,6 +261,14 @@ pub async fn run_agentic_loop(
 
     let client = reqwest::Client::new();
     let tool_specs = tools::mvp_tool_specs();
+
+    // ── Initialize MCP servers (if configured) ───────────────────
+    if !config.mcp_servers.is_empty() {
+        init_mcp_servers(&config.mcp_servers);
+    }
+
+    // ── Initialize hooks runner (if configured) ──────────────────
+    let hook_runner = config.hooks.map(HookRunner::new);
 
     loop {
         // ── Check limits ─────────────────────────────────────────
@@ -407,33 +429,55 @@ pub async fn run_agentic_loop(
 
             let tool_result_message = match permission {
                 PermissionDecision::Allow | PermissionDecision::AllowAlways => {
-                    // Execute the tool in a blocking thread with CWD set to project path.
-                    let name = tool_name.clone();
-                    let input_value = tool_input_value.clone();
-                    let tool_cwd = config.project_path.clone();
-                    let result = tokio::task::spawn_blocking(move || {
-                        // Set CWD to project path so relative paths resolve correctly.
-                        if tool_cwd.is_dir() {
-                            let _ = std::env::set_current_dir(&tool_cwd);
-                        }
-                        tools::execute_tool(&name, &input_value)
-                    })
-                    .await
-                    .unwrap_or_else(|e| Err(format!("tool task panicked: {e}")));
+                    // Run PreToolUse hook (if configured).
+                    let hook_cancelled = if let Some(ref runner) = hook_runner {
+                        let result = runner.run_pre_tool_use(&tool_name, &tool_input_str);
+                        result.is_cancelled() || result.is_denied()
+                    } else {
+                        false
+                    };
 
-                    match result {
-                        Ok(output) => ConversationMessage::tool_result(
+                    if hook_cancelled {
+                        ConversationMessage::tool_result(
                             tool_use_id.clone(),
                             tool_name.clone(),
-                            truncate_tool_output(output),
-                            false,
-                        ),
-                        Err(error) => ConversationMessage::tool_result(
-                            tool_use_id.clone(),
-                            tool_name.clone(),
-                            truncate_tool_output(error),
+                            "Tool execution blocked by PreToolUse hook.".to_string(),
                             true,
-                        ),
+                        )
+                    } else {
+                        // Execute the tool in a blocking thread with CWD set to project path.
+                        let name = tool_name.clone();
+                        let input_value = tool_input_value.clone();
+                        let tool_cwd = config.project_path.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            if tool_cwd.is_dir() {
+                                let _ = std::env::set_current_dir(&tool_cwd);
+                            }
+                            tools::execute_tool(&name, &input_value)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(format!("tool task panicked: {e}")));
+
+                        let (output, is_error) = match result {
+                            Ok(output) => (truncate_tool_output(output), false),
+                            Err(error) => (truncate_tool_output(error), true),
+                        };
+
+                        // Run PostToolUse hook (if configured).
+                        if let Some(ref runner) = hook_runner {
+                            if is_error {
+                                runner.run_post_tool_use_failure(&tool_name, &tool_input_str, &output);
+                            } else {
+                                runner.run_post_tool_use(&tool_name, &tool_input_str, &output, false);
+                            }
+                        }
+
+                        ConversationMessage::tool_result(
+                            tool_use_id.clone(),
+                            tool_name.clone(),
+                            output,
+                            is_error,
+                        )
                     }
                 }
                 PermissionDecision::Deny { reason } => ConversationMessage::tool_result(
@@ -881,6 +925,99 @@ struct ToolBlockAccumulator {
     id: String,
     name: String,
     input_json: String,
+}
+
+/// Initialize MCP servers from the frontend settings into the global registry.
+///
+/// Converts the simplified `McpServerEntry` descriptors into the runtime's
+/// `ScopedMcpServerConfig` format, creates a `McpServerManager`, discovers
+/// tools, and registers everything into the global MCP tool registry.
+/// Initialize MCP servers from the frontend settings.
+///
+/// Converts simplified `McpServerEntry` descriptors into the runtime's
+/// `ScopedMcpServerConfig` format, creates a `McpServerManager`, discovers
+/// tools, and logs the results. MCP tool calls are then available via the
+/// global `McpToolRegistry` used by `execute_tool("MCP", ...)`.
+fn init_mcp_servers(servers: &[McpServerEntry]) {
+    use runtime::{McpServerConfig, McpServerManager, McpStdioServerConfig, ScopedMcpServerConfig};
+    use std::collections::BTreeMap;
+
+    let enabled: Vec<&McpServerEntry> = servers.iter().filter(|s| s.enabled).collect();
+    if enabled.is_empty() {
+        return;
+    }
+
+    let mut server_configs: BTreeMap<String, ScopedMcpServerConfig> = BTreeMap::new();
+    for entry in &enabled {
+        // Only stdio transport is currently supported by the vendored runtime.
+        if entry.transport != "stdio" {
+            eprintln!(
+                "MCP server '{}': transport '{}' not supported, skipping",
+                entry.name, entry.transport
+            );
+            continue;
+        }
+
+        // Parse target as "command arg1 arg2 ..."
+        let parts: Vec<&str> = entry.target.split_whitespace().collect();
+        let (command, args) = if let Some((cmd, rest)) = parts.split_first() {
+            (
+                cmd.to_string(),
+                rest.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+        } else {
+            continue;
+        };
+
+        let scoped = ScopedMcpServerConfig {
+            scope: runtime::ConfigSource::User,
+            config: McpServerConfig::Stdio(McpStdioServerConfig {
+                command,
+                args,
+                env: Default::default(),
+                tool_call_timeout_ms: None,
+            }),
+        };
+        server_configs.insert(entry.name.clone(), scoped);
+    }
+
+    if server_configs.is_empty() {
+        return;
+    }
+
+    // Spawn MCP connection in a background thread with its own tokio runtime.
+    let server_count = server_configs.len();
+    std::thread::Builder::new()
+        .name("mcp-init".to_string())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("MCP init: failed to create runtime: {e}");
+                    return;
+                }
+            };
+
+            rt.block_on(async move {
+                let mut manager = McpServerManager::from_servers(&server_configs);
+                match manager.discover_tools().await {
+                    Ok(tools) => {
+                        eprintln!(
+                            "MCP: discovered {} tools from {} servers",
+                            tools.len(),
+                            server_count
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("MCP: tool discovery error: {e}");
+                    }
+                }
+            });
+        })
+        .ok();
 }
 
 /// Returns `true` for tools that are read-only and never need permission.

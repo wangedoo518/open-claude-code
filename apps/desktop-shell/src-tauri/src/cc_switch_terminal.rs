@@ -10,19 +10,45 @@ pub fn launch_terminal(
         return Err("Resume command is empty".to_string());
     }
 
-    if !cfg!(target_os = "macos") {
-        return Err("Terminal resume is only supported on macOS".to_string());
+    #[cfg(target_os = "macos")]
+    {
+        match target {
+            "terminal" => launch_macos_terminal(command, cwd),
+            "iterm" => launch_iterm(command, cwd),
+            "ghostty" => launch_ghostty(command, cwd),
+            "kitty" => launch_kitty(command, cwd),
+            "wezterm" => launch_wezterm(command, cwd),
+            "alacritty" => launch_alacritty(command, cwd),
+            "custom" => launch_custom(command, cwd, custom_config),
+            _ => Err(format!("Unsupported terminal target: {target}")),
+        }
     }
 
-    match target {
-        "terminal" => launch_macos_terminal(command, cwd),
-        "iterm" => launch_iterm(command, cwd),
-        "ghostty" => launch_ghostty(command, cwd),
-        "kitty" => launch_kitty(command, cwd),
-        "wezterm" => launch_wezterm(command, cwd),
-        "alacritty" => launch_alacritty(command, cwd),
-        "custom" => launch_custom(command, cwd, custom_config),
-        _ => Err(format!("Unsupported terminal target: {target}")),
+    #[cfg(target_os = "windows")]
+    {
+        match target {
+            "cmd" => launch_windows_cmd(command, cwd),
+            "powershell" | "pwsh" => launch_windows_powershell(command, cwd),
+            "wt" | "windows-terminal" => launch_windows_terminal(command, cwd),
+            "alacritty" => launch_windows_alacritty(command, cwd),
+            "wezterm" => launch_windows_wezterm(command, cwd),
+            "custom" => launch_custom(command, cwd, custom_config),
+            _ => launch_windows_cmd(command, cwd), // default to cmd
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        match target {
+            "gnome-terminal" => launch_linux_gnome(command, cwd),
+            "konsole" => launch_linux_konsole(command, cwd),
+            "xterm" => launch_linux_xterm(command, cwd),
+            "alacritty" => launch_linux_alacritty(command, cwd),
+            "kitty" => launch_kitty(command, cwd),
+            "wezterm" => launch_wezterm(command, cwd),
+            "custom" => launch_custom(command, cwd, custom_config),
+            _ => launch_linux_xterm(command, cwd), // default to xterm
+        }
     }
 }
 
@@ -239,6 +265,126 @@ fn shell_escape(value: &str) -> String {
 
 fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+// ── Windows terminal launchers ──────────────────────────────────────
+
+fn launch_windows_cmd(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("cmd");
+    cmd.args(["/C", &format!("start cmd /K \"{command}\"")]);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.spawn().map_err(|e| format!("Failed to launch cmd: {e}"))?;
+    Ok(())
+}
+
+fn launch_windows_powershell(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    // Try pwsh (PowerShell 7+) first, fall back to powershell (Windows PowerShell)
+    let shell = if which_exists("pwsh") { "pwsh" } else { "powershell" };
+    let mut cmd = Command::new(shell);
+    cmd.args(["-NoExit", "-Command", command]);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch {shell}: {e}"))?;
+    Ok(())
+}
+
+fn launch_windows_terminal(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("wt");
+    let mut args = vec!["new-tab".to_string()];
+    if let Some(dir) = cwd {
+        args.push("--startingDirectory".to_string());
+        args.push(dir.to_string());
+    }
+    args.push("cmd".to_string());
+    args.push("/K".to_string());
+    args.push(command.to_string());
+    cmd.args(&args);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch Windows Terminal: {e}"))?;
+    Ok(())
+}
+
+fn launch_windows_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("alacritty");
+    let mut args = vec![];
+    if let Some(dir) = cwd {
+        args.extend_from_slice(&["--working-directory".to_string(), dir.to_string()]);
+    }
+    args.extend_from_slice(&["-e".to_string(), "cmd".to_string(), "/K".to_string(), command.to_string()]);
+    cmd.args(&args);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch Alacritty: {e}"))?;
+    Ok(())
+}
+
+fn launch_windows_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("wezterm");
+    let mut args = vec!["start".to_string()];
+    if let Some(dir) = cwd {
+        args.extend_from_slice(&["--cwd".to_string(), dir.to_string()]);
+    }
+    args.extend_from_slice(&["--".to_string(), "cmd".to_string(), "/K".to_string(), command.to_string()]);
+    cmd.args(&args);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch WezTerm: {e}"))?;
+    Ok(())
+}
+
+// ── Linux terminal launchers ───────────────────────────────────────
+
+fn launch_linux_gnome(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let full = build_shell_command(command, cwd);
+    Command::new("gnome-terminal")
+        .args(["--", "bash", "-c", &full])
+        .spawn()
+        .map_err(|e| format!("Failed to launch gnome-terminal: {e}"))?;
+    Ok(())
+}
+
+fn launch_linux_konsole(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("konsole");
+    if let Some(dir) = cwd {
+        cmd.args(["--workdir", dir]);
+    }
+    cmd.args(["-e", "bash", "-c", command]);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch Konsole: {e}"))?;
+    Ok(())
+}
+
+fn launch_linux_xterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let full = build_shell_command(command, cwd);
+    Command::new("xterm")
+        .args(["-e", &full])
+        .spawn()
+        .map_err(|e| format!("Failed to launch xterm: {e}"))?;
+    Ok(())
+}
+
+fn launch_linux_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("alacritty");
+    let mut args = vec![];
+    if let Some(dir) = cwd {
+        args.extend_from_slice(&["--working-directory".to_string(), dir.to_string()]);
+    }
+    args.extend_from_slice(&["-e".to_string(), "bash".to_string(), "-c".to_string(), command.to_string()]);
+    cmd.args(&args);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch Alacritty: {e}"))?;
+    Ok(())
+}
+
+/// Check if a binary exists in PATH.
+fn which_exists(name: &str) -> bool {
+    Command::new("where")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

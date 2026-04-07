@@ -265,6 +265,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/desktop/sessions/{id}/cancel", post(cancel_session))
         .route("/api/desktop/sessions/{id}/resume", post(resume_session))
         .route("/api/desktop/sessions/{id}/compact", post(compact_session))
+        .route("/api/desktop/sessions/{id}/fork", post(fork_session))
         .route("/api/desktop/sessions/{id}/permission", post(forward_permission))
         .route(
             "/api/desktop/sessions/{id}/events",
@@ -804,6 +805,23 @@ async fn resume_session(
     let session = state
         .desktop
         .resume_session(&id)
+        .await
+        .map_err(into_api_error)?;
+    Ok(Json(serde_json::json!({ "session": session })))
+}
+
+async fn fork_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let message_index = body
+        .get("message_index")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
+    let session = state
+        .desktop
+        .fork_session(&id, message_index)
         .await
         .map_err(into_api_error)?;
     Ok(Json(serde_json::json!({ "session": session })))

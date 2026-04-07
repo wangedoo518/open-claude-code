@@ -2366,6 +2366,78 @@ impl DesktopState {
         detail
     }
 
+    /// Fork a session: create a new session with messages up to `message_index`.
+    pub async fn fork_session(
+        &self,
+        parent_session_id: &str,
+        message_index: Option<usize>,
+    ) -> Result<DesktopSessionDetail, DesktopStateError> {
+        let (parent_messages, parent_metadata) = {
+            let store = self.store.read().await;
+            let record = store
+                .sessions
+                .get(parent_session_id)
+                .ok_or_else(|| {
+                    DesktopStateError::SessionNotFound(parent_session_id.to_string())
+                })?;
+            (
+                record.session.messages.clone(),
+                record.metadata.clone(),
+            )
+        };
+
+        // Truncate messages at the fork point (or keep all if no index given).
+        let fork_messages = match message_index {
+            Some(idx) if idx < parent_messages.len() => parent_messages[..=idx].to_vec(),
+            _ => parent_messages,
+        };
+
+        let session_number = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+        let session_id = format!("desktop-session-{session_number}");
+        let now = unix_timestamp_millis();
+
+        let mut forked_session = RuntimeSession::default();
+        for msg in fork_messages {
+            let _ = forked_session.push_message(msg);
+        }
+        forked_session.fork = Some(RuntimeSessionFork {
+            parent_session_id: parent_session_id.to_string(),
+            branch_name: None,
+        });
+
+        let record = session_record(SessionMetadata {
+            id: session_id.clone(),
+            title: format!("{} (fork)", parent_metadata.title),
+            preview: parent_metadata.preview.clone(),
+            bucket: DesktopSessionBucket::Today,
+            created_at: now,
+            updated_at: now,
+            project_name: parent_metadata.project_name.clone(),
+            project_path: parent_metadata.project_path.clone(),
+            environment_label: parent_metadata.environment_label.clone(),
+            model_label: parent_metadata.model_label.clone(),
+            turn_state: DesktopTurnState::Idle,
+        });
+
+        let mut store_record = record;
+        store_record.session = forked_session;
+
+        let detail = store_record.detail();
+        let sender = store_record.events.clone();
+        self.store
+            .write()
+            .await
+            .sessions
+            .insert(session_id, store_record);
+
+        self.persist().await;
+        let _ = sender.send(DesktopSessionEvent::Snapshot {
+            session: detail.clone(),
+        });
+
+        Ok(detail)
+    }
+
     pub async fn append_user_message(
         &self,
         session_id: &str,
@@ -2483,6 +2555,8 @@ impl DesktopState {
                     system_prompt: Some(system_prompt_text),
                     bypass_permissions: true, // TODO: read from settings
                     on_iteration_complete: Some(on_iteration_complete),
+                    mcp_servers: Vec::new(), // TODO: populate from frontend settings
+                    hooks: None, // TODO: load from .claude/settings.json
                 };
 
                 let mut session_for_loop = session;

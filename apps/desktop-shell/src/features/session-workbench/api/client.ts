@@ -75,6 +75,19 @@ export async function resumeSession(
   );
 }
 
+export async function forkSession(
+  sessionId: string,
+  messageIndex?: number
+): Promise<{ session: DesktopSessionDetail }> {
+  return fetchJson<{ session: DesktopSessionDetail }>(
+    `/api/desktop/sessions/${sessionId}/fork`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message_index: messageIndex }),
+    }
+  );
+}
+
 export async function compactSession(
   sessionId: string
 ): Promise<{ compacted: boolean }> {
