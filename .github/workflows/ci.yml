@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Rust backend ────────────────────────────────────────────────
+  rust:
+    name: Rust (cargo test + check)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: cargo check -p desktop-server
+        run: cargo check -p desktop-server
+
+      - name: cargo test -p desktop-core
+        run: cargo test -p desktop-core --lib
+
+      - name: Fail on warnings (desktop-core)
+        run: RUSTFLAGS="-D warnings" cargo build -p desktop-core
+        shell: bash
+
+  # ─── Frontend ────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (tsc --noEmit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop-shell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop-shell/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('apps/desktop-shell/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+  # ─── Audit guard ─────────────────────────────────────────────────
+  # Fails if someone re-introduces a known audit regression without
+  # updating docs/audit-lessons.md. Currently a placeholder — can be
+  # extended with specific pattern checks as new lessons are learned.
+  audit-guard:
+    name: Audit regression guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify audit-lessons.md exists
+        run: test -f docs/audit-lessons.md
+
+      - name: Verify no new unfiltered MCP proxy specs in system prompt
+        run: |
+          # L-09: MCP proxy specs must stay filtered out of system_prompt.rs.
+          # If anyone re-adds them without also wiring real MCP, CI should catch it.
+          if ! grep -q "ListMcpResources" rust/crates/desktop-core/src/system_prompt.rs; then
+            echo "ERROR: L-09 filter removed from system_prompt.rs"
+            exit 1
+          fi
+
+      - name: Verify no hardcoded bypass_permissions
+        run: |
+          # L-06: bypass_permissions must be read from config, not hardcoded.
+          if grep -r "bypass_permissions: true" rust/crates/desktop-core/src/; then
+            echo "ERROR: bypass_permissions hardcoded to true (L-06 regression)"
+            exit 1
+          fi
