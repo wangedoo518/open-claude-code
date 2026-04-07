@@ -2863,15 +2863,16 @@ impl DesktopState {
             .await
             .insert(session_id.clone(), cancel_token.clone());
 
-        // Try to resolve managed auth credentials for the agentic loop.
-        // Default provider: try codex-openai first, then qwen-code.
-        let runtime_client = self
-            .managed_auth_runtime_client("codex-openai")
-            .await
-            .or_else(|_| {
-                // Try sync fallback for qwen — already async so just return Err.
-                Err(DesktopStateError::ProviderNotFound("no provider".into()))
-            });
+        // Try to resolve credentials for the agentic loop, in priority order:
+        //   1. ANTHROPIC_API_KEY env var (direct mode, simplest setup)
+        //   2. .claude/settings.json `direct_api_key` field (per-project key)
+        //   3. managed auth (codex-openai)
+        //   4. managed auth (qwen-code)
+        let runtime_client = resolve_runtime_credentials(
+            self,
+            &PathBuf::from(&project_path),
+        )
+        .await;
 
         let state = self.clone();
         let turn_executor = Arc::clone(&self.turn_executor);
@@ -3928,6 +3929,75 @@ fn default_auth_source(
     resolve_startup_auth_source(|| Ok(runtime_config.oauth().cloned()))
         .map(Some)
         .map_err(|error| error.to_string())
+}
+
+/// Resolve credentials for the agentic loop in priority order:
+///
+/// 1. `ANTHROPIC_API_KEY` env var → direct mode (no managed_auth)
+/// 2. Project's `.claude/settings.json` → `direct_api_key` field
+/// 3. managed_auth provider `codex-openai`
+/// 4. managed_auth provider `qwen-code`
+///
+/// "Direct mode" returns a synthetic `DesktopManagedAuthRuntimeClient`
+/// pointing at the Anthropic API directly. The `code_tools_bridge`
+/// then forwards to api.anthropic.com with the user's key.
+///
+/// This lets users get up and running without going through OAuth
+/// flow setup. Storing the API key in plaintext settings.json is
+/// less secure than the managed_auth flow but matches what most
+/// CLI tools do.
+async fn resolve_runtime_credentials(
+    state: &DesktopState,
+    project_path: &Path,
+) -> Result<DesktopManagedAuthRuntimeClient, DesktopStateError> {
+    // 1. Env var has highest priority — easiest setup, no files to edit.
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        if !key.trim().is_empty() {
+            return Ok(direct_anthropic_client(key));
+        }
+    }
+
+    // 2. Project-local direct_api_key from .claude/settings.json.
+    let settings_json = project_path.join(".claude").join("settings.json");
+    if settings_json.is_file() {
+        if let Ok(text) = fs::read_to_string(&settings_json) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(key) = value
+                    .get("direct_api_key")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    return Ok(direct_anthropic_client(key.to_string()));
+                }
+            }
+        }
+    }
+
+    // 3. Managed auth: codex-openai → qwen-code fallback chain.
+    if let Ok(client) = state.managed_auth_runtime_client("codex-openai").await {
+        return Ok(client);
+    }
+    if let Ok(client) = state.managed_auth_runtime_client("qwen-code").await {
+        return Ok(client);
+    }
+
+    Err(DesktopStateError::ProviderNotFound(
+        "no credentials available — set ANTHROPIC_API_KEY env var, add \
+         direct_api_key to .claude/settings.json, or run codex/qwen login"
+            .into(),
+    ))
+}
+
+/// Build a synthetic `DesktopManagedAuthRuntimeClient` that points the
+/// agentic loop at the Anthropic API directly.
+fn direct_anthropic_client(api_key: String) -> DesktopManagedAuthRuntimeClient {
+    DesktopManagedAuthRuntimeClient {
+        provider_id: "direct-anthropic".to_string(),
+        provider_kind: DesktopManagedAuthProviderKind::CodexOpenai, // closest enum variant; doesn't matter at runtime
+        base_url: "https://api.anthropic.com".to_string(),
+        bearer_token: api_key,
+        extra_headers: HashMap::new(),
+    }
 }
 
 fn permission_policy(mode: PermissionMode, tool_registry: &GlobalToolRegistry) -> PermissionPolicy {
