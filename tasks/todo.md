@@ -49,24 +49,26 @@
 
 ### 时序/竞态类 (5)
 - [x] L-01 PermissionGate 超时 vs resolve race (Phase 2.1)
-- [ ] L-02 on_iteration_complete 乱序写 (Phase 6.1)
-- [ ] L-03 Drop guard async spawn 失败 (Phase 4.2)
+- [x] L-02 on_iteration_complete 乱序写 (Phase 6.1)
+- [x] L-03 Drop guard async spawn 失败 (Phase 4.2)
 - [ ] L-04 cancel_token 不中断 HTTP 请求 (deferred)
 - [x] L-05 SSE multi-byte UTF-8 跨 chunk (Phase 1.1)
 
 ### 真相源分裂 (3)
 - [x] L-06 permissionMode 前端 Zustand vs 磁盘 (Phase 2.2)
-- [ ] L-07 isStreaming vs turn_state 双源头 (Phase 5.1)
-- [ ] L-08 两个独立的 CWD process lock (Phase 6.2)
+- [x] L-07 isStreaming vs turn_state 双源头 (Phase 5.1)
+- [x] L-08 两个独立的 CWD process lock (Phase 6.2)
 
 ### 欺骗性完成 (4)
 - [x] L-09 MCP init 只 discover 不 register (Phase 3.1 — marked honest, not fixed)
-- [ ] L-10 fork_session 用 default() 丢失状态 (Phase 7.1)
+- [x] L-10 fork_session 用 default() 丢失状态 (Phase 7.1)
 - [x] L-11 /compact 乐观 UI 无回滚 (Phase 1.3)
 - [ ] L-12 hooks 系统 config 源未接入 (deferred)
 
 ### 边界条件 (3)
 - [x] L-13 tool_use input 非 object 类型 (Phase 1.2)
+- [x] L-14 truncate 字节切片 UTF-8 panic (P0-2)
+- [x] L-15 CLAUDE.md 路径注入未警告 (Phase 7.3)
 - [ ] L-14 truncate 字节切片 UTF-8 panic（已修）
 - [ ] L-15 CLAUDE.md 路径注入未警告
 

@@ -66,7 +66,31 @@
 
 ---
 
-## 漏洞档案
+## 漏洞档案汇总表
+
+| ID | 类别 | 严重度 | 症状 | 修复 commit |
+|----|------|--------|------|------------|
+| L-01 | 时序/竞态 | Critical | 用户点 Allow 被静默判为 Deny | 6249672 |
+| L-02 | 时序/竞态 | High | 长会话后磁盘丢消息 | 631307b |
+| L-03 | 时序/竞态 | High | 崩溃后会话卡死 Running | 42cd302 |
+| L-05 | 边界条件 | Critical | 中文/emoji 流式输出乱码 | 157dc64 |
+| L-06 | 真相源分裂 | High | UI 改权限后端不生效 | 6249672 |
+| L-07 | 真相源分裂 | High | StreamingIndicator 闪烁 | 06e8734 |
+| L-08 | 真相源分裂 | High | 两个独立 CWD 锁等于没锁 | 631307b |
+| L-09 | 欺骗性完成 | Critical | MCP "discovered X tools" 但全部不可用 | 13c038b |
+| L-10 | 欺骗性完成 | High | fork 后会话重复压缩 | 56d377f |
+| L-11 | 真相源分裂 | High | /compact 失败后 UI 已清空 | 157dc64 |
+| L-13 | 边界条件 | High | 工具循环第 2 轮 API 400 | 157dc64 |
+| L-15 | 边界条件/安全 | Medium | CLAUDE.md prompt 注入无警告 | 56d377f |
+
+**未修复（deferred）**：
+- L-04 cancel_token 不中断 HTTP 请求（需要 reqwest 层改造）
+- L-12 hooks 系统 config 源未接入（需要实现 settings.json 读 hooks）
+- L-14 已修于 P0-2（字节切片 UTF-8 panic）
+
+---
+
+## 漏洞档案详情
 
 ### L-01: PermissionGate 超时 vs resolve race
 
@@ -235,6 +259,181 @@ SSE 解析器使用 `buffer: String` + `String::from_utf8_lossy(&chunk)`。HTTP 
 - [ ] **审查 checklist**：任何 JSON 解析后要发送给严格 schema 的 API 时，必须 type-filter
 - [ ] `.ok().filter()` 模式应用于所有"解析成功但类型不对"的场景
 - [ ] 不要只用 `unwrap_or` 处理 `Result::Err`，要考虑 `Ok(wrong_type)`
+
+---
+
+### L-02: on_iteration_complete 持久化乱序写
+
+- **严重度**: High
+- **类别**: 时序/竞态类
+- **发现日期**: 2026-04-07
+- **修复 commit**: 631307b (Phase 6.1)
+- **涉及文件**: `rust/crates/desktop-core/src/lib.rs:2684-2720`
+
+#### 症状
+长 agentic 循环（10+ 轮）结束后磁盘状态偶发丢失中间轮的 tool_result。重启应用后发现某些消息不见了。间歇性、难复现。
+
+#### 根因
+`on_iteration_complete` 回调每轮 spawn 一个新 tokio task 来持久化：
+```rust
+Arc::new(move |session| {
+    tokio::spawn(async move {
+        let mut store = s.store.write().await;
+        // ...
+        s.persist().await;
+    });
+});
+```
+轮 N 的 task 和轮 N+1 的 task 在 `store.write().await` 上竞争。tokio 的 RwLock 没有 FIFO 保证（除非用 Mutex）。任务 N+1 可能先拿到锁写入新状态，任务 N 后拿到锁用旧状态覆盖。**后写者赢**——但是旧状态。
+
+#### 修复
+在 callback 内增加一个**per-session tokio::sync::Mutex**，spawned task 必须先获取这个 mutex 才能访问 store。`tokio::Mutex::lock()` 文档保证 **FIFO 顺序**。这把并发 spawn 序列化成 FIFO 队列：
+```rust
+let persist_serial = Arc::new(Mutex::new(()));
+// ...
+let _persist_guard = serial.lock().await;  // FIFO
+let mut store = s.store.write().await;
+```
+
+#### 防护
+- [ ] **审查 checklist**：任何 fire-and-forget spawn 后访问共享状态时，问：两个 task 的顺序谁保证？
+- [ ] `tokio::sync::Mutex` 是 FIFO，`tokio::sync::RwLock` 不是——需要顺序就用 Mutex
+- [ ] 考虑用 mpsc channel 做持久化队列，比 mutex 更清晰表达"序列化"意图
+
+---
+
+### L-03: Drop guard async spawn 在 shutdown 时失败
+
+- **严重度**: High
+- **类别**: 时序/竞态类
+- **发现日期**: 2026-04-07
+- **修复 commit**: 42cd302 (Phase 4.2)
+- **涉及文件**: `rust/crates/desktop-core/src/lib.rs:2707-2735`
+
+#### 症状
+应用 kill -9 或 panic 后重启，之前 Running 的会话卡住，用户无法发消息（SessionBusy 错误）。
+
+#### 根因
+`SessionCleanupGuard::drop` 在 panic 路径尝试 `tokio::spawn(async move { cleanup })`。但 runtime 正在 shutdown 时，`tokio::spawn` 会失败（或 task 被立即 drop）。结果：`permission_gates` / `cancel_tokens` / `turn_state` 都不会被清理。`turn_state` 保持 `Running` 永远卡住。
+
+#### 修复
+1. **Phase 4.1**: 启动时 reconcile stuck sessions（with_executor 中遍历 persisted sessions，Running → Idle）——这是主要防护
+2. **Phase 4.2**: Drop guard 改为同步 `try_write`——非阻塞、无需 spawn；如果 lock 被占用就放弃（交给 startup reconcile 兜底）
+
+#### 防护
+- [ ] **审查 checklist**：`Drop` impl 里不应该依赖异步 runtime
+- [ ] 关键状态（如 turn_state）必须有启动时的 reconciliation pass
+- [ ] `tokio::spawn` inside `Drop` 不是 reliable 的 cleanup 机制
+
+---
+
+### L-08: 两个独立的 CWD process lock
+
+- **严重度**: High
+- **类别**: 真相源分裂
+- **发现日期**: 2026-04-07
+- **修复 commit**: 631307b (Phase 6.2)
+- **涉及文件**: `rust/crates/desktop-core/src/lib.rs:3915`, `rust/crates/desktop-core/src/agentic_loop.rs:1058`
+
+#### 症状
+Legacy `execute_live_turn` 和 agentic_loop 同时运行时，两个任务互相修改进程 CWD（`std::env::set_current_dir`），互相看不到对方的 lock，导致工具在错的目录运行。间歇性——取决于调度顺序。
+
+#### 根因
+`lib.rs::process_workspace_lock` 和 `agentic_loop.rs::execute_tool_in_workspace` 的 local static OnceLock **是两个独立的 Mutex 实例**。
+
+```rust
+// lib.rs
+fn process_workspace_lock() -> &'static StdMutex<()> {
+    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();  // ← 局部 static
+    // ...
+}
+
+// agentic_loop.rs
+fn execute_tool_in_workspace(...) {
+    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();  // ← 另一个局部 static
+    // ...
+}
+```
+
+两个"全局"锁，等于没有锁。P1-1 修复 CWD 并发时把锁加错了地方。
+
+#### 修复
+1. `process_workspace_lock` 公开为 `pub(crate)`
+2. `agentic_loop` 的 `execute_tool_in_workspace` 删除自己的 local LOCK
+3. 改用 `crate::process_workspace_lock()`
+
+现在 legacy + agentic 共享同一个锁。
+
+#### 防护
+- [ ] **审查 checklist**：任何"global"的 `static` 变量必须问"真的只有一个吗？"
+- [ ] 如果多个文件需要共用资源，定义一个中心化的 accessor 函数（pub 或 pub(crate)）
+- [ ] 搜索代码库里所有 `OnceLock<Mutex<>>` 的位置，确保没有"多个全局"
+
+---
+
+### L-10: fork_session 用 default() 丢失状态
+
+- **严重度**: High
+- **类别**: 欺骗性完成
+- **发现日期**: 2026-04-07
+- **修复 commit**: 56d377f (Phase 7.1)
+- **涉及文件**: `rust/crates/desktop-core/src/lib.rs:2532`
+
+#### 症状
+fork 一个跑过多次压缩的长会话后，fork 出来的会话 `compaction` 字段是 `None`。下一次 agentic loop 触发 `should_compact` 时，重新从零压缩——用户看到"📦 Context compacted"重复出现在同一份历史上。
+
+#### 根因
+```rust
+let mut forked_session = RuntimeSession::default();  // ← 重置全部
+for msg in fork_messages {
+    let _ = forked_session.push_message(msg);  // 只复制 messages
+}
+```
+`RuntimeSession::default()` 重置所有非 messages 字段：`compaction`, `usage`, `version`, `session_id`, `fork`（会被后续覆盖）。仅手动复制了 messages。任何运行时状态都丢失。
+
+`let _ = push_message(msg)` 还吞掉了错误——如果 runtime 校验失败，那条消息静默丢失。
+
+#### 修复
+```rust
+let mut forked_session = parent_session;  // Clone 完整状态
+if let Some(idx) = message_index {
+    forked_session.messages.truncate(idx + 1);
+}
+forked_session.fork = Some(...);
+```
+
+#### 防护
+- [ ] **审查 checklist**："复制 + 修改少量字段" 场景用 clone + mutate，而不是 default + rebuild
+- [ ] 数据结构有很多字段时，clone() 是最安全的，手动复制是最容易漏的
+
+---
+
+### L-15: CLAUDE.md 路径注入未警告
+
+- **严重度**: Medium
+- **类别**: 边界条件遗漏 / 安全
+- **发现日期**: 2026-04-07
+- **修复 commit**: 56d377f (Phase 7.3)
+- **涉及文件**: `rust/crates/desktop-core/src/system_prompt.rs:76-99`
+
+#### 症状
+用户打开任意目录作为 project，上级目录（或 `~/.claude/`）中的 CLAUDE.md 会被自动加载为系统 prompt——**没有任何警告**，用户不知道。恶意或误放的 CLAUDE.md 可以覆盖用户意图、指示模型 exfiltrate 数据等。
+
+#### 根因
+`find_claude_md` 向上遍历项目路径查找 CLAUDE.md，找到就用。**没有追踪来源路径**，也**没有区分"项目内"和"祖先目录"**。所有找到的文件被同等信任。
+
+#### 修复
+1. 新结构 `ClaudeMdDiscovery { content, source, is_ancestor }`
+2. 新函数 `find_claude_md_with_source` 返回 discovery，记录 `is_ancestor = true` 当文件来自非项目本身的目录
+3. `build_system_prompt_with_source` 当 `is_ancestor == true` 时在 CLAUDE.md 块前插入 "Context Source Warning" 警告块
+4. 所有发现都打 stderr 日志 `[CLAUDE.md] loaded from {path} (ancestor={bool})`
+
+保留原 `find_claude_md` / `build_system_prompt` 作为向后兼容的 thin wrapper。
+
+#### 防护
+- [ ] **审查 checklist**：任何"向上遍历找配置"的功能必须追踪来源，并区分可信/不可信来源
+- [ ] 文件系统路径是攻击面——不能默认信任任意目录下的文件
+- [ ] 任何注入系统 prompt 的内容必须有明确的来源标记
 
 ---
 
