@@ -2500,12 +2500,18 @@ impl DesktopState {
     }
 
     /// Fork a session: create a new session with messages up to `message_index`.
+    ///
+    /// Preserves ALL fields from the parent session (compaction, usage,
+    /// version, etc.) — only the messages vector is truncated to the fork
+    /// point. Previously this used `RuntimeSession::default()` which reset
+    /// everything, losing compaction state and causing duplicate compactions.
+    /// See docs/audit-lessons.md L-10.
     pub async fn fork_session(
         &self,
         parent_session_id: &str,
         message_index: Option<usize>,
     ) -> Result<DesktopSessionDetail, DesktopStateError> {
-        let (parent_messages, parent_metadata) = {
+        let (parent_session, parent_metadata) = {
             let store = self.store.read().await;
             let record = store
                 .sessions
@@ -2513,25 +2519,22 @@ impl DesktopState {
                 .ok_or_else(|| {
                     DesktopStateError::SessionNotFound(parent_session_id.to_string())
                 })?;
-            (
-                record.session.messages.clone(),
-                record.metadata.clone(),
-            )
-        };
-
-        // Truncate messages at the fork point (or keep all if no index given).
-        let fork_messages = match message_index {
-            Some(idx) if idx < parent_messages.len() => parent_messages[..=idx].to_vec(),
-            _ => parent_messages,
+            // Clone the full RuntimeSession to preserve all fields.
+            (record.session.clone(), record.metadata.clone())
         };
 
         let session_number = self.next_session_id.fetch_add(1, Ordering::Relaxed);
         let session_id = format!("desktop-session-{session_number}");
         let now = unix_timestamp_millis();
 
-        let mut forked_session = RuntimeSession::default();
-        for msg in fork_messages {
-            let _ = forked_session.push_message(msg);
+        // Clone the parent session (preserves compaction, usage, etc.) and
+        // truncate its message list at the fork point.
+        let mut forked_session = parent_session;
+        if let Some(idx) = message_index {
+            if idx < forked_session.messages.len() {
+                forked_session.messages.truncate(idx + 1);
+            }
+            // If idx is out of range, keep all messages (permissive).
         }
         forked_session.fork = Some(RuntimeSessionFork {
             parent_session_id: parent_session_id.to_string(),
@@ -2653,11 +2656,12 @@ impl DesktopState {
                 );
                 let tool_specs = tools::mvp_tool_specs();
                 let project_path_buf = PathBuf::from(&project_path);
-                let claude_md = system_prompt::find_claude_md(&project_path_buf);
-                let system_prompt_text = system_prompt::build_system_prompt(
+                let claude_md_discovery =
+                    system_prompt::find_claude_md_with_source(&project_path_buf);
+                let system_prompt_text = system_prompt::build_system_prompt_with_source(
                     &project_path_buf,
                     &tool_specs,
-                    claude_md.as_deref(),
+                    claude_md_discovery.as_ref(),
                 );
 
                 // Resolve real permission mode from .claude/settings.json.
@@ -5094,10 +5098,14 @@ mod tests {
     }
 
     fn legacy_sessions_fixture_path() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let suffix = format!(
-            "desktop-core-legacy-sessions-{}-{}.json",
+            "desktop-core-sessions-{}-{}-{}.json",
             std::process::id(),
-            super::unix_timestamp_millis()
+            super::unix_timestamp_millis(),
+            n
         );
         std::env::temp_dir().join(suffix)
     }
