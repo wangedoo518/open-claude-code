@@ -159,8 +159,9 @@ COMMANDS:
   sessions flag <id> <true|false>              Flag or unflag session
   mcp probe <project_path>                     Discover MCP tools
   mcp call <qualified_name> <args_json>        Call an MCP tool
-  permission-mode [get]                        Show current mode
-  permission-mode set <mode>                   Set permission mode
+  permission-mode [get] [--project-path <p>]   Show mode (default: cwd)
+  permission-mode set <mode> [--project-path <p>]
+                                                Set mode (default: cwd)
 
 ENV:
   OCL_SERVER        Same as --server, used when flag omitted
@@ -443,20 +444,62 @@ async fn cmd_mcp(config: &Config, args: &[String]) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Resolve a `--project-path <p>` flag from arg slice, or fall back to the
+/// current working directory. Returns (path_string, remaining_args_without_flag).
+///
+/// Backend requires `project_path` in the request body since the S-02 hardening
+/// (validate_project_path checks for `..` traversal + canonicalize + is_dir).
+/// Defaulting to cwd keeps the CLI ergonomic — users typically run `ocl` from
+/// within the project they want to operate on.
+fn extract_project_path(args: &[String]) -> Result<(String, Vec<String>), CliError> {
+    let mut remaining = Vec::with_capacity(args.len());
+    let mut path: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--project-path" || args[i] == "-p" {
+            let value = args.get(i + 1).ok_or_else(|| {
+                CliError::UsageError(format!("{}: missing value", args[i]))
+            })?;
+            path = Some(value.clone());
+            i += 2;
+        } else {
+            remaining.push(args[i].clone());
+            i += 1;
+        }
+    }
+    let resolved = match path {
+        Some(p) => p,
+        None => std::env::current_dir()
+            .map_err(|e| CliError::UsageError(format!("cannot resolve cwd: {e}")))?
+            .display()
+            .to_string(),
+    };
+    Ok((resolved, remaining))
+}
+
 async fn cmd_permission_mode(config: &Config, args: &[String]) -> Result<(), CliError> {
-    if args.is_empty() || args[0] == "get" {
-        let value = http_get(config, "/api/desktop/settings/permission-mode").await?;
+    let (project_path, rest) = extract_project_path(args)?;
+
+    if rest.is_empty() || rest[0] == "get" {
+        let path = format!(
+            "/api/desktop/settings/permission-mode?project_path={}",
+            urlencode(&project_path)
+        );
+        let value = http_get(config, &path).await?;
         print_output(config, &value);
         return Ok(());
     }
-    if args[0] == "set" {
-        let mode = args
+    if rest[0] == "set" {
+        let mode = rest
             .get(1)
             .ok_or_else(|| CliError::UsageError("permission-mode set: missing mode".into()))?;
         let value = http_post(
             config,
             "/api/desktop/settings/permission-mode",
-            serde_json::json!({ "mode": mode }),
+            serde_json::json!({
+                "mode": mode,
+                "project_path": project_path,
+            }),
         )
         .await?;
         print_output(config, &value);
@@ -464,6 +507,73 @@ async fn cmd_permission_mode(config: &Config, args: &[String]) -> Result<(), Cli
     }
     Err(CliError::UsageError(format!(
         "unknown permission-mode subcommand: {}",
-        args[0]
+        rest[0]
     )))
+}
+
+/// Minimal application/x-www-form-urlencoded encoder for URL query strings.
+/// Only escapes characters known to need encoding in path/query contexts.
+fn urlencode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod cli_helper_tests {
+    use super::{extract_project_path, urlencode};
+
+    #[test]
+    fn extract_project_path_uses_explicit_flag() {
+        let args = vec![
+            "set".to_string(),
+            "default".to_string(),
+            "--project-path".to_string(),
+            "C:/foo/bar".to_string(),
+        ];
+        let (path, rest) = extract_project_path(&args).expect("ok");
+        assert_eq!(path, "C:/foo/bar");
+        assert_eq!(rest, vec!["set".to_string(), "default".to_string()]);
+    }
+
+    #[test]
+    fn extract_project_path_short_flag() {
+        let args = vec!["-p".to_string(), "C:/x".to_string(), "get".to_string()];
+        let (path, rest) = extract_project_path(&args).expect("ok");
+        assert_eq!(path, "C:/x");
+        assert_eq!(rest, vec!["get".to_string()]);
+    }
+
+    #[test]
+    fn extract_project_path_falls_back_to_cwd() {
+        let args = vec!["get".to_string()];
+        let (path, rest) = extract_project_path(&args).expect("ok");
+        // cwd cannot be empty under normal conditions
+        assert!(!path.is_empty());
+        assert_eq!(rest, vec!["get".to_string()]);
+    }
+
+    #[test]
+    fn extract_project_path_missing_value_errors() {
+        let args = vec!["--project-path".to_string()];
+        assert!(extract_project_path(&args).is_err());
+    }
+
+    #[test]
+    fn urlencode_preserves_safe_chars() {
+        assert_eq!(urlencode("abc-123_x.y~z"), "abc-123_x.y~z");
+    }
+
+    #[test]
+    fn urlencode_escapes_special_chars() {
+        assert_eq!(urlencode("a/b c"), "a%2Fb%20c");
+        assert_eq!(urlencode("D:/foo"), "D%3A%2Ffoo");
+    }
 }
