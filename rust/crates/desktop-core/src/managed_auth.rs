@@ -1095,16 +1095,36 @@ fn load_qwen_store() -> Result<StoredQwenProfileStore, String> {
     if !path.exists() {
         return Ok(StoredQwenProfileStore::default());
     }
-    let payload = fs::read_to_string(&path).map_err(|error| {
-        format!(
-            "read Qwen account store failed ({}): {error}",
-            path.display()
-        )
-    })?;
-    if payload.trim().is_empty() {
+
+    // Try encrypted read first. If the file has the WWE1 magic bytes,
+    // it was written by secure_storage::write_encrypted. Otherwise we
+    // fall back to plaintext for backward compat with pre-AES installs
+    // (and migrate the file to encrypted on the next save).
+    let payload_string = if crate::secure_storage::is_encrypted(&path) {
+        let bytes = crate::secure_storage::read_encrypted(&path).map_err(|e| {
+            format!(
+                "decrypt Qwen account store failed ({}): {e}",
+                path.display()
+            )
+        })?;
+        String::from_utf8(bytes).map_err(|e| {
+            format!("Qwen account store contained invalid UTF-8 after decrypt: {e}")
+        })?
+    } else {
+        // Legacy plaintext file. Read as-is; it will be re-saved encrypted
+        // on the next save_qwen_store call (transparent migration).
+        fs::read_to_string(&path).map_err(|error| {
+            format!(
+                "read Qwen account store failed ({}): {error}",
+                path.display()
+            )
+        })?
+    };
+
+    if payload_string.trim().is_empty() {
         return Ok(StoredQwenProfileStore::default());
     }
-    let mut store = serde_json::from_str::<StoredQwenProfileStore>(&payload)
+    let mut store = serde_json::from_str::<StoredQwenProfileStore>(&payload_string)
         .map_err(|error| format!("parse Qwen account store failed: {error}"))?;
     store
         .profiles
@@ -1124,7 +1144,11 @@ fn save_qwen_store(mut store: StoredQwenProfileStore) -> Result<StoredQwenProfil
         fs::create_dir_all(parent)
             .map_err(|error| format!("create Qwen account store dir failed: {error}"))?;
     }
-    fs::write(&path, payload).map_err(|error| {
+
+    // Always write encrypted. The file format (WWE1 magic + AES-256-GCM)
+    // is detected on read, so legacy plaintext files are silently
+    // migrated to encrypted on the next save.
+    crate::secure_storage::write_encrypted(&path, payload.as_bytes()).map_err(|error| {
         format!(
             "write Qwen account store failed ({}): {error}",
             path.display()
