@@ -2885,10 +2885,20 @@ impl DesktopState {
                 let project_path_buf = PathBuf::from(&project_path);
                 let claude_md_discovery =
                     system_prompt::find_claude_md_with_source(&project_path_buf);
-                let system_prompt_text = system_prompt::build_system_prompt_with_source(
+                let workspace_skills =
+                    system_prompt::find_workspace_skills(&project_path_buf);
+                if !workspace_skills.is_empty() {
+                    eprintln!(
+                        "[skills] loaded {} workspace skill(s) from {}/.claude/skills/",
+                        workspace_skills.len(),
+                        project_path_buf.display()
+                    );
+                }
+                let system_prompt_text = system_prompt::build_system_prompt_with_source_and_skills(
                     &project_path_buf,
                     &tool_specs,
                     claude_md_discovery.as_ref(),
+                    &workspace_skills,
                 );
 
                 // Load runtime config ONCE and extract both permission mode

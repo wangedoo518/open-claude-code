@@ -4,6 +4,32 @@ use std::path::{Path, PathBuf};
 
 use tools::ToolSpec;
 
+// ── Workspace skills ─────────────────────────────────────────────────
+//
+// Skills are markdown files under `.claude/skills/*.md` or
+// `.claude/skills/*/SKILL.md` that the user writes to describe
+// specialized agent behaviors (e.g., "code review skill", "doc
+// writing skill"). They are lazy-loaded into the system prompt so
+// the LLM can invoke them based on task context.
+//
+// This is distinct from CLAUDE.md (which is always-on global
+// instructions) and from the vendored crate's Skill tool (which
+// loads skills on-demand via a tool call). Workspace skills are
+// listed up-front in the system prompt with just their name +
+// trigger description, and the full content is included only if
+// the user invokes it via /skill or the LLM calls the Skill tool.
+
+/// A discovered workspace skill — one `.md` file + its path.
+#[derive(Debug, Clone)]
+pub struct WorkspaceSkill {
+    /// Kebab-case identifier derived from file/directory name.
+    pub name: String,
+    /// First paragraph of the markdown (trigger description).
+    pub description: String,
+    /// Absolute path to the markdown file.
+    pub source: PathBuf,
+}
+
 /// A CLAUDE.md file discovered by `find_claude_md_with_source`.
 ///
 /// The source path is preserved so `build_system_prompt` can warn when
@@ -19,10 +45,25 @@ pub struct ClaudeMdDiscovery {
 }
 
 /// Build a complete system prompt including agent role, tool definitions, and project context.
+///
+/// For workspace skills integration, see `build_system_prompt_full`
+/// which additionally takes a list of `WorkspaceSkill`s to inject.
 pub fn build_system_prompt(
     project_path: &Path,
     tool_specs: &[ToolSpec],
     claude_md: Option<&str>,
+) -> String {
+    build_system_prompt_full(project_path, tool_specs, claude_md, &[])
+}
+
+/// Full-featured system prompt builder. Includes agent preamble, tool
+/// descriptions, project environment, CLAUDE.md content, and workspace
+/// skills (name + trigger description).
+pub fn build_system_prompt_full(
+    project_path: &Path,
+    tool_specs: &[ToolSpec],
+    claude_md: Option<&str>,
+    workspace_skills: &[WorkspaceSkill],
 ) -> String {
     let mut prompt = String::with_capacity(8192);
 
@@ -81,6 +122,30 @@ pub fn build_system_prompt(
         }
     }
 
+    // ── Workspace skills ─────────────────────────────────────────
+    // List user-defined skills from .claude/skills/ so the LLM knows
+    // they exist. Full content is NOT included — the user invokes a
+    // skill via the Skill tool or /skill command which reads the
+    // file on demand. This keeps the system prompt bounded.
+    if !workspace_skills.is_empty() {
+        prompt.push_str("\n# Workspace skills\n\n");
+        prompt.push_str(
+            "The user has defined the following workspace-specific skills. \
+             You can invoke them by name via the Skill tool when the task \
+             matches the skill's description.\n\n",
+        );
+        for skill in workspace_skills {
+            prompt.push_str(&format!("- **{}**: ", skill.name));
+            if skill.description.is_empty() {
+                prompt.push_str("(no description)");
+            } else {
+                prompt.push_str(&skill.description);
+            }
+            prompt.push('\n');
+        }
+        prompt.push('\n');
+    }
+
     prompt
 }
 
@@ -91,8 +156,20 @@ pub fn build_system_prompt_with_source(
     tool_specs: &[ToolSpec],
     claude_md: Option<&ClaudeMdDiscovery>,
 ) -> String {
+    build_system_prompt_with_source_and_skills(project_path, tool_specs, claude_md, &[])
+}
+
+/// Most complete system prompt builder. Includes CLAUDE.md source
+/// warning AND workspace skills.
+pub fn build_system_prompt_with_source_and_skills(
+    project_path: &Path,
+    tool_specs: &[ToolSpec],
+    claude_md: Option<&ClaudeMdDiscovery>,
+    workspace_skills: &[WorkspaceSkill],
+) -> String {
     let content_ref = claude_md.map(|d| d.content.as_str());
-    let mut prompt = build_system_prompt(project_path, tool_specs, content_ref);
+    let mut prompt =
+        build_system_prompt_full(project_path, tool_specs, content_ref, workspace_skills);
 
     // If the CLAUDE.md came from an ancestor directory (not the project),
     // insert a security warning block at the start of the CLAUDE.md
@@ -192,6 +269,99 @@ fn path_equals(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Discover workspace skills in `<project_path>/.claude/skills/`.
+///
+/// Supports both file-style (`.claude/skills/my-skill.md`) and
+/// directory-style (`.claude/skills/my-skill/SKILL.md`). Returns an
+/// empty vector if the directory does not exist.
+///
+/// The returned list is sorted alphabetically by name for deterministic
+/// system-prompt output across process restarts.
+pub fn find_workspace_skills(project_path: &Path) -> Vec<WorkspaceSkill> {
+    let skills_dir = project_path.join(".claude").join("skills");
+    if !skills_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut skills: Vec<WorkspaceSkill> = Vec::new();
+    let entries = match std::fs::read_dir(&skills_dir) {
+        Ok(e) => e,
+        Err(error) => {
+            eprintln!(
+                "[skills] failed to read {}: {}",
+                skills_dir.display(),
+                error
+            );
+            return Vec::new();
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+            if let Some(skill) = load_skill_file(&path) {
+                skills.push(skill);
+            }
+        } else if path.is_dir() {
+            // Directory form: .claude/skills/my-skill/SKILL.md
+            let skill_md = path.join("SKILL.md");
+            if skill_md.is_file() {
+                if let Some(skill) = load_skill_file(&skill_md) {
+                    skills.push(skill);
+                }
+            }
+        }
+    }
+
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    skills
+}
+
+fn load_skill_file(path: &Path) -> Option<WorkspaceSkill> {
+    let content = std::fs::read_to_string(path).ok()?;
+
+    // Name: for directory-form, use parent directory name; for
+    // file-form, use the file stem.
+    let name = if path.file_name().and_then(|n| n.to_str()) == Some("SKILL.md") {
+        path.parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(String::from)
+            .unwrap_or_else(|| "skill".to_string())
+    } else {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .map(String::from)
+            .unwrap_or_else(|| "skill".to_string())
+    };
+
+    // Description: first non-heading, non-empty line of the markdown.
+    // Strip YAML front matter if present.
+    let trimmed = strip_yaml_frontmatter(&content);
+    let description = trimmed
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or("")
+        .to_string();
+
+    Some(WorkspaceSkill {
+        name,
+        description,
+        source: path.to_path_buf(),
+    })
+}
+
+/// Strip leading `---\n...\n---\n` YAML front matter block if present.
+fn strip_yaml_frontmatter(content: &str) -> &str {
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(end_idx) = rest.find("\n---\n") {
+            return &rest[end_idx + 5..];
+        }
+    }
+    content
+}
+
 const AGENT_PREAMBLE: &str = r#"You are an AI coding assistant running inside a desktop application. You help users with software engineering tasks including reading, writing, and editing code, running commands, searching files, and more.
 
 # Core behavior
@@ -242,6 +412,76 @@ mod tests {
         );
         assert!(prompt.contains("Always use TypeScript."));
         assert!(prompt.contains("CLAUDE.md"));
+    }
+
+    #[test]
+    fn find_workspace_skills_returns_empty_when_no_skills_dir() {
+        let tmp = std::env::temp_dir().join(format!("skills-none-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let skills = find_workspace_skills(&tmp);
+        assert!(skills.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_workspace_skills_discovers_file_and_directory_form() {
+        let tmp = std::env::temp_dir().join(format!("skills-both-{}", std::process::id()));
+        let skills_dir = tmp.join(".claude").join("skills");
+        let _ = std::fs::create_dir_all(&skills_dir);
+
+        // File form: .claude/skills/code-review.md
+        std::fs::write(
+            skills_dir.join("code-review.md"),
+            "Reviews code for bugs and style issues.\n\nFull content here.",
+        )
+        .unwrap();
+
+        // Directory form: .claude/skills/doc-writing/SKILL.md
+        let nested = skills_dir.join("doc-writing");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: doc-writing\n---\n# Doc Writing\n\nWrites clear documentation.",
+        )
+        .unwrap();
+
+        let skills = find_workspace_skills(&tmp);
+        assert_eq!(skills.len(), 2);
+
+        // Sorted alphabetically.
+        assert_eq!(skills[0].name, "code-review");
+        assert_eq!(skills[0].description, "Reviews code for bugs and style issues.");
+
+        assert_eq!(skills[1].name, "doc-writing");
+        assert_eq!(skills[1].description, "Writes clear documentation.");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn system_prompt_includes_workspace_skills() {
+        let skills = vec![
+            WorkspaceSkill {
+                name: "code-review".into(),
+                description: "Reviews code quality.".into(),
+                source: PathBuf::from("/tmp/code-review.md"),
+            },
+            WorkspaceSkill {
+                name: "doc-writing".into(),
+                description: "Writes docs.".into(),
+                source: PathBuf::from("/tmp/doc-writing.md"),
+            },
+        ];
+        let prompt = build_system_prompt_full(
+            Path::new("/tmp/project"),
+            &[],
+            None,
+            &skills,
+        );
+        assert!(prompt.contains("# Workspace skills"));
+        assert!(prompt.contains("**code-review**"));
+        assert!(prompt.contains("Reviews code quality."));
+        assert!(prompt.contains("**doc-writing**"));
     }
 
     #[test]
