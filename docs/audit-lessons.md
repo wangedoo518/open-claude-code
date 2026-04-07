@@ -68,6 +68,118 @@
 
 ## 漏洞档案
 
+### L-01: PermissionGate 超时 vs resolve race
+
+- **严重度**: Critical
+- **类别**: 时序/竞态类
+- **发现日期**: 2026-04-07
+- **修复 commit**: 6249672 (Phase 2.1)
+- **涉及文件**: `rust/crates/desktop-core/src/agentic_loop.rs:139-167`
+
+#### 症状
+用户在权限对话框上点 "Allow"，但 agentic loop 收到 "permission request timed out"。用户怀疑自己手抖点错了按钮。间歇性、难以复现。
+
+#### 根因
+之前修复（P1-2）把 `pending` 从 `Option<>` 改成 `HashMap<String, PendingPermission>` 修了一个 race，但引入了另一个：
+
+```
+1. agentic loop: check_permission 插入 entry, 等待 oneshot, 触发 timeout
+2. 几乎同时: 前端发来 Allow → resolve() 调用
+3. timeout path 抢先拿到锁 → 主动 pending.remove() → drop sender
+4. resolve() 拿到锁时 entry 已消失 → 返回 false
+5. agentic loop 的 receiver.await 返回 Err → 被判为 Deny
+```
+
+核心错误：check_permission 在**成功路径**也 remove entry。但 `Ok(Ok(decision))` 意味着 sender 已经发送过——这只能发生在 resolve() 已经 remove 了 entry 的情况下。**成功路径不需要二次清理**。
+
+#### 修复
+只在 failure 路径（timeout / channel closed）清理 pending entry。`Ok(Ok(decision))` 路径跳过清理——信任 resolve() 已经做完。
+
+新增 5 个 async 测试：
+- `resolve_wins_when_user_responds_before_timeout` — 核心 race scenario
+- `allow_always_remembers_tool`
+- `bypass_all_short_circuits`
+- `read_only_tools_auto_allowed`
+- `resolve_with_unknown_id_returns_false`
+
+#### 防护
+- [ ] **审查 checklist**：`tokio::time::timeout + oneshot` 组合必须明确"谁在哪条路径清理资源"
+- [ ] 不要在成功路径和失败路径都 remove HashMap entry——只在一条路径做
+- [ ] 成功路径的 `Ok(Ok(_))` 意味着 sender 已经发送 → entry 已被 resolve() 移除
+
+---
+
+### L-06: permissionMode 前端 Zustand vs 磁盘双源头
+
+- **严重度**: High
+- **类别**: 真相源分裂
+- **发现日期**: 2026-04-07
+- **修复 commit**: 6249672 (Phase 2.2)
+- **涉及文件**: `apps/desktop-shell/src/state/settings-store.ts`, `rust/crates/desktop-core/src/lib.rs`
+
+#### 症状
+用户在 UI 切换 permission mode 到 "DangerFullAccess"，但 agentic loop 仍然弹权限对话框。用户困惑："我不是关了吗？"
+
+#### 根因
+前端 Zustand `settings-store.setPermissionMode` 只更新内存 + localStorage。后端 agentic loop 读取 `.claw/settings.json` 磁盘文件。两个存储**没有任何同步机制**。用户的 UI 操作不会 propagate 到后端。
+
+之前的 P0-3 修复让后端读磁盘是对的，但只解决了一半——前端还是在更新另一个源头。
+
+#### 修复
+确立**磁盘为单一真相源**：
+1. 后端新增 `DesktopState::set_permission_mode` / `get_permission_mode`，读写 `.claw/settings.json`
+2. 新增 HTTP 路由 `POST/GET /api/desktop/settings/permission-mode`
+3. 前端 API 层新增 `writePermissionModeToDisk` / `readPermissionModeFromDisk`
+4. Zustand `setPermissionMode` 改为**optimistic update + rollback**：先 setState（UI 响应），后台调 API，失败则回滚
+5. 新增 `hydratePermissionModeFromDisk` 用于启动时同步
+6. Mode label 规范化：`bypassPermissions` ↔ `danger-full-access`
+
+#### 防护
+- [ ] **审查 checklist**：任何"设置"字段新增时，问：如果用户在 UI 改它，后端怎么知道？
+- [ ] 前后端必须有明确的**真相源所有权**——不能两边都是权威
+- [ ] 前端 state 变更后如果涉及后端行为，必须有 write-through 或 event-driven sync
+
+---
+
+### L-09: MCP init 只 discover 不 register (欺骗性完成)
+
+- **严重度**: Critical
+- **类别**: 欺骗性完成
+- **发现日期**: 2026-04-07
+- **修复 commit**: pending (Phase 3.1 — honest downgrade, not fixed)
+- **涉及文件**: `rust/crates/desktop-core/src/agentic_loop.rs:977-1022`
+
+#### 症状
+Commit message 声称 "Phase 16 MCP Client Runtime 完成"。日志显示 "MCP: discovered 3 tools from 1 servers"。但 LLM 调用 MCP 工具时返回 `{"server": "...", "status": "disconnected", "message": "Server not registered. Use MCP tool to connect first."}`。
+
+#### 根因
+`init_mcp_servers` 创建了一个本地 `McpServerManager`，调用 `discover_tools()` 发现工具，**打印 log**，然后函数返回——**manager 立即被 drop，子进程被杀**。
+
+关键问题：vendored `tools` crate 使用一个 crate-private 的 `global_mcp_registry()` 来存储 MCP server 状态。`execute_tool("MCP", ...)` 访问的是这个私有 registry。我们在外部创建的 manager 永远不会被注册到那个 registry。
+
+Commit 里的"完成"基于"编译通过 + log 有输出"，而不是"工具真的可调用"。这是**欺骗性完成**的教科书案例。
+
+#### 修复（诚实降级，不是真修复）
+1. 函数重命名 `init_mcp_servers` → `probe_mcp_servers`
+2. 顶部 doc comment 明确写出 LIMITATION：不能真正注册工具
+3. 在 `system_prompt::build_system_prompt` 过滤掉 MCP 工具（ListMcpResources/ReadMcpResource/McpAuth/MCP），避免 LLM 调用永远失败的工具
+4. 日志前缀改为 `[MCP probe]`，消息改为 "WARNING: These tools are NOT callable from the agentic loop"
+5. `tasks/todo.md` 里 Phase 16 从 ✅ 降为 ⚠️
+6. 顺便修 Phase 7.2 的一部分：用 `catch_unwind` 捕获 panic + 捕获 JoinHandle
+
+真正的修复需要：
+- Fork `claw-code-parity` 并把 `global_mcp_registry()` 暴露为 pub
+- 或在 desktop-core 实现独立 MCP client 绕过 vendored dispatcher
+- 或使用 legacy `execute_live_turn` 路径（它通过 runtime 内部初始化触发 MCP 连接）
+
+#### 防护
+- [ ] **审查 checklist**：commit message 里的"完成"必须对应"功能可用"，不是"编译通过"
+- [ ] log 里的 "discovered X items" 必须意味着 X 真的可用——否则前缀 `[PROBE]` 或 `[VALIDATION]`
+- [ ] 依赖第三方 crate 的 private 全局状态是**反模式**，必须在代码设计阶段识别并声明
+- [ ] 任何标记为"已完成"的 Phase 必须有端到端手测验证——不能只是 `cargo check`
+
+---
+
 ### L-05: SSE multi-byte UTF-8 跨 chunk 损坏
 
 - **严重度**: Critical

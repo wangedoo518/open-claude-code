@@ -17,10 +17,25 @@ pub fn build_system_prompt(
     prompt.push('\n');
 
     // ── Tool descriptions ────────────────────────────────────────
-    if !tool_specs.is_empty() {
+    // Filter out MCP tools (ListMcpResources, ReadMcpResource, McpAuth, MCP)
+    // because the vendored crate's global MCP registry is crate-private and
+    // cannot be populated from the agentic loop. Including them in the prompt
+    // would cause the LLM to call tools that always return "server not found".
+    // See docs/audit-lessons.md L-09.
+    let filtered_specs: Vec<&tools::ToolSpec> = tool_specs
+        .iter()
+        .filter(|spec| {
+            !matches!(
+                spec.name,
+                "ListMcpResources" | "ReadMcpResource" | "McpAuth" | "MCP"
+            )
+        })
+        .collect();
+
+    if !filtered_specs.is_empty() {
         prompt.push_str("\n# Available tools\n\n");
         prompt.push_str("You have access to the following tools. Call them by generating a tool_use content block.\n\n");
-        for spec in tool_specs {
+        for spec in &filtered_specs {
             prompt.push_str(&format!("## {}\n", spec.name));
             prompt.push_str(spec.description);
             prompt.push('\n');

@@ -303,9 +303,11 @@ pub async fn run_agentic_loop(
     let client = reqwest::Client::new();
     let tool_specs = tools::mvp_tool_specs();
 
-    // ── Initialize MCP servers (if configured) ───────────────────
+    // ── Probe MCP servers (CONFIG VALIDATION ONLY, not callable) ──
+    // See probe_mcp_servers docstring + docs/audit-lessons.md L-09 for
+    // why MCP tools do not actually work through the agentic loop.
     if !config.mcp_servers.is_empty() {
-        init_mcp_servers(&config.mcp_servers);
+        probe_mcp_servers(&config.mcp_servers);
     }
 
     // ── Initialize hooks runner (if configured) ──────────────────
@@ -974,18 +976,33 @@ struct ToolBlockAccumulator {
     input_json: String,
 }
 
-/// Initialize MCP servers from the frontend settings into the global registry.
+/// Probe MCP servers for config validation only.
 ///
-/// Converts the simplified `McpServerEntry` descriptors into the runtime's
-/// `ScopedMcpServerConfig` format, creates a `McpServerManager`, discovers
-/// tools, and registers everything into the global MCP tool registry.
-/// Initialize MCP servers from the frontend settings.
+/// ## ⚠️ LIMITATION — NOT a full integration
 ///
-/// Converts simplified `McpServerEntry` descriptors into the runtime's
-/// `ScopedMcpServerConfig` format, creates a `McpServerManager`, discovers
-/// tools, and logs the results. MCP tool calls are then available via the
-/// global `McpToolRegistry` used by `execute_tool("MCP", ...)`.
-fn init_mcp_servers(servers: &[McpServerEntry]) {
+/// This function does NOT make MCP tools callable from the agentic loop.
+/// It only:
+///   1. Validates each `McpServerEntry` can be converted to a
+///      `ScopedMcpServerConfig`
+///   2. Spawns a short-lived `McpServerManager` to connect and probe for tools
+///   3. Logs discovered tool counts to stderr
+///
+/// The vendored `tools` crate stores its MCP registry in a crate-private
+/// `global_mcp_registry()` that we cannot populate from outside. Subsequent
+/// calls to `execute_tool("MCP", ...)` go through that private registry and
+/// will return `"server not found"` because the manager we create here is
+/// dropped immediately.
+///
+/// See `docs/audit-lessons.md` L-09 for the full incident history.
+///
+/// To make MCP tools actually work, one of the following is required (not
+/// implemented):
+///   - Fork the `claw-code-parity` crate to expose `global_mcp_registry()`
+///   - Implement a separate MCP client in `desktop-core` that bypasses the
+///     vendored tool dispatcher
+///   - Use the legacy `execute_live_turn` path which auto-initializes MCP
+///     via the runtime's internal wiring
+fn probe_mcp_servers(servers: &[McpServerEntry]) {
     use runtime::{McpServerConfig, McpServerManager, McpStdioServerConfig, ScopedMcpServerConfig};
     use std::collections::BTreeMap;
 
@@ -996,16 +1013,14 @@ fn init_mcp_servers(servers: &[McpServerEntry]) {
 
     let mut server_configs: BTreeMap<String, ScopedMcpServerConfig> = BTreeMap::new();
     for entry in &enabled {
-        // Only stdio transport is currently supported by the vendored runtime.
         if entry.transport != "stdio" {
             eprintln!(
-                "MCP server '{}': transport '{}' not supported, skipping",
+                "[MCP probe] server '{}': transport '{}' not supported, skipping",
                 entry.name, entry.transport
             );
             continue;
         }
 
-        // Parse target as "command arg1 arg2 ..."
         let parts: Vec<&str> = entry.target.split_whitespace().collect();
         let (command, args) = if let Some((cmd, rest)) = parts.split_first() {
             (
@@ -1032,39 +1047,57 @@ fn init_mcp_servers(servers: &[McpServerEntry]) {
         return;
     }
 
-    // Spawn MCP connection in a background thread with its own tokio runtime.
+    // Spawn probe in a background thread with its own tokio runtime.
+    // Capture the JoinHandle and catch panics so errors are visible.
     let server_count = server_configs.len();
-    std::thread::Builder::new()
-        .name("mcp-init".to_string())
+    let spawn_result = std::thread::Builder::new()
+        .name("mcp-probe".to_string())
         .spawn(move || {
-            let rt = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt,
-                Err(e) => {
-                    eprintln!("MCP init: failed to create runtime: {e}");
-                    return;
-                }
-            };
-
-            rt.block_on(async move {
-                let mut manager = McpServerManager::from_servers(&server_configs);
-                match manager.discover_tools().await {
-                    Ok(tools) => {
-                        eprintln!(
-                            "MCP: discovered {} tools from {} servers",
-                            tools.len(),
-                            server_count
-                        );
-                    }
+            // Catch panics inside the thread so they surface as clear errors
+            // instead of silently dropped.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
                     Err(e) => {
-                        eprintln!("MCP: tool discovery error: {e}");
+                        eprintln!("[MCP probe] failed to create tokio runtime: {e}");
+                        return;
                     }
-                }
-            });
-        })
-        .ok();
+                };
+
+                rt.block_on(async move {
+                    let mut manager = McpServerManager::from_servers(&server_configs);
+                    match manager.discover_tools().await {
+                        Ok(tools) => {
+                            eprintln!(
+                                "[MCP probe] validated {} server(s), discovered {} tool(s). \
+                                 WARNING: These tools are NOT callable from the agentic loop. \
+                                 See docs/audit-lessons.md L-09.",
+                                server_count,
+                                tools.len()
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("[MCP probe] tool discovery error: {e}");
+                        }
+                    }
+                });
+            }));
+            if let Err(panic_payload) = result {
+                let msg = panic_payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| panic_payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("(non-string panic payload)");
+                eprintln!("[MCP probe] thread panicked: {msg}");
+            }
+        });
+
+    if let Err(e) = spawn_result {
+        eprintln!("[MCP probe] failed to spawn probe thread: {e}");
+    }
 }
 
 /// Execute a tool with CWD pinned to the workspace under a process-wide lock.
