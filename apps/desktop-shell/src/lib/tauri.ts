@@ -52,6 +52,17 @@ export interface DesktopSidebarAction {
   kind: DesktopTabKind;
 }
 
+/**
+ * Lifecycle status — orthogonal to turn_state. Backed by
+ * `DesktopLifecycleStatus` in Rust desktop-core.
+ */
+export type DesktopLifecycleStatus =
+  | "todo"
+  | "in_progress"
+  | "needs_review"
+  | "done"
+  | "archived";
+
 export interface DesktopSessionSummary {
   id: string;
   title: string;
@@ -64,6 +75,10 @@ export interface DesktopSessionSummary {
   environment_label: string;
   model_label: string;
   turn_state: "idle" | "running";
+  /** Inbox workflow state. Defaults to "todo" for new sessions. */
+  lifecycle_status?: DesktopLifecycleStatus;
+  /** True if user flagged this session for attention. */
+  flagged?: boolean;
 }
 
 export interface DesktopSessionSection {
@@ -145,6 +160,10 @@ export interface DesktopSessionDetail {
   environment_label: string;
   model_label: string;
   turn_state: "idle" | "running";
+  /** Inbox workflow state. Defaults to "todo" for new sessions. */
+  lifecycle_status?: DesktopLifecycleStatus;
+  /** True if user flagged this session for attention. */
+  flagged?: boolean;
   session: RuntimeSession;
 }
 

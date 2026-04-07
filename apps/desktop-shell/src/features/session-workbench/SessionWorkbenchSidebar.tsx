@@ -10,6 +10,11 @@ import {
   FileText,
   FileJson,
   Trash2,
+  Flag,
+  CheckCircle2,
+  CircleDashed,
+  Eye,
+  Archive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -20,7 +25,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { truncate, cn } from "@/lib/utils";
-import type { DesktopSessionSection, DesktopSessionSummary } from "@/lib/tauri";
+import type {
+  DesktopLifecycleStatus,
+  DesktopSessionSection,
+  DesktopSessionSummary,
+} from "@/lib/tauri";
 import { useSettingsStore } from "@/state/settings-store";
 
 interface SessionWorkbenchSidebarProps {
@@ -31,8 +40,27 @@ interface SessionWorkbenchSidebarProps {
   onCreateSession: () => void;
   onDeleteSession?: (sessionId: string) => void;
   onExportSession?: (sessionId: string, format: "markdown" | "json") => void;
+  /** Inbox lifecycle status change. Backend wires the value to disk. */
+  onSetSessionStatus?: (
+    sessionId: string,
+    status: DesktopLifecycleStatus,
+  ) => void;
+  /** Toggle the flagged bit on a session. */
+  onToggleSessionFlag?: (sessionId: string, flagged: boolean) => void;
   isCreatingSession: boolean;
 }
+
+/** Visual config for each lifecycle status badge. */
+const STATUS_META: Record<
+  DesktopLifecycleStatus,
+  { label: string; icon: typeof CircleDashed; color: string }
+> = {
+  todo: { label: "Todo", icon: CircleDashed, color: "var(--muted-foreground)" },
+  in_progress: { label: "In Progress", icon: Zap, color: "var(--claude-orange)" },
+  needs_review: { label: "Needs Review", icon: Eye, color: "var(--claude-blue)" },
+  done: { label: "Done", icon: CheckCircle2, color: "var(--color-success)" },
+  archived: { label: "Archived", icon: Archive, color: "var(--muted-foreground)" },
+};
 
 export function SessionWorkbenchSidebar({
   sessionSections,
@@ -42,6 +70,8 @@ export function SessionWorkbenchSidebar({
   onCreateSession,
   onDeleteSession,
   onExportSession,
+  onSetSessionStatus,
+  onToggleSessionFlag,
   isCreatingSession,
 }: SessionWorkbenchSidebarProps) {
   const setShowSessionSidebar = useSettingsStore(
@@ -192,6 +222,12 @@ export function SessionWorkbenchSidebar({
                       <span className="flex-1 truncate text-body-sm font-medium">
                         {truncate(session.title, 28)}
                       </span>
+                      {session.flagged && (
+                        <Flag
+                          className="size-2.5 shrink-0 fill-current"
+                          style={{ color: "var(--color-warning)" }}
+                        />
+                      )}
                       {session.turn_state === "running" && (
                         <span className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-nano"
                           style={{
@@ -203,6 +239,11 @@ export function SessionWorkbenchSidebar({
                           Active
                         </span>
                       )}
+                      {session.lifecycle_status &&
+                        session.lifecycle_status !== "todo" &&
+                        session.turn_state !== "running" && (
+                          <LifecycleBadge status={session.lifecycle_status} />
+                        )}
                     </div>
                     <div className="mt-0.5 pl-[18px] text-caption text-muted-foreground">
                       <div className="truncate">{truncate(session.preview, 40)}</div>
@@ -282,6 +323,66 @@ export function SessionWorkbenchSidebar({
               </button>
             </>
           )}
+          {onSetSessionStatus && (
+            <>
+              <div className="my-1 h-px bg-border" />
+              <div className="px-3 py-1 text-caption font-semibold text-muted-foreground">
+                Move to
+              </div>
+              {(
+                ["todo", "in_progress", "needs_review", "done", "archived"] as const
+              ).map((status) => {
+                const meta = STATUS_META[status];
+                const StatusIcon = meta.icon;
+                const isCurrent = contextMenu.session.lifecycle_status === status;
+                return (
+                  <button
+                    key={status}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-label text-popover-foreground transition-colors hover:bg-accent",
+                      isCurrent && "bg-accent/50",
+                    )}
+                    onClick={() => {
+                      onSetSessionStatus(contextMenu.session.id, status);
+                      setContextMenu(null);
+                    }}
+                  >
+                    <StatusIcon className="size-3" style={{ color: meta.color }} />
+                    {meta.label}
+                    {isCurrent && (
+                      <span className="ml-auto text-caption text-muted-foreground">
+                        current
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </>
+          )}
+          {onToggleSessionFlag && (
+            <>
+              <div className="my-1 h-px bg-border" />
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-label text-popover-foreground transition-colors hover:bg-accent"
+                onClick={() => {
+                  onToggleSessionFlag(
+                    contextMenu.session.id,
+                    !contextMenu.session.flagged,
+                  );
+                  setContextMenu(null);
+                }}
+              >
+                <Flag
+                  className={cn(
+                    "size-3",
+                    contextMenu.session.flagged && "fill-current",
+                  )}
+                  style={{ color: "var(--color-warning)" }}
+                />
+                {contextMenu.session.flagged ? "Unflag" : "Flag for attention"}
+              </button>
+            </>
+          )}
           {onDeleteSession && (
             <>
               <div className="my-1 h-px bg-border" />
@@ -317,5 +418,27 @@ export function SessionWorkbenchSidebar({
         />
       )}
     </div>
+  );
+}
+
+/** Inline status badge shown on the right of each session row. */
+function LifecycleBadge({ status }: { status: DesktopLifecycleStatus }) {
+  const meta = STATUS_META[status];
+  const Icon = meta.icon;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="flex shrink-0 items-center rounded-full p-0.5"
+          style={{
+            backgroundColor: `color-mix(in srgb, ${meta.color} 14%, transparent)`,
+            color: meta.color,
+          }}
+        >
+          <Icon className="size-2.5" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="left">{meta.label}</TooltipContent>
+    </Tooltip>
   );
 }

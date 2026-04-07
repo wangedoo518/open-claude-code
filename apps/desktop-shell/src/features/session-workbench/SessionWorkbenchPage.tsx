@@ -6,12 +6,15 @@ import { useSessionLifecycle } from "./useSessionLifecycle";
 import { sessionWorkbenchKeys } from "./api/query";
 import { workbenchKeys } from "@/features/workbench/api/query";
 import {
+  type DesktopLifecycleStatus,
   type DesktopSessionDetail,
 } from "@/lib/tauri";
 import {
   appendMessage,
   createSession,
   getSession,
+  setSessionFlagged,
+  setSessionLifecycleStatus,
   subscribeToSessionEvents,
 } from "./api/client";
 import { getWorkbench } from "@/features/workbench/api/client";
@@ -221,6 +224,54 @@ export function SessionWorkbenchPage({
     },
   });
 
+  const lifecycleStatusMutation = useMutation({
+    mutationFn: ({
+      sessionId,
+      status,
+    }: {
+      sessionId: string;
+      status: DesktopLifecycleStatus;
+    }) => setSessionLifecycleStatus(sessionId, status),
+    onSuccess: (response) => {
+      queryClient.setQueryData(
+        sessionWorkbenchKeys.detail(response.session.id),
+        response.session,
+      );
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
+    },
+  });
+
+  const flagMutation = useMutation({
+    mutationFn: ({
+      sessionId,
+      flagged,
+    }: {
+      sessionId: string;
+      flagged: boolean;
+    }) => setSessionFlagged(sessionId, flagged),
+    onSuccess: (response) => {
+      queryClient.setQueryData(
+        sessionWorkbenchKeys.detail(response.session.id),
+        response.session,
+      );
+      void queryClient.invalidateQueries({ queryKey: workbenchKeys.root() });
+    },
+  });
+
+  const handleSetSessionStatus = useCallback(
+    (sessionId: string, status: DesktopLifecycleStatus) => {
+      lifecycleStatusMutation.mutate({ sessionId, status });
+    },
+    [lifecycleStatusMutation],
+  );
+
+  const handleToggleSessionFlag = useCallback(
+    (sessionId: string, flagged: boolean) => {
+      flagMutation.mutate({ sessionId, flagged });
+    },
+    [flagMutation],
+  );
+
   const activeSession = activeSessionQuery.data ?? null;
   const errorMessage = extractErrorMessage(
     workbenchQuery.error,
@@ -258,6 +309,8 @@ export function SessionWorkbenchPage({
             void handleCreateSession();
           }}
           onDeleteSession={lifecycle.handleDelete}
+          onSetSessionStatus={handleSetSessionStatus}
+          onToggleSessionFlag={handleToggleSessionFlag}
           isCreatingSession={createSessionMutation.isPending}
         />
       )}

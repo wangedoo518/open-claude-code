@@ -88,6 +88,37 @@ export async function forkSession(
   );
 }
 
+/**
+ * Update a session's lifecycle status (Inbox workflow).
+ * Backed by L-09 follow-up: Todo → InProgress → NeedsReview → Done → Archived.
+ */
+export async function setSessionLifecycleStatus(
+  sessionId: string,
+  status: "todo" | "in_progress" | "needs_review" | "done" | "archived",
+): Promise<{ session: DesktopSessionDetail }> {
+  return fetchJson<{ session: DesktopSessionDetail }>(
+    `/api/desktop/sessions/${sessionId}/lifecycle`,
+    {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    },
+  );
+}
+
+/** Toggle the flagged bit on a session. */
+export async function setSessionFlagged(
+  sessionId: string,
+  flagged: boolean,
+): Promise<{ session: DesktopSessionDetail }> {
+  return fetchJson<{ session: DesktopSessionDetail }>(
+    `/api/desktop/sessions/${sessionId}/flag`,
+    {
+      method: "POST",
+      body: JSON.stringify({ flagged }),
+    },
+  );
+}
+
 /** Write the permission mode to the project's settings.json on disk. */
 export async function writePermissionModeToDisk(
   projectPath: string,
