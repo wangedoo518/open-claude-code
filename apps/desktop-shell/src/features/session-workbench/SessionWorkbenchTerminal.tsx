@@ -15,7 +15,11 @@ import { VirtualizedMessageList } from "./VirtualizedMessageList";
 import { InputBar } from "./InputBar";
 import { StatusLine } from "./StatusLine";
 import { PermissionDialog } from "./PermissionDialog";
-import { executeCommand, type CommandContext } from "./commandExecutor";
+import {
+  executeCommand,
+  type CommandContext,
+  type CommandResult,
+} from "./commandExecutor";
 import type { PermissionAction } from "./permission-types";
 import { SubagentPanel, extractSubagents } from "./SubagentPanel";
 import { exportAsMarkdown, exportAsJson } from "./sessionExport";
@@ -155,22 +159,36 @@ export function SessionWorkbenchTerminal({
         onNavigate: (section) => navigate(`/${section}`),
       };
 
-      const result = executeCommand(input, context);
-      if (!result) return false;
+      const resultOrPromise = executeCommand(input, context);
+      if (!resultOrPromise) return false;
 
-      switch (result.type) {
-        case "system_message":
-          if (result.message) addSystemMessage(result.message);
-          break;
-        case "navigate":
-          if (result.message) addSystemMessage(result.message);
-          if (result.navigateTo) navigate(`/${result.navigateTo}`);
-          break;
-        case "clear":
-          setLocalMessages([]);
-          break;
-        case "noop":
-          break;
+      // Apply the result (whether sync or async). Async commands like
+      // /compact must await the backend before clearing UI.
+      const apply = (result: CommandResult) => {
+        switch (result.type) {
+          case "system_message":
+            if (result.message) addSystemMessage(result.message);
+            break;
+          case "navigate":
+            if (result.message) addSystemMessage(result.message);
+            if (result.navigateTo) navigate(`/${result.navigateTo}`);
+            break;
+          case "clear":
+            setLocalMessages([]);
+            break;
+          case "noop":
+            break;
+        }
+      };
+
+      if (resultOrPromise instanceof Promise) {
+        void resultOrPromise.then(apply).catch((err) => {
+          addSystemMessage(
+            `Command failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      } else {
+        apply(resultOrPromise);
       }
 
       return true;
@@ -566,6 +584,7 @@ function toDisplayMessage(
       content: block.input,
       timestamp: order,
       toolUse: {
+        toolUseId: block.id,
         toolName: block.name,
         toolInput: block.input,
       },
@@ -579,6 +598,7 @@ function toDisplayMessage(
     content: block.output,
     timestamp: order,
     toolResult: {
+      toolUseId: block.tool_use_id,
       toolName: block.tool_name,
       output: block.output,
       isError: block.is_error,

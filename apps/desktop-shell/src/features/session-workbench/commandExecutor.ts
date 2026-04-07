@@ -23,7 +23,14 @@ export interface CommandDefinition {
   name: string;
   type: CommandType;
   description: string;
-  execute: (args: string, context: CommandContext) => CommandResult;
+  /**
+   * Execute the command. May return a result synchronously or asynchronously.
+   * Async commands are awaited by the caller before the result is applied.
+   */
+  execute: (
+    args: string,
+    context: CommandContext,
+  ) => CommandResult | Promise<CommandResult>;
 }
 
 export interface CommandContext {
@@ -56,22 +63,31 @@ const COMMANDS: CommandDefinition[] = [
     name: "compact",
     type: "local",
     description: "Compact conversation to save context",
-    execute: (_args, ctx) => {
-      // Trigger backend compaction if session exists, otherwise local clear.
-      if (ctx.sessionId) {
-        void import("./api/client").then(({ compactSession }) =>
-          compactSession(ctx.sessionId!).catch(() => {
-            ctx.onInjectSystemMessage(
-              "Failed to compact session on the backend. Local display cleared."
-            );
-          })
-        );
+    execute: async (_args, ctx) => {
+      // Must have a session to compact.
+      if (!ctx.sessionId) {
+        return {
+          type: "system_message",
+          message: "No active session to compact.",
+        };
       }
-      ctx.onClearMessages();
-      return {
-        type: "system_message",
-        message: "Compacting conversation — older messages will be summarized to free context window.",
-      };
+      // Wait for backend ACK before clearing UI. If backend refuses
+      // (e.g. SessionBusy), leave UI untouched and show the error.
+      try {
+        const { compactSession } = await import("./api/client");
+        await compactSession(ctx.sessionId);
+        ctx.onClearMessages();
+        return {
+          type: "system_message",
+          message: "✓ Session compacted. Older messages were summarized to free context window.",
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          type: "system_message",
+          message: `Failed to compact session: ${message}. Local display is unchanged.`,
+        };
+      }
     },
   },
   {
@@ -280,11 +296,13 @@ const COMMANDS: CommandDefinition[] = [
 /**
  * Parse and execute a slash command.
  * Returns null if the input is not a command.
+ * May return a Promise for async commands (e.g. /compact which waits for
+ * backend ACK before returning).
  */
 export function executeCommand(
   input: string,
-  context: CommandContext
-): CommandResult | null {
+  context: CommandContext,
+): CommandResult | Promise<CommandResult> | null {
   if (!input.startsWith("/")) return null;
 
   const parts = input.slice(1).split(/\s+/);
@@ -293,9 +311,7 @@ export function executeCommand(
 
   if (!name) return null;
 
-  const command = COMMANDS.find(
-    (cmd) => cmd.name === name
-  );
+  const command = COMMANDS.find((cmd) => cmd.name === name);
 
   if (!command) {
     return {

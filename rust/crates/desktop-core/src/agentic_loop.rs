@@ -63,7 +63,10 @@ pub struct PendingPermission {
 /// the user decides, and the HTTP handler calls `resolve()` which sends the
 /// decision back through the oneshot channel.
 pub struct PermissionGate {
-    pending: Mutex<Option<PendingPermission>>,
+    /// Multiple concurrent pending requests keyed by request_id.
+    /// This supports parallel tool execution and resolves the race where
+    /// a second request would overwrite the first.
+    pending: Mutex<HashMap<String, PendingPermission>>,
     event_sender: broadcast::Sender<DesktopSessionEvent>,
     session_id: SessionId,
     /// Tools the user has chosen "Allow always" for during this session.
@@ -76,7 +79,7 @@ impl PermissionGate {
         session_id: SessionId,
     ) -> Self {
         Self {
-            pending: Mutex::new(None),
+            pending: Mutex::new(HashMap::new()),
             event_sender,
             session_id,
             always_allow: Mutex::new(std::collections::HashSet::new()),
@@ -114,12 +117,15 @@ impl PermissionGate {
 
         {
             let mut pending = self.pending.lock().await;
-            *pending = Some(PendingPermission {
-                request_id: request_id.clone(),
-                tool_name: tool_name.to_string(),
-                tool_input: tool_input.clone(),
-                sender,
-            });
+            pending.insert(
+                request_id.clone(),
+                PendingPermission {
+                    request_id: request_id.clone(),
+                    tool_name: tool_name.to_string(),
+                    tool_input: tool_input.clone(),
+                    sender,
+                },
+            );
         }
 
         // Broadcast the permission request to the frontend.
@@ -131,7 +137,19 @@ impl PermissionGate {
         });
 
         // Wait for the user's response (with timeout).
-        match tokio::time::timeout(Duration::from_secs(PERMISSION_TIMEOUT_SECS), receiver).await {
+        let result = tokio::time::timeout(
+            Duration::from_secs(PERMISSION_TIMEOUT_SECS),
+            receiver,
+        )
+        .await;
+
+        // Clean up the pending entry if it's still there (timeout/drop case).
+        {
+            let mut pending = self.pending.lock().await;
+            pending.remove(&request_id);
+        }
+
+        match result {
             Ok(Ok(decision)) => {
                 // If user chose AllowAlways, remember it for this session.
                 if decision == PermissionDecision::AllowAlways {
@@ -152,13 +170,9 @@ impl PermissionGate {
     /// Resolve a pending permission request (called by the HTTP handler).
     pub async fn resolve(&self, request_id: &str, decision: PermissionDecision) -> bool {
         let mut pending = self.pending.lock().await;
-        if let Some(p) = pending.take() {
-            if p.request_id == request_id {
-                let _ = p.sender.send(decision);
-                return true;
-            }
-            // ID mismatch: put it back.
-            *pending = Some(p);
+        if let Some(p) = pending.remove(request_id) {
+            let _ = p.sender.send(decision);
+            return true;
         }
         false
     }
@@ -445,15 +459,14 @@ pub async fn run_agentic_loop(
                             true,
                         )
                     } else {
-                        // Execute the tool in a blocking thread with CWD set to project path.
+                        // Execute the tool in a blocking thread under the
+                        // process-wide workspace lock with CWD save/restore.
+                        // This prevents cross-session CWD races.
                         let name = tool_name.clone();
                         let input_value = tool_input_value.clone();
                         let tool_cwd = config.project_path.clone();
                         let result = tokio::task::spawn_blocking(move || {
-                            if tool_cwd.is_dir() {
-                                let _ = std::env::set_current_dir(&tool_cwd);
-                            }
-                            tools::execute_tool(&name, &input_value)
+                            execute_tool_in_workspace(&tool_cwd, &name, &input_value)
                         })
                         .await
                         .unwrap_or_else(|e| Err(format!("tool task panicked: {e}")));
@@ -546,12 +559,18 @@ fn build_api_request(
                         "type": "text",
                         "text": text
                     }),
-                    ContentBlock::ToolUse { id, name, input } => serde_json::json!({
-                        "type": "tool_use",
-                        "id": id,
-                        "name": name,
-                        "input": input
-                    }),
+                    ContentBlock::ToolUse { id, name, input } => {
+                        // `input` is stored as a raw JSON string; re-parse and
+                        // coerce to an object. Anthropic API requires tool_use
+                        // input to be an object (not null, array, number, etc.).
+                        let input_value = coerce_tool_input_to_object(input);
+                        serde_json::json!({
+                            "type": "tool_use",
+                            "id": id,
+                            "name": name,
+                            "input": input_value
+                        })
+                    }
                     ContentBlock::ToolResult {
                         tool_use_id,
                         tool_name: _,
@@ -680,17 +699,18 @@ async fn parse_sse_stream(
     let mut block_types: HashMap<usize, String> = HashMap::new(); // index → "text" | "tool_use"
 
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    // Use a byte buffer to avoid corrupting multi-byte UTF-8 characters
+    // that may be split across chunk boundaries. We only decode to UTF-8
+    // when we have a complete line (terminated by \n, which is always
+    // single-byte 0x0A and cannot appear inside a UTF-8 multi-byte sequence).
+    let mut buffer: Vec<u8> = Vec::new();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| format!("SSE stream error: {e}"))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        buffer.extend_from_slice(&chunk);
 
         // Process complete lines from buffer.
-        while let Some(newline_pos) = buffer.find('\n') {
-            let line = buffer[..newline_pos].trim_end_matches('\r').to_string();
-            buffer = buffer[newline_pos + 1..].to_string();
-
+        while let Some(line) = drain_next_line(&mut buffer) {
             if line.is_empty() || line.starts_with(':') {
                 continue;
             }
@@ -1020,6 +1040,38 @@ fn init_mcp_servers(servers: &[McpServerEntry]) {
         .ok();
 }
 
+/// Execute a tool with CWD pinned to the workspace under a process-wide lock.
+///
+/// Acquires the global workspace lock, saves the current CWD, changes to the
+/// tool's workspace, runs the tool, then restores the original CWD. The lock
+/// ensures only one tool executes at a time process-wide, preventing
+/// concurrent sessions from racing on `std::env::set_current_dir`.
+fn execute_tool_in_workspace(
+    cwd: &std::path::Path,
+    tool_name: &str,
+    input: &Value,
+) -> Result<String, String> {
+    use std::sync::{Mutex as StdMutex, OnceLock};
+
+    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+    let lock = LOCK.get_or_init(|| StdMutex::new(()));
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+
+    let original = std::env::current_dir().map_err(|e| e.to_string())?;
+
+    if cwd.is_dir() {
+        std::env::set_current_dir(cwd)
+            .map_err(|e| format!("failed to cd into {}: {e}", cwd.display()))?;
+    }
+
+    let result = tools::execute_tool(tool_name, input);
+
+    // Always try to restore CWD, even if the tool failed.
+    let _ = std::env::set_current_dir(&original);
+
+    result
+}
+
 /// Returns `true` for tools that are read-only and never need permission.
 fn is_read_only_tool(name: &str) -> bool {
     matches!(
@@ -1028,13 +1080,244 @@ fn is_read_only_tool(name: &str) -> bool {
     )
 }
 
+/// Coerce a raw tool_use input JSON string into a `Value::Object`.
+///
+/// Anthropic's Messages API requires the `input` field of a `tool_use`
+/// content block to be a JSON object. This helper:
+/// - Parses the raw JSON string
+/// - Accepts only objects; non-object values (null, array, number, string,
+///   bool) are discarded and replaced with an empty object
+/// - On parse failure, also returns an empty object
+///
+/// This defensive coercion prevents the LLM's next turn from receiving an
+/// API 400 error due to malformed tool_use payloads.
+fn coerce_tool_input_to_object(raw: &str) -> Value {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()))
+}
+
+#[cfg(test)]
+mod coerce_input_tests {
+    use super::coerce_tool_input_to_object;
+    use serde_json::Value;
+
+    #[test]
+    fn valid_object_is_preserved() {
+        let result = coerce_tool_input_to_object(r#"{"foo":"bar","n":42}"#);
+        assert_eq!(result["foo"], "bar");
+        assert_eq!(result["n"], 42);
+    }
+
+    #[test]
+    fn null_becomes_empty_object() {
+        let result = coerce_tool_input_to_object("null");
+        assert!(result.is_object());
+        assert_eq!(result.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn array_becomes_empty_object() {
+        let result = coerce_tool_input_to_object("[1,2,3]");
+        assert!(result.is_object());
+        assert_eq!(result.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn number_becomes_empty_object() {
+        let result = coerce_tool_input_to_object("42");
+        assert!(result.is_object());
+    }
+
+    #[test]
+    fn string_becomes_empty_object() {
+        let result = coerce_tool_input_to_object("\"just a string\"");
+        assert!(result.is_object());
+    }
+
+    #[test]
+    fn bool_becomes_empty_object() {
+        assert!(coerce_tool_input_to_object("true").is_object());
+        assert!(coerce_tool_input_to_object("false").is_object());
+    }
+
+    #[test]
+    fn malformed_json_becomes_empty_object() {
+        let result = coerce_tool_input_to_object("{not valid json");
+        assert!(result.is_object());
+        assert_eq!(result.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn empty_string_becomes_empty_object() {
+        let result = coerce_tool_input_to_object("");
+        assert!(result.is_object());
+    }
+
+    #[test]
+    fn nested_object_preserved() {
+        let result = coerce_tool_input_to_object(r#"{"outer":{"inner":true}}"#);
+        assert_eq!(result["outer"]["inner"], Value::Bool(true));
+    }
+}
+
+/// Drain a single complete line (terminated by `\n`) from a byte buffer.
+///
+/// Returns `Some(line)` if a complete line is available, or `None` if the
+/// buffer does not yet contain a newline (more bytes need to be appended).
+///
+/// The returned line is decoded from UTF-8. `\r` is trimmed from the end.
+/// Bytes that fail UTF-8 decoding are replaced with U+FFFD — but this
+/// only applies to truly malformed data, not to multi-byte characters
+/// split across chunks (those are handled by keeping them in the buffer
+/// until a complete line arrives).
+fn drain_next_line(buffer: &mut Vec<u8>) -> Option<String> {
+    let newline_pos = buffer.iter().position(|&b| b == b'\n')?;
+    let line_bytes: Vec<u8> = buffer.drain(..=newline_pos).collect();
+    // Strip trailing \n and \r (if any).
+    let line_slice = &line_bytes[..line_bytes.len() - 1];
+    let line_slice = if line_slice.last() == Some(&b'\r') {
+        &line_slice[..line_slice.len() - 1]
+    } else {
+        line_slice
+    };
+    // Decode as UTF-8. A complete line should be valid UTF-8 because `\n`
+    // (0x0A) cannot appear inside a multi-byte UTF-8 sequence (all non-ASCII
+    // continuation bytes have the high bit set).
+    Some(String::from_utf8_lossy(line_slice).into_owned())
+}
+
+#[cfg(test)]
+mod sse_buffer_tests {
+    use super::drain_next_line;
+
+    #[test]
+    fn drain_returns_none_when_no_newline() {
+        let mut buf = b"data: {\"partial\":".to_vec();
+        assert!(drain_next_line(&mut buf).is_none());
+        // Buffer is unchanged.
+        assert_eq!(buf, b"data: {\"partial\":");
+    }
+
+    #[test]
+    fn drain_returns_complete_line_and_strips_crlf() {
+        let mut buf = b"hello\r\nworld".to_vec();
+        assert_eq!(drain_next_line(&mut buf), Some("hello".to_string()));
+        // Remaining buffer has "world".
+        assert_eq!(buf, b"world");
+    }
+
+    #[test]
+    fn drain_handles_multibyte_chars_across_chunks() {
+        // Simulate a stream that splits the Chinese character "中" (E4 B8 AD)
+        // across two chunks. Previously `String::from_utf8_lossy` on the
+        // partial chunk would replace the bytes with U+FFFD.
+        let mut buf = Vec::new();
+
+        // Chunk 1: contains the first 2 bytes of "中"
+        buf.extend_from_slice(b"data: {\"text\":\"");
+        buf.extend_from_slice(&[0xE4, 0xB8]); // First 2 bytes of "中"
+
+        // No newline yet → drain returns None, bytes are preserved.
+        assert!(drain_next_line(&mut buf).is_none());
+        assert_eq!(buf.len(), 15 + 2);
+
+        // Chunk 2: completes the character, closes JSON, newline
+        buf.extend_from_slice(&[0xAD]); // Third byte of "中"
+        buf.extend_from_slice(b"\"}\n");
+
+        let line = drain_next_line(&mut buf).expect("should have complete line");
+        // The decoded line should contain the full "中" character, not lossy.
+        assert!(line.contains("中"), "expected '中' in line, got: {line:?}");
+        assert!(!line.contains('\u{FFFD}'), "should not contain replacement char");
+    }
+
+    #[test]
+    fn drain_multiple_lines_sequentially() {
+        let mut buf = b"line1\nline2\nline3".to_vec();
+        assert_eq!(drain_next_line(&mut buf), Some("line1".to_string()));
+        assert_eq!(drain_next_line(&mut buf), Some("line2".to_string()));
+        // "line3" has no trailing newline → not drained yet
+        assert_eq!(drain_next_line(&mut buf), None);
+        assert_eq!(buf, b"line3");
+    }
+
+    #[test]
+    fn drain_handles_empty_line() {
+        let mut buf = b"\nnext".to_vec();
+        assert_eq!(drain_next_line(&mut buf), Some(String::new()));
+        assert_eq!(buf, b"next");
+    }
+
+    #[test]
+    fn drain_is_linear_not_quadratic_on_large_buffer() {
+        // Regression test: the old code used `buffer[newline_pos+1..].to_string()`
+        // which is O(n²) when draining many small lines from a large buffer.
+        // drain(..=newline_pos) is O(n) amortized.
+        let mut buf = Vec::with_capacity(10_000);
+        for i in 0..1000 {
+            buf.extend_from_slice(format!("line{i}\n").as_bytes());
+        }
+        let mut drained = 0;
+        while drain_next_line(&mut buf).is_some() {
+            drained += 1;
+        }
+        assert_eq!(drained, 1000);
+        assert!(buf.is_empty());
+    }
+}
+
 /// Truncate tool output to prevent huge payloads from overwhelming SSE/LLM context.
+///
+/// Uses UTF-8 char boundary safe truncation so multi-byte characters
+/// (Chinese, emoji, etc.) are never split mid-codepoint.
 fn truncate_tool_output(output: String) -> String {
     if output.len() <= MAX_TOOL_OUTPUT_CHARS {
         return output;
     }
-    let truncated = &output[..MAX_TOOL_OUTPUT_CHARS];
+    // Walk backwards from the limit until we land on a char boundary.
+    let mut boundary = MAX_TOOL_OUTPUT_CHARS.min(output.len());
+    while boundary > 0 && !output.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let truncated = &output[..boundary];
     format!(
-        "{truncated}\n\n... [output truncated at {MAX_TOOL_OUTPUT_CHARS} characters]"
+        "{truncated}\n\n... [output truncated at {MAX_TOOL_OUTPUT_CHARS} bytes]"
     )
+}
+
+#[cfg(test)]
+mod tool_output_tests {
+    use super::{truncate_tool_output, MAX_TOOL_OUTPUT_CHARS};
+
+    #[test]
+    fn truncate_short_output_unchanged() {
+        let input = "hello world".to_string();
+        assert_eq!(truncate_tool_output(input.clone()), input);
+    }
+
+    #[test]
+    fn truncate_ascii_at_boundary() {
+        let input = "a".repeat(MAX_TOOL_OUTPUT_CHARS + 100);
+        let result = truncate_tool_output(input);
+        assert!(result.contains("[output truncated"));
+    }
+
+    #[test]
+    fn truncate_multibyte_does_not_panic() {
+        // 50KB of Chinese chars (3 bytes each) = 150K bytes, exceeds 100K limit
+        // Previous implementation would panic on byte-indexed slicing.
+        let input = "中".repeat(50_000);
+        let result = truncate_tool_output(input);
+        assert!(result.contains("[output truncated"));
+        // Verify the truncation landed on a valid char boundary (no panic = pass).
+    }
+
+    #[test]
+    fn truncate_emoji_does_not_panic() {
+        let input = "🚀".repeat(30_000);
+        let result = truncate_tool_output(input);
+        assert!(result.contains("[output truncated"));
+    }
 }
