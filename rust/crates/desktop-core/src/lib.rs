@@ -887,6 +887,18 @@ pub struct CreateDesktopDispatchItemRequest {
     pub project_path: Option<String>,
     pub target_session_id: Option<SessionId>,
     pub priority: DesktopDispatchPriority,
+    /// Originating channel of this dispatch item. Defaults to `LocalInbox`
+    /// when not provided, preserving backward compatibility. External bridges
+    /// (e.g. WeChat adapter) should set this to `RemoteBridge` and supply a
+    /// descriptive `source_label` so the UI can show the provenance.
+    #[serde(default)]
+    pub source_kind: Option<DesktopDispatchSourceKind>,
+    /// Human-readable source label shown in the Dispatch UI (e.g.
+    /// "WeChat: 张三"). Defaults to "Local inbox" for LocalInbox items.
+    /// Truncated to 120 chars and stripped of control characters at the
+    /// persistence layer.
+    #[serde(default)]
+    pub source_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2048,14 +2060,29 @@ impl DesktopState {
             )
         };
 
+        // Resolve source_kind + source_label with sensible defaults.
+        //
+        // RemoteBridge callers (e.g. WeChat adapter) should send both fields.
+        // If they send only source_kind=RemoteBridge without a label, we
+        // synthesize "Remote bridge" so the UI still shows a meaningful tag.
+        // If they send only a label without source_kind, we treat it as a
+        // LocalInbox item with a custom label (rare but supported).
+        let source_kind = request
+            .source_kind
+            .unwrap_or(DesktopDispatchSourceKind::LocalInbox);
+        let source_label = normalize_dispatch_source_label(
+            request.source_label.as_deref(),
+            source_kind,
+        );
+
         let metadata = DispatchItemMetadata {
             id: item_id.clone(),
             title,
             body,
             project_name,
             project_path,
-            source_kind: DesktopDispatchSourceKind::LocalInbox,
-            source_label: "Local inbox".to_string(),
+            source_kind,
+            source_label,
             priority: request.priority,
             target_session_id: request.target_session_id.clone(),
             prefer_new_session: request.target_session_id.is_none(),
@@ -4823,6 +4850,57 @@ fn normalize_dispatch_body(body: &str) -> Result<String, DesktopStateError> {
     Ok(body.to_string())
 }
 
+/// Normalize a caller-supplied dispatch source label, falling back to a
+/// sensible default derived from the `source_kind` when the caller didn't
+/// provide one. Strips ASCII and Unicode control characters (including the
+/// RTL-override family covered by the frontend's `sanitizeFilename`) and
+/// caps length at 120 chars so a malicious caller cannot inject a giant
+/// label into the persistence file.
+///
+/// This is the backend equivalent of the frontend's security.ts sanitizer.
+fn normalize_dispatch_source_label(
+    raw: Option<&str>,
+    source_kind: DesktopDispatchSourceKind,
+) -> String {
+    let default_label = match source_kind {
+        DesktopDispatchSourceKind::LocalInbox => "Local inbox",
+        DesktopDispatchSourceKind::RemoteBridge => "Remote bridge",
+        DesktopDispatchSourceKind::Scheduled => "Scheduled",
+    };
+
+    let trimmed = match raw {
+        Some(s) => s.trim(),
+        None => return default_label.to_string(),
+    };
+
+    if trimmed.is_empty() {
+        return default_label.to_string();
+    }
+
+    // Strip control chars (C0, C1, directional overrides, zero-width).
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(
+                    *c,
+                    '\u{200B}'..='\u{200F}'
+                        | '\u{202A}'..='\u{202E}'
+                        | '\u{2066}'..='\u{2069}'
+                        | '\u{FEFF}'
+                )
+        })
+        .collect();
+
+    if cleaned.is_empty() {
+        return default_label.to_string();
+    }
+
+    // Cap at 120 chars (not bytes) to be safe for multi-byte scripts.
+    let capped: String = cleaned.chars().take(120).collect();
+    capped
+}
+
 fn normalize_scheduled_title(title: &str) -> Result<String, DesktopStateError> {
     let normalized = normalize_session_title(title);
     if normalized == "New session" && title.trim().is_empty() {
@@ -5339,6 +5417,8 @@ mod tests {
                 project_path: None,
                 target_session_id: None,
                 priority: DesktopDispatchPriority::High,
+                source_kind: None,
+                source_label: None,
             })
             .await
             .expect("dispatch item should be created");
@@ -5384,6 +5464,123 @@ mod tests {
         assert!(!updated.enabled);
     }
 
+    /// WeChat bridge scenario: an external caller labels a dispatch item as
+    /// originating from a remote bridge (e.g. "WeChat: 张三"). The custom
+    /// source should persist and appear in the list response.
+    #[tokio::test]
+    async fn dispatch_item_accepts_remote_bridge_source() {
+        use super::DesktopDispatchSourceKind;
+
+        let state = DesktopState::default();
+        let item = state
+            .create_dispatch_item(CreateDesktopDispatchItemRequest {
+                title: "Review this PR".to_string(),
+                body: "https://example.com/pr/42".to_string(),
+                project_name: None,
+                project_path: None,
+                target_session_id: None,
+                priority: DesktopDispatchPriority::Normal,
+                source_kind: Some(DesktopDispatchSourceKind::RemoteBridge),
+                source_label: Some("WeChat: 张三".to_string()),
+            })
+            .await
+            .expect("remote-bridge item should be created");
+
+        assert_eq!(item.source.kind, DesktopDispatchSourceKind::RemoteBridge);
+        assert_eq!(item.source.label, "WeChat: 张三");
+
+        // Verify it also survives listing.
+        let snapshot = state.dispatch().await;
+        let found = snapshot
+            .items
+            .iter()
+            .find(|i| i.id == item.id)
+            .expect("item in snapshot");
+        assert_eq!(found.source.kind, DesktopDispatchSourceKind::RemoteBridge);
+        assert_eq!(found.source.label, "WeChat: 张三");
+    }
+
+    /// Malicious label containing RTL override + control chars should be
+    /// stripped by `normalize_dispatch_source_label` before reaching
+    /// persistence. CJK chars must survive.
+    #[tokio::test]
+    async fn dispatch_source_label_sanitization_strips_unsafe_chars() {
+        use super::DesktopDispatchSourceKind;
+
+        let state = DesktopState::default();
+        // "WeChat: <RTL>admin" + zero-width + control
+        let evil_label = "WeChat: \u{202E}admin\u{200B}\u{0007}中文".to_string();
+        let item = state
+            .create_dispatch_item(CreateDesktopDispatchItemRequest {
+                title: "test".to_string(),
+                body: "body".to_string(),
+                project_name: None,
+                project_path: None,
+                target_session_id: None,
+                priority: DesktopDispatchPriority::Low,
+                source_kind: Some(DesktopDispatchSourceKind::RemoteBridge),
+                source_label: Some(evil_label),
+            })
+            .await
+            .expect("item created");
+
+        assert!(!item.source.label.contains('\u{202E}'));
+        assert!(!item.source.label.contains('\u{200B}'));
+        assert!(!item.source.label.contains('\u{0007}'));
+        assert!(item.source.label.contains("中文"));
+        assert!(item.source.label.starts_with("WeChat: "));
+    }
+
+    /// Omitting source_kind must preserve backward compatibility:
+    /// item is treated as LocalInbox with the default "Local inbox" label.
+    #[tokio::test]
+    async fn dispatch_item_defaults_to_local_inbox() {
+        use super::DesktopDispatchSourceKind;
+
+        let state = DesktopState::default();
+        let item = state
+            .create_dispatch_item(CreateDesktopDispatchItemRequest {
+                title: "Legacy".to_string(),
+                body: "Legacy call without source fields".to_string(),
+                project_name: None,
+                project_path: None,
+                target_session_id: None,
+                priority: DesktopDispatchPriority::Normal,
+                source_kind: None,
+                source_label: None,
+            })
+            .await
+            .expect("item created");
+
+        assert_eq!(item.source.kind, DesktopDispatchSourceKind::LocalInbox);
+        assert_eq!(item.source.label, "Local inbox");
+    }
+
+    /// Label-only override: supplying source_label without source_kind
+    /// should still work (kind defaults to LocalInbox).
+    #[tokio::test]
+    async fn dispatch_label_only_override_preserved() {
+        use super::DesktopDispatchSourceKind;
+
+        let state = DesktopState::default();
+        let item = state
+            .create_dispatch_item(CreateDesktopDispatchItemRequest {
+                title: "Custom source".to_string(),
+                body: "body".to_string(),
+                project_name: None,
+                project_path: None,
+                target_session_id: None,
+                priority: DesktopDispatchPriority::Normal,
+                source_kind: None,
+                source_label: Some("Custom label".to_string()),
+            })
+            .await
+            .expect("item created");
+
+        assert_eq!(item.source.kind, DesktopDispatchSourceKind::LocalInbox);
+        assert_eq!(item.source.label, "Custom label");
+    }
+
     #[tokio::test]
     async fn dispatch_items_can_be_updated() {
         let state = DesktopState::default();
@@ -5395,6 +5592,8 @@ mod tests {
                 project_path: None,
                 target_session_id: None,
                 priority: DesktopDispatchPriority::Normal,
+                source_kind: None,
+                source_label: None,
             })
             .await
             .expect("dispatch item should be created");

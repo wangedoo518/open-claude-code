@@ -1,0 +1,14 @@
+{
+  "name": "wechat-bridge",
+  "version": "0.1.0-prototype",
+  "private": true,
+  "description": "WeChat ↔ open-claude-code Dispatch bridge (prototype)",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "smoke": "node src/smoke-test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
