@@ -19,6 +19,7 @@ pub mod client;
 pub mod desktop_handler;
 pub mod handlers;
 pub mod login;
+pub mod markdown_split;
 pub mod monitor;
 pub mod types;
 

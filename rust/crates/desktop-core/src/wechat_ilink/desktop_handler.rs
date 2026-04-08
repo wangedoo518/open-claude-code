@@ -29,6 +29,7 @@ use tokio::time::timeout;
 use super::account;
 use super::client::IlinkClient;
 use super::handlers::{build_text_reply, extract_first_text};
+use super::markdown_split::{split_markdown_for_wechat, DEFAULT_MAX_CHARS};
 use super::monitor::{MessageHandler, MonitorError};
 use super::types::WeixinMessage;
 
@@ -43,12 +44,22 @@ use crate::{
 /// large files) plus LLM latency.
 const TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-/// Hard cap on assistant reply length sent to WeChat. Single iLink messages
-/// have a body limit (~4 KB observed in practice); we cap at 3500 chars to
-/// leave headroom for the JSON envelope and any future framing. Messages
-/// longer than this are truncated with a "[truncated]" marker — Phase 3
-/// will replace this with proper splitting into multiple sends.
-const MAX_REPLY_CHARS: usize = 3500;
+/// Chunk size used when a single assistant reply exceeds the iLink
+/// per-message soft cap. See `markdown_split::DEFAULT_MAX_CHARS`. The
+/// splitter preserves paragraph, list, and code-block boundaries so
+/// each chunk is a self-contained markdown document.
+const REPLY_CHUNK_MAX_CHARS: usize = DEFAULT_MAX_CHARS;
+
+/// Safety cap on how many chunks a single reply can be split into.
+/// If a reply is longer than `CHUNK_MAX_CHARS * MAX_REPLY_CHUNKS` we
+/// emit the first N chunks + a truncation notice so we don't spam the
+/// user with 40 consecutive messages.
+const MAX_REPLY_CHUNKS: usize = 10;
+
+/// Idle delay inserted between consecutive chunk sends. WeChat rejects
+/// traffic that arrives too quickly; 300 ms comfortably clears the
+/// observed rate limits while staying imperceptible to users.
+const INTER_CHUNK_DELAY: Duration = Duration::from_millis(300);
 
 /// `MessageHandler` that bridges WeChat messages to the desktop `DesktopState`.
 ///
@@ -302,19 +313,77 @@ impl MessageHandler for DesktopAgentHandler {
                 Err(err_msg) => err_msg,
             };
 
-            let truncated = if reply_text.chars().count() > MAX_REPLY_CHARS {
-                let prefix: String = reply_text.chars().take(MAX_REPLY_CHARS).collect();
-                format!("{prefix}\n\n[truncated]")
-            } else {
-                reply_text
-            };
+            // Phase 4: split long assistant replies into chunks that fit
+            // the iLink per-message soft cap while respecting markdown
+            // boundaries (paragraph breaks, code blocks, lists).
+            let mut chunks = split_markdown_for_wechat(&reply_text, REPLY_CHUNK_MAX_CHARS);
 
-            let reply = build_text_reply(&from_user_id, &context_token, &truncated);
-            if let Err(e) = client.send_message(reply).await {
-                eprintln!("[wechat agent] reply send failed: {e}");
-            } else {
+            if chunks.is_empty() {
+                // Empty reply — likely an edge case where the agent
+                // ended the turn without producing text. Surface
+                // something so the user isn't left wondering.
+                chunks.push("(assistant returned no text content)".to_string());
+            }
+
+            // Cap total chunks to avoid spamming the user in pathological
+            // cases (e.g. the agent ran away producing 30 KB of output).
+            let total_chunks_before_cap = chunks.len();
+            if chunks.len() > MAX_REPLY_CHUNKS {
+                chunks.truncate(MAX_REPLY_CHUNKS);
+                if let Some(last) = chunks.last_mut() {
+                    last.push_str(&format!(
+                        "\n\n_[… truncated after {} chunks; original reply had {} chunks]_",
+                        MAX_REPLY_CHUNKS, total_chunks_before_cap
+                    ));
+                }
+            }
+
+            let total_chunks = chunks.len();
+            let multi = total_chunks > 1;
+            let mut any_error = false;
+
+            for (idx, chunk) in chunks.iter().enumerate() {
+                // Prefix multi-chunk messages with an (i/n) marker so
+                // the user knows there's more coming. Placed at the
+                // TOP so it's immediately visible in WeChat's chat
+                // list preview (which shows the first line).
+                let body = if multi {
+                    format!("({}/{})\n{}", idx + 1, total_chunks, chunk)
+                } else {
+                    chunk.clone()
+                };
+
+                let reply = build_text_reply(&from_user_id, &context_token, &body);
+                match client.send_message(reply).await {
+                    Ok(()) => {
+                        eprintln!(
+                            "[wechat agent] sent chunk {}/{} ({} chars)",
+                            idx + 1,
+                            total_chunks,
+                            body.chars().count()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[wechat agent] reply send failed (chunk {}/{}): {e}",
+                            idx + 1,
+                            total_chunks
+                        );
+                        any_error = true;
+                        break; // Stop sending remaining chunks on first failure
+                    }
+                }
+
+                // Sleep between chunks to stay under iLink rate limits.
+                // Skip the final sleep so we don't add pointless latency.
+                if multi && idx + 1 < total_chunks {
+                    tokio::time::sleep(INTER_CHUNK_DELAY).await;
+                }
+            }
+
+            if !any_error {
                 eprintln!(
-                    "[wechat agent] turn end: openid={from_user_id} session={session_id}"
+                    "[wechat agent] turn end: openid={from_user_id} session={session_id} chunks={total_chunks}"
                 );
             }
         });
