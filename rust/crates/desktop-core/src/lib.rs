@@ -4304,8 +4304,29 @@ fn response_to_events(response: MessageResponse) -> Vec<AssistantEvent> {
     let mut events = Vec::new();
     let mut pending_tools = BTreeMap::new();
 
-    for (index, block) in response.content.into_iter().enumerate() {
-        let index = u32::try_from(index).expect("response block index overflow");
+    // IM-03: Cap block iteration at u32::MAX to avoid an `expect` panic if
+    // a malformed or adversarial API response ever delivers more than
+    // 4 billion content blocks. This would realistically never happen from
+    // a real API, but the previous `expect("response block index overflow")`
+    // would panic the entire agentic loop if it ever did, taking down
+    // any concurrent sessions.
+    //
+    // Taking only u32::MAX blocks preserves existing semantics for all
+    // legitimate responses while ensuring the numeric conversion cannot
+    // fail. We log a warning if the cap ever triggers so operators can
+    // investigate.
+    let max_blocks = u32::MAX as usize;
+    let total_blocks = response.content.len();
+    if total_blocks > max_blocks {
+        eprintln!(
+            "[response_to_events] warning: truncating {total_blocks} blocks \
+             to u32::MAX ({max_blocks}) — response is suspiciously large"
+        );
+    }
+
+    for (index, block) in response.content.into_iter().take(max_blocks).enumerate() {
+        // Safe: index < max_blocks == u32::MAX, so the conversion cannot fail.
+        let index = u32::try_from(index).unwrap_or(u32::MAX);
         push_output_block(block, index, &mut events, &mut pending_tools, false);
         if let Some((id, name, input)) = pending_tools.remove(&index) {
             events.push(AssistantEvent::ToolUse { id, name, input });

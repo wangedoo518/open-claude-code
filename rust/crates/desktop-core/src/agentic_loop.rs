@@ -32,6 +32,27 @@ const PERMISSION_TIMEOUT_SECS: u64 = 300;
 /// Maximum size of a single tool output before truncation (100 KB).
 const MAX_TOOL_OUTPUT_CHARS: usize = 100_000;
 
+/// Default timeout for a single built-in tool execution (IM-04).
+/// Keeps a runaway tool from holding the process-wide CWD lock forever.
+const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
+
+/// Minimum permitted timeout value — protects against a foot-gun where a
+/// user sets a near-zero timeout and every tool invocation instantly fails.
+const MIN_TOOL_TIMEOUT_SECS: u64 = 5;
+
+/// Resolve the tool execution timeout in seconds, using an optional
+/// `OCL_TOOL_TIMEOUT_SECS` environment value. Falls back to the default
+/// when the env var is missing, empty, unparseable, or below the minimum.
+///
+/// Separated into a helper so the parsing logic can be unit-tested without
+/// mutating process-wide environment state.
+pub(crate) fn resolve_tool_timeout_secs(env_value: Option<&str>) -> u64 {
+    env_value
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&n| n >= MIN_TOOL_TIMEOUT_SECS)
+        .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
+}
+
 // ── Permission types ─────────────────────────────────────────────────
 
 /// Decision returned by the frontend (or auto-resolved by policy).
@@ -550,14 +571,40 @@ pub async fn run_agentic_loop(
                     } else {
                         // Built-in tool: execute via the vendored crate under
                         // the process-wide workspace lock with CWD save/restore.
+                        //
+                        // IM-04: The spawn_blocking future is wrapped in a
+                        // `tokio::time::timeout` so a runaway built-in tool
+                        // cannot hold the process-wide workspace CWD lock
+                        // forever and starve other sessions.
+                        //
+                        // The timeout defaults to 120 seconds and can be
+                        // overridden at runtime via the
+                        // `OCL_TOOL_TIMEOUT_SECS` environment variable for
+                        // operators who need a longer budget (e.g. long
+                        // Bash tool invocations). Values below 5 s are
+                        // ignored to avoid foot-gunning real tools.
                         let name = tool_name.clone();
                         let input_value = tool_input_value.clone();
                         let tool_cwd = config.project_path.clone();
-                        let result = tokio::task::spawn_blocking(move || {
+                        let timeout_secs = resolve_tool_timeout_secs(
+                            std::env::var("OCL_TOOL_TIMEOUT_SECS").ok().as_deref(),
+                        );
+                        let join = tokio::task::spawn_blocking(move || {
                             execute_tool_in_workspace(&tool_cwd, &name, &input_value)
-                        })
+                        });
+                        let result = match tokio::time::timeout(
+                            Duration::from_secs(timeout_secs),
+                            join,
+                        )
                         .await
-                        .unwrap_or_else(|e| Err(format!("tool task panicked: {e}")));
+                        {
+                            Ok(Ok(r)) => r,
+                            Ok(Err(e)) => Err(format!("tool task panicked: {e}")),
+                            Err(_) => Err(format!(
+                                "tool execution timed out after {timeout_secs}s \
+                                 (override via OCL_TOOL_TIMEOUT_SECS env var)"
+                            )),
+                        };
 
                         let (output, is_error) = match result {
                             Ok(output) => (truncate_tool_output(output), false),
@@ -1716,5 +1763,66 @@ mod tool_output_tests {
         let input = "🚀".repeat(30_000);
         let result = truncate_tool_output(input);
         assert!(result.contains("[output truncated"));
+    }
+}
+
+#[cfg(test)]
+mod tool_timeout_tests {
+    use super::{resolve_tool_timeout_secs, DEFAULT_TOOL_TIMEOUT_SECS, MIN_TOOL_TIMEOUT_SECS};
+
+    #[test]
+    fn timeout_none_returns_default() {
+        assert_eq!(resolve_tool_timeout_secs(None), DEFAULT_TOOL_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn timeout_empty_string_returns_default() {
+        assert_eq!(resolve_tool_timeout_secs(Some("")), DEFAULT_TOOL_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn timeout_unparseable_returns_default() {
+        assert_eq!(
+            resolve_tool_timeout_secs(Some("abc")),
+            DEFAULT_TOOL_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn timeout_negative_returns_default() {
+        // Negative parses to Err for u64, falls back to default.
+        assert_eq!(
+            resolve_tool_timeout_secs(Some("-10")),
+            DEFAULT_TOOL_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn timeout_below_minimum_returns_default() {
+        // Values below MIN_TOOL_TIMEOUT_SECS (5s) are rejected to avoid
+        // foot-gunning real tools.
+        assert_eq!(
+            resolve_tool_timeout_secs(Some("1")),
+            DEFAULT_TOOL_TIMEOUT_SECS
+        );
+        assert_eq!(
+            resolve_tool_timeout_secs(Some("4")),
+            DEFAULT_TOOL_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn timeout_at_minimum_accepted() {
+        assert_eq!(
+            resolve_tool_timeout_secs(Some("5")),
+            MIN_TOOL_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn timeout_valid_override() {
+        assert_eq!(resolve_tool_timeout_secs(Some("300")), 300);
+        assert_eq!(resolve_tool_timeout_secs(Some("60")), 60);
+        assert_eq!(resolve_tool_timeout_secs(Some("3600")), 3600);
     }
 }
