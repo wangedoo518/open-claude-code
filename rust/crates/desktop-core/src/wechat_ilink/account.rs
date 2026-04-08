@@ -140,6 +140,11 @@ fn context_tokens_file_path(id: &str) -> Result<PathBuf, AccountError> {
     Ok(accounts_dir()?.join(format!("{id}.context-tokens.json")))
 }
 
+fn openid_sessions_file_path(id: &str) -> Result<PathBuf, AccountError> {
+    validate_id(id)?;
+    Ok(accounts_dir()?.join(format!("{id}.openid-sessions.json")))
+}
+
 // ── Account index ────────────────────────────────────────────────────
 
 /// List all bot account ids registered in the index file. Returns an
@@ -317,6 +322,50 @@ pub fn upsert_context_token(
     let mut current = load_context_tokens(account_id)?;
     current.insert(user_id.to_string(), context_token.to_string());
     save_context_tokens(account_id, &current)
+}
+
+// ── Per-WeChat-user → desktop session mapping ────────────────────────
+
+/// Load the persistent mapping `WeChat user_id → desktop_session_id` for
+/// an account. Used by the DesktopAgentHandler to keep each WeChat user's
+/// conversation in its own dedicated desktop session across restarts.
+///
+/// Returns an empty map if the file doesn't exist (e.g. first launch).
+pub fn load_openid_sessions(account_id: &str) -> Result<HashMap<String, String>, AccountError> {
+    let path = openid_sessions_file_path(account_id)?;
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = fs::read_to_string(&path)?;
+    Ok(serde_json::from_str(&raw).unwrap_or_default())
+}
+
+/// Overwrite the openid → session mapping for an account.
+pub fn save_openid_sessions(
+    account_id: &str,
+    mapping: &HashMap<String, String>,
+) -> Result<(), AccountError> {
+    let path = openid_sessions_file_path(account_id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_vec_pretty(mapping)?)?;
+    Ok(())
+}
+
+/// Atomic upsert: insert/replace a single openid → session pair and
+/// persist to disk in one call.
+pub fn upsert_openid_session(
+    account_id: &str,
+    openid: &str,
+    session_id: &str,
+) -> Result<(), AccountError> {
+    if openid.is_empty() || session_id.is_empty() {
+        return Ok(());
+    }
+    let mut current = load_openid_sessions(account_id)?;
+    current.insert(openid.to_string(), session_id.to_string());
+    save_openid_sessions(account_id, &current)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -547,5 +596,36 @@ mod tests {
         let s = format_iso8601_utc(1_775_628_000);
         assert!(s.starts_with("2026-04-"), "got: {s}");
         assert!(s.ends_with(":00Z"));
+    }
+
+    #[test]
+    fn openid_sessions_round_trip() {
+        let _g = temp_state_dir();
+        let id = "test-bot-6";
+        fs::create_dir_all(accounts_dir().unwrap()).unwrap();
+
+        assert!(load_openid_sessions(id).unwrap().is_empty());
+        upsert_openid_session(id, "alice@im.wechat", "desktop-session-1").unwrap();
+        upsert_openid_session(id, "bob@im.wechat", "desktop-session-2").unwrap();
+        upsert_openid_session(id, "alice@im.wechat", "desktop-session-99").unwrap();
+
+        let loaded = load_openid_sessions(id).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(
+            loaded.get("alice@im.wechat").unwrap(),
+            "desktop-session-99"
+        );
+        assert_eq!(loaded.get("bob@im.wechat").unwrap(), "desktop-session-2");
+    }
+
+    #[test]
+    fn openid_sessions_ignores_empty_inputs() {
+        let _g = temp_state_dir();
+        let id = "test-bot-7";
+        fs::create_dir_all(accounts_dir().unwrap()).unwrap();
+
+        upsert_openid_session(id, "", "session-x").unwrap();
+        upsert_openid_session(id, "openid-x", "").unwrap();
+        assert!(load_openid_sessions(id).unwrap().is_empty());
     }
 }

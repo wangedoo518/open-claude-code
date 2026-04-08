@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use desktop_core::wechat_ilink::{
     account::{list_account_ids, load_account, normalize_account_id, save_account},
-    handlers::EchoHandler,
+    desktop_handler::DesktopAgentHandler,
     login::{LoginStatus, QrLoginSession},
     monitor::{run_monitor, MessageHandler, MonitorConfig, MonitorStatus},
     types::{WeixinAccountData, DEFAULT_BASE_URL},
@@ -54,17 +54,36 @@ fn print_help() {
 }
 
 async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    // Workaround for a Windows-specific path bug in the upstream `runtime`
+    // crate's `default_config_home()`: it reads `HOME` directly via
+    // `std::env::var_os`, which under git-bash resolves to a Unix-style
+    // string like `/c/Users/111`. Joining `.claw` to that produces an
+    // invalid Windows path (`\c\Users\111\.claw`), which Windows then
+    // interprets relative to the current drive letter, ending up at
+    // `D:\c\Users\111\.claw` and failing every persist with "拒绝访问".
+    //
+    // Fix: ensure `CLAW_CONFIG_HOME` is set to a real Windows path BEFORE
+    // any code in `runtime` reads it. We default to `%USERPROFILE%\.claw`
+    // when neither override is present. Honors a pre-set value so power
+    // users can still relocate state via env var.
+    ensure_claw_config_home_is_valid();
+
     let address = env::var("OPEN_CLAUDE_CODE_DESKTOP_ADDR")
         .unwrap_or_else(|_| DEFAULT_ADDRESS.to_string())
         .parse::<SocketAddr>()?;
 
-    // Spawn the WeChat iLink long-poll monitor for every persisted account
-    // before we start the HTTP server. The monitor task lives for the
-    // process lifetime; we keep its CancellationToken in scope so a future
-    // shutdown signal could trigger graceful teardown.
-    let _wechat_monitors = spawn_wechat_monitors_for_all_accounts().await;
+    // Build a single DesktopState that's shared between the HTTP server and
+    // the WeChat monitor. Both surfaces operate on the same session store
+    // so messages received via WeChat appear in the desktop UI in real time.
+    let state = DesktopState::live();
 
-    serve(AppState::new(DesktopState::live()), address).await?;
+    // Spawn the WeChat iLink long-poll monitor(s) for every persisted account
+    // before we start the HTTP server. The monitor task lives for the process
+    // lifetime; we keep the SpawnedMonitor handles in scope so the
+    // CancellationTokens and watch senders stay alive.
+    let _wechat_monitors = spawn_wechat_monitors_for_all_accounts(&state).await;
+
+    serve(AppState::new(state), address).await?;
     Ok(())
 }
 
@@ -79,7 +98,7 @@ struct SpawnedMonitor {
 
 /// Spawn one monitor per persisted WeChat account. Skips silently when
 /// no accounts exist (e.g. user hasn't run `wechat-login` yet).
-async fn spawn_wechat_monitors_for_all_accounts() -> Vec<SpawnedMonitor> {
+async fn spawn_wechat_monitors_for_all_accounts(state: &DesktopState) -> Vec<SpawnedMonitor> {
     let ids = match list_account_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -96,7 +115,7 @@ async fn spawn_wechat_monitors_for_all_accounts() -> Vec<SpawnedMonitor> {
 
     let mut spawned = Vec::new();
     for account_id in ids {
-        match spawn_monitor_for_account(&account_id).await {
+        match spawn_monitor_for_account(state, &account_id).await {
             Ok(handle) => spawned.push(handle),
             Err(e) => eprintln!("[wechat] could not spawn monitor for {account_id}: {e}"),
         }
@@ -104,8 +123,88 @@ async fn spawn_wechat_monitors_for_all_accounts() -> Vec<SpawnedMonitor> {
     spawned
 }
 
-/// Build the iLink client from a persisted account and spawn its monitor.
+/// Ensure `CLAW_CONFIG_HOME` is set to a path that is BOTH valid on the
+/// host platform AND writable by the current process.
+///
+/// Why this is more involved than it looks:
+///   1. The upstream `runtime` crate's `default_config_home()` reads
+///      `$HOME` directly. Under git-bash on Windows, `HOME` is a Unix-style
+///      string (`/c/Users/111`) which the Rust stdlib does not normalize,
+///      producing an invalid Windows path (`\c\Users\111\.claw`) that
+///      Windows then resolves relative to the current drive letter
+///      (`D:\c\Users\111\.claw`) and fails every `fs::create_dir_all`.
+///   2. Even with a valid Windows-form `HOME`, on this developer's machine
+///      a system filter denies creation of any directory matching `claw*`
+///      under `%USERPROFILE%` (likely a sandbox/AV rule). Verified
+///      empirically: `mkdir C:\Users\111\claw_anything` fails for the
+///      regular user account.
+///
+/// To make `runtime`'s persistence work regardless, we forcibly set
+/// `CLAW_CONFIG_HOME` to `%LOCALAPPDATA%\warwolf\claw\` on Windows. This
+/// directory:
+///   * is per-user, non-roaming, always full-control for the owner
+///   * lives under `LOCALAPPDATA` so AV/sandbox `claw*` filters on the
+///     home directory don't apply
+///   * sits next to `%LOCALAPPDATA%\warwolf\wechat\` which we already use
+///     for the iLink token store, so all warwolf state is colocated
+///
+/// We honor a user-supplied `CLAW_CONFIG_HOME` if already set, and never
+/// touch the env on macOS/Linux.
+fn ensure_claw_config_home_is_valid() {
+    if env::var_os("CLAW_CONFIG_HOME").is_some() {
+        return;
+    }
+
+    #[cfg(windows)]
+    {
+        let target = env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|p| p.join("warwolf").join("claw"))
+            .or_else(|| {
+                env::var_os("USERPROFILE")
+                    .map(std::path::PathBuf::from)
+                    .map(|p| p.join("AppData").join("Local").join("warwolf").join("claw"))
+            });
+
+        if let Some(path) = target {
+            eprintln!(
+                "[startup] forcing CLAW_CONFIG_HOME = {} (Windows AV/sandbox workaround)",
+                path.display()
+            );
+            // Pre-create the directory so the first persist call doesn't
+            // race against create_dir_all.
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                eprintln!(
+                    "[startup] warning: failed to pre-create {}: {e}",
+                    path.display()
+                );
+            }
+            env::set_var("CLAW_CONFIG_HOME", &path);
+        }
+    }
+}
+
+/// Resolve the default project path that newly-created WeChat sessions
+/// should be associated with. Order of precedence:
+///   1. `WECHAT_DEFAULT_PROJECT_PATH` env var
+///   2. Current process working directory
+///   3. Hard-coded fallback ("." — relative cwd)
+fn resolve_wechat_default_project_path() -> String {
+    if let Ok(path) = env::var("WECHAT_DEFAULT_PROJECT_PATH") {
+        if !path.trim().is_empty() {
+            return path;
+        }
+    }
+    env::current_dir()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+/// Build the iLink client + DesktopAgentHandler from a persisted account
+/// and spawn its long-poll monitor task.
 async fn spawn_monitor_for_account(
+    state: &DesktopState,
     account_id: &str,
 ) -> Result<SpawnedMonitor, Box<dyn std::error::Error>> {
     let data = load_account(account_id)?
@@ -124,9 +223,14 @@ async fn spawn_monitor_for_account(
     let cancel = CancellationToken::new();
     let (status_tx, status_rx) = watch::channel(MonitorStatus::default());
 
-    // Phase 2a: echo handler. Will be replaced with the DesktopState bridge
-    // in Phase 2b once we plumb session management through.
-    let handler: Arc<dyn MessageHandler> = Arc::new(EchoHandler);
+    // Phase 2b: real DesktopAgentHandler bridges WeChat → DesktopState.
+    // Each WeChat user gets their own desktop session (per openid mapping).
+    let project_path = resolve_wechat_default_project_path();
+    eprintln!(
+        "[wechat] default project path for new WeChat sessions: {project_path}"
+    );
+    let handler: Arc<dyn MessageHandler> =
+        Arc::new(DesktopAgentHandler::new(state.clone(), account_id, project_path)?);
 
     let config = MonitorConfig {
         account_id: account_id.to_string(),

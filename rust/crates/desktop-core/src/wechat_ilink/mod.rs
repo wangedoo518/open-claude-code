@@ -16,16 +16,19 @@
 
 pub mod account;
 pub mod client;
+pub mod desktop_handler;
 pub mod handlers;
 pub mod login;
 pub mod monitor;
 pub mod types;
 
 pub use account::{
-    clear_account, list_account_ids, load_account, load_context_tokens, load_sync_buf,
-    save_account, save_sync_buf, upsert_context_token, AccountError,
+    clear_account, list_account_ids, load_account, load_context_tokens,
+    load_openid_sessions, load_sync_buf, save_account, save_sync_buf,
+    upsert_context_token, upsert_openid_session, AccountError,
 };
 pub use client::{IlinkClient, IlinkError, SESSION_EXPIRED_ERRCODE};
+pub use desktop_handler::DesktopAgentHandler;
 pub use handlers::EchoHandler;
 pub use login::{LoginConfirmation, LoginError, LoginStatus, QrLoginSession};
 pub use monitor::{run_monitor, MessageHandler, MonitorConfig, MonitorError, MonitorStatus};
