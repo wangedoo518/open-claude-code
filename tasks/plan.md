@@ -1,211 +1,364 @@
-# Audit Fix Plan (v3) — 修复 15 个未修漏洞
+# Audit Fix Plan (v4) — Full Code Review Sprint
 
-## Status: Awaiting Execution
-**Last updated**: 2026-04-07
-**Commit baseline**: `314c1c2` (Phase 1-18 + P0/P1 表面修复)
-**Trigger**: 破坏性审计发现 15 个遗留问题
+## Status
+- **Created**: 2026-04-08
+- **Baseline commit**: `a3a8091` (after S-01/S-02/S-03 fixes)
+- **Source**: 全量代码审查 (full-code-review) — 18 findings, 3 parallel expert agents + human verification
+- **Author**: Claude (planning skill)
+
+## Findings summary
+
+| Severity | Count | IDs |
+|---|---|---|
+| Critical | 4 | CR-01 CR-02 CR-03 CR-04 |
+| Important | 5 | IM-01 IM-02 IM-03 IM-04 IM-05 |
+| Suggestion | 9 | SG-01 SG-02 SG-03 SG-04 SG-05 SG-06 SG-07 SG-08 SG-09 |
+
+Downgraded (agent over-reported, verified non-issues):
+- S-05 debug endpoints → localhost-only binding mitigates → SG-01
+- I1 EventSource listeners → GC collects with source.close() → non-issue
+- I2 Escape-to-deny → intentional fail-closed → non-issue
 
 ---
 
-## 审计发现总结
-
-| 分类 | 数量 | 代表性问题 |
-|------|------|-----------|
-| 高危逻辑漏洞 | 4 | PermissionGate race、Drop guard shutdown 无效、持久化乱序、MCP 空壳 |
-| 崩溃场景 | 3 | SSE UTF-8 跨 chunk、fork_session 丢状态、build_api_request null 输入 |
-| 语义不一致 | 3 | permissionMode 双源头、isStreaming 双源头、/compact 假成功 |
-| 静默失败 | 5 | 删会话竞态、CLAUDE.md 注入、Client 不复用、MCP 线程 panic、CWD 锁不共享 |
-
----
-
-## 依赖图
+## Dependency graph
 
 ```
-Phase 0: Lessons Learned 框架
-   ↓
-┌──────────┬──────────┬──────────┐
-│Phase 1   │Phase 2   │Phase 3   │
-│独立修复  │权限统一  │MCP披露   │
-│(并行)    │          │          │
-└──────────┴──────────┴──────────┘
-   ↓
-┌──────────┬──────────┐
-│Phase 4   │Phase 5   │
-│Crash恢复 │isStream  │
-│          │统一      │
-└──────────┴──────────┘
-   ↓
-Phase 6: 持久化 + CWD锁 + Client复用
-   ↓
-Phase 7: 清理 (fork, MCP panic, CLAUDE.md警告)
-```
-
----
-
-## Phase 0: Lessons Learned 框架
-
-**Task 0.1** — 创建 `docs/audit-lessons.md` 骨架，为后续 15 个条目预留格式
-
-**验收**：文件存在、结构清晰、至少 1 个示例条目
-
----
-
-## Phase 1: 独立 bug 修复
-
-### Task 1.1: SSE UTF-8 边界保护
-**文件**: `rust/crates/desktop-core/src/agentic_loop.rs:687-730`
-**修复**: `buffer: String` → `buffer: Vec<u8>`，用 `drain(..=newline_pos)` 消除 O(n²)
-**测试**: 拆分中文字符 "中" 跨 2 个 chunk，验证 decode 正确
-
-### Task 1.2: build_api_request 严格类型验证
-**文件**: `rust/crates/desktop-core/src/agentic_loop.rs:562-573`
-**修复**: `from_str(input).ok().filter(|v| v.is_object()).unwrap_or_else(...)`
-**测试**: null/array/object 三种输入 coerce 到 object
-
-### Task 1.3: /compact 命令等待 backend ACK
-**文件**: `apps/desktop-shell/src/features/session-workbench/commandExecutor.ts:56-76`
-**修复**: 改为 async，先 await backend 再 clear UI
-**测试**: Running 状态下不清空 UI + 显示错误
-
-**Checkpoint 1**: cargo test + tsc 零 regression
-
----
-
-## Phase 2: 权限系统真相源统一
-
-### Task 2.1: PermissionGate race 修复
-**文件**: `rust/crates/desktop-core/src/agentic_loop.rs:132-178`
-**修复**: 成功路径不二次清理 HashMap（resolve 已移除），只在 timeout 路径清理
-**测试**:
-- `resolve_wins_race_against_timeout` - 95ms resolve vs 100ms timeout → Allow
-- `timeout_wins_race_when_no_resolve` - 200ms 后 Deny(timeout)，pending 为空
-
-### Task 2.2: permissionMode 单一真相源
-**后端**: 新增 `POST /api/desktop/settings/permission-mode` + `DesktopState::set_permission_mode` 写入 `.claude/settings.json`
-**前端**: `settings-store.setPermissionMode` 改 async，先 API 后 setState；启动从 customize 接口 hydrate
-**验收**: UI 切换 mode → 发消息 → backend 日志显示新 mode
-
-**Checkpoint 2**: 手测权限对话框 + permissionMode 同步
-
----
-
-## Phase 3: MCP 诚实披露
-
-### Task 3.1: 移除假 init + 降级 Phase 16
-**文件**: `rust/crates/desktop-core/src/agentic_loop.rs:935-1022`
-**修复**:
-1. 重命名 `init_mcp_servers` → `probe_mcp_servers`（只检查连通性）
-2. 顶部警告注释说明 `tools::global_mcp_registry()` 是 crate-private
-3. System prompt 不包含 MCP 工具描述
-4. `tasks/todo.md` Phase 16 从 ✅ 降级为 ⚠️
-
-**验收**: Phase 16 标记降级，lessons L-09 记录
-
----
-
-## Phase 4: Shutdown/Crash 恢复
-
-### Task 4.1: 启动时 reconcile stuck sessions
-**文件**: `rust/crates/desktop-core/src/lib.rs:1196-1199`
-**修复**: 加载后遍历 sessions，`turn_state == Running` → 重置为 `Idle` + log
-**测试**: 持久化文件含 Running session → load → 全变 Idle
-
-### Task 4.2: Drop guard 同步化
-**文件**: `rust/crates/desktop-core/src/lib.rs:2592-2640`
-**修复**: `tokio::spawn` → `try_write` 同步尝试。失败时依赖 Task 4.1 启动 reconcile
-**验收**: kill -9 backend → 重启 → Running 全部变 Idle
-
----
-
-## Phase 5: isStreaming 单一真相源
-
-### Task 5.1: 拆分概念 + 单向数据流
-**洞察**: `session.turn_state` = "后端在处理" vs `streamingContent` = "正在积累文本片段"——两个正交维度
-
-**文件**:
-- `state/streaming-store.ts` — 删除 isStreaming/setStreaming
-- `SessionWorkbenchPage.tsx` — 只 appendStreamingContent
-- `SessionWorkbenchTerminal.tsx` — StreamingIndicator 根据 `turn_state + streamingContent` 显示
-- onMessage → `clearStreamingContent`
-
-**验收**: Streaming 不闪烁，Cancel 立即消失
-
-**Checkpoint 3**: 手测 crash recovery + streaming 无闪烁
-
----
-
-## Phase 6: 持久化乱序 + CWD 锁 + Client 复用
-
-### Task 6.1: 持久化通道化
-**文件**: `rust/crates/desktop-core/src/lib.rs`
-**修复**: `DesktopState` 新增 `persist_tx: mpsc::UnboundedSender<PersistJob>` + 长期消费任务
-**测试**: 10 个乱序 spawn 的 job 后，最终磁盘状态 = 最后一个 job
-
-### Task 6.2: 统一 CWD workspace lock
-**文件**:
-- `rust/crates/desktop-core/src/lib.rs:3791-3794` (公开为 `pub(crate)`)
-- `rust/crates/desktop-core/src/agentic_loop.rs:1049-1073` (改用 `crate::process_workspace_lock()`)
-**修复**: 合并两个独立的 `OnceLock<StdMutex<()>>`
-
-### Task 6.3: reqwest Client 复用
-**文件**: `rust/crates/desktop-core/src/agentic_loop.rs:276`
-**修复**: `DesktopState` 新增 `http_client: reqwest::Client`，`with_executor` 构造一次
-**验收**: netstat 观察连续 10 条消息只建 1 个 TCP 连接
-
----
-
-## Phase 7: 清理收尾
-
-### Task 7.1: fork_session 保留完整状态
-**文件**: `rust/crates/desktop-core/src/lib.rs:2395-2410`
-**修复**: `parent_session.clone()` + `truncate`，而非 `RuntimeSession::default()`
-**测试**: fork 后 compaction/usage 字段保留
-
-### Task 7.2: MCP init 线程错误传播
-**文件**: `rust/crates/desktop-core/src/agentic_loop.rs:1008-1041`
-**修复**: 保留 JoinHandle + log + `catch_unwind`
-**验收**: 注入 panic config → stderr 有清晰错误
-
-### Task 7.3: CLAUDE.md 注入警告
-**文件**: `rust/crates/desktop-core/src/system_prompt.rs`
-**修复**: 记录来源路径；parent directory 来源添加警告块
-**验收**: `~/.claude/CLAUDE.md` 被加载时显示来源警告
-
-**Checkpoint 4**: 全量 cargo test + 手测回归 + lessons-learned 更新
-
----
-
-## 验证流程
-
-```bash
-# 后端
-cd rust && cargo test -p desktop-core
-cd rust && cargo check -p desktop-server
-
-# 前端
-cd apps/desktop-shell && npx tsc --noEmit
-
-# 手测
-# Phase 2: 切换权限 → 发消息 → 确认生效
-# Phase 4: kill -9 + 重启 → 确认 turn_state 恢复
-# Phase 1.1: 发送中文 → 前端无乱码
+                  T0.1  T0.2           ← shared foundations
+                   │     │
+          ┌────────┼─────┼──────┐
+          ▼        ▼     ▼      ▼
+          T1.4    T1.3  T1.1   T1.2   ← Phase 1 Critical (parallel after T0)
+          │        │     │      │
+          └────────┴──┬──┴──────┘
+                     ▼
+                Checkpoint 1 (E2E attachment flow)
+                     ▼
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+         T2.1       T2.2       T2.3    ← Phase 2 Important validation (parallel)
+          └──────────┬──────────┘
+                     ▼
+                Checkpoint 2 (HTTP smoke)
+                     ▼
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+         T3.1       T3.2                ← Phase 3 Important reliability (parallel)
+          └──────────┬──────────┘
+                     ▼
+                Checkpoint 3 (cargo test + strict)
+                     ▼
+          T4.1 … T4.9                   ← Phase 4 Suggestions (batched)
+                     ▼
+                Final Checkpoint (全量回归)
+                     ▼
+                 commit + push
 ```
 
 ---
 
-## 关键文件修改清单
+## Vertical slicing principle
 
-| 文件 | Tasks |
-|------|-------|
-| `rust/crates/desktop-core/src/agentic_loop.rs` | 1.1, 1.2, 2.1, 3.1, 6.2, 6.3, 7.2 |
-| `rust/crates/desktop-core/src/lib.rs` | 2.2, 4.1, 4.2, 6.1, 6.2, 6.3, 7.1 |
-| `rust/crates/desktop-core/src/system_prompt.rs` | 7.3 |
-| `rust/crates/desktop-server/src/lib.rs` | 2.2（新路由） |
-| `apps/desktop-shell/src/state/settings-store.ts` | 2.2 |
-| `apps/desktop-shell/src/state/streaming-store.ts` | 5.1 |
-| `apps/desktop-shell/src/features/session-workbench/SessionWorkbenchPage.tsx` | 5.1 |
-| `apps/desktop-shell/src/features/session-workbench/SessionWorkbenchTerminal.tsx` | 5.1, 7.3 |
-| `apps/desktop-shell/src/features/session-workbench/commandExecutor.ts` | 1.3 |
-| `apps/desktop-shell/src/features/session-workbench/api/client.ts` | 2.2（新 API） |
-| `docs/audit-lessons.md` | 每个 task 后追加 |
-| `tasks/todo.md` | 3.1（Phase 16 降级） |
+Each task is a **complete vertical slice** — code change + test + verification in one step. No horizontal layers. Each task can be reverted independently without breaking unrelated tasks.
+
+---
+
+## Phase 0 — Shared foundations
+
+### T0.1 — Axum `DefaultBodyLimit` layer
+**Problem**: Router has no body-size limit; malicious payloads can OOM.
+**Change**:
+- `rust/crates/desktop-server/src/lib.rs:160-164`
+- Add `.layer(DefaultBodyLimit::max(15 * 1024 * 1024))` before `.with_state(state)`.
+**Test**:
+- `cargo test -p desktop-server` — existing pass
+- `curl` a >15MB POST → expect 413
+**Acceptance**:
+- cargo check zero error
+- Oversize payload rejected with 413 not 500
+
+### T0.2 — `lib/security.ts` with `sanitizeFilename`
+**Problem**: No centralized filename sanitizer; RTL/zero-width chars render raw.
+**Change**:
+- Create `apps/desktop-shell/src/lib/security.ts`
+- Export `sanitizeFilename(name: string): string` stripping `\u200E \u200F \u200B \u200C \u200D \u202A-\u202E`
+- Export `isDisplaySafe(name: string): boolean`
+**Test**:
+- Create `apps/desktop-shell/src/lib/security.test.ts`
+- Cases: normal, RTL override, zero-width, mixed, empty, CJK
+**Acceptance**:
+- vitest pass (or tsc compile at minimum if no vitest configured)
+- Function referenceable from T1.3
+
+---
+
+## Phase 1 — Critical fixes (4 tasks)
+
+### T1.1 — CR-01 Send button accepts attachment-only
+**File**: `apps/desktop-shell/src/features/session-workbench/InputBar.tsx:675`
+**Change**:
+```diff
+- disabled={!value.trim()}
++ disabled={!value.trim() && attachments.length === 0}
+```
+**Also** update the className condition on L669 to match.
+**Test**: Manual — upload file without text, button enables; click sends.
+**Acceptance**:
+- tsc pass
+- Manual verification via Chrome devtools preview (or `file:` UI walkthrough if backend stub)
+- Button visually enabled when attachment present but text empty
+
+### T1.2 — CR-02 File upload validation + error feedback
+**File**: `apps/desktop-shell/src/features/session-workbench/InputBar.tsx:55-192`
+**Change**:
+1. Extract `validateFile(file: File): string | null` helper.
+2. MIME whitelist:
+   ```ts
+   const ALLOWED_MIME = new Set([
+     "text/plain", "text/markdown", "text/csv", "application/json",
+     "image/png", "image/jpeg", "image/gif", "image/webp",
+     "application/pdf",
+   ]);
+   ```
+3. Allow files with empty `file.type` but whose extension is in a safe list (.md, .txt, .log, .rs, .ts, .tsx, .js, .py, .go, .java, .rb, .sh).
+4. Size check: 10MB raw size, reject > limit with clear error.
+5. In `handleFiles`, call `validateFile(file)` first; append error to an array; show last error via `setUploadError` and total rejected count.
+**Test**: Add `InputBar.test.tsx` (or manual if no test runner): drop .exe → rejected; drop 15MB .txt → rejected with message.
+**Acceptance**:
+- tsc pass
+- Rejected files never reach `uploadAttachment`
+- User sees explicit error for each rejection
+
+### T1.3 — CR-03 Filename rendering sanitization
+**File**: `apps/desktop-shell/src/features/session-workbench/InputBar.tsx:479`
+**Depends on**: T0.2
+**Change**:
+```tsx
+import { sanitizeFilename } from "@/lib/security";
+// ...
+<span
+  className="max-w-[180px] truncate font-medium"
+  dir="ltr"
+  title={sanitizeFilename(att.filename)}
+>
+  {sanitizeFilename(att.filename)}
+</span>
+```
+**Test**: Manual with filename `evil\u202Etxt.exe` → displays `eviltxt.exe` with LTR, no visual deception.
+**Acceptance**:
+- tsc pass
+- RTL override visually neutralized
+
+### T1.4 — CR-04 Attachment handler strict size limit
+**File**: `rust/crates/desktop-server/src/lib.rs:947-1002`
+**Depends on**: T0.1
+**Change**:
+1. Before base64 decode, check `base64_data.len() < 14 * 1024 * 1024` (~10MB decoded).
+2. After decode, re-check `bytes.len() < 10 * 1024 * 1024`.
+3. Return `413 PAYLOAD_TOO_LARGE` with ErrorResponse.
+**Test**: `cargo test -p desktop-server` — add new test `attachments_rejects_oversized_payload`.
+**Acceptance**:
+- cargo test passes
+- >10MB payload returns 413 JSON error
+
+### Checkpoint 1
+- `cargo test --workspace` — 82+ tests, 0 failures
+- `npx tsc --noEmit` in apps/desktop-shell — 0 errors
+- Backend smoke: POST `/attachments/process` with small legit file → 200
+- Backend smoke: POST with 20MB payload → 413
+- Frontend manual: Send button + drop+send flow + RTL filename
+
+---
+
+## Phase 2 — Important validation (3 tasks)
+
+### T2.1 — IM-01 `create_session` validates project_path
+**File**: `rust/crates/desktop-server/src/lib.rs:595-604`
+**Change**:
+```rust
+async fn create_session(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateDesktopSessionRequest>,
+) -> ApiResult<(StatusCode, Json<CreateDesktopSessionResponse>)> {
+    if let Some(ref path) = payload.project_path {
+        if !path.is_empty() {
+            desktop_core::validate_project_path(path).map_err(|e| {
+                (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e }))
+            })?;
+        }
+    }
+    // ... existing body, wrap result in Ok(...)
+}
+```
+Note: return type changes to `ApiResult<...>`; update route registration if needed.
+**Test**: `cargo test -p desktop-server` — add `create_session_rejects_traversal`.
+**Acceptance**:
+- cargo test pass
+- POST with `project_path: "../../../etc"` → 400
+
+### T2.2 — IM-02 `create_scheduled_task` validates project_path
+**File**: `rust/crates/desktop-server/src/lib.rs:606-619`
+**Change**: Same pattern as T2.1.
+**Test**: `create_scheduled_task_rejects_traversal`.
+**Acceptance**: Same as T2.1.
+
+### T2.3 — IM-05 `forward_permission` fail-fast validation
+**File**: `rust/crates/desktop-server/src/lib.rs:1157-1170`
+**Change**:
+```rust
+let request_id = body.get("requestId").and_then(|v| v.as_str())
+    .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(ErrorResponse {
+        error: "missing requestId".to_string(),
+    })))?;
+let decision = body.get("decision").and_then(|v| v.as_str())
+    .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(ErrorResponse {
+        error: "missing decision".to_string(),
+    })))?;
+// Also validate decision is one of "allow" | "deny"
+if !matches!(decision, "allow" | "deny") {
+    return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+        error: format!("invalid decision: {} (expected: allow | deny)", decision),
+    })));
+}
+```
+**Test**: `cargo test -p desktop-server` — add `forward_permission_rejects_missing_fields`.
+**Acceptance**:
+- cargo test pass
+- Missing field → 400 JSON error
+
+### Checkpoint 2
+- `cargo test --workspace` — still green
+- `curl` smoke: create_session with traversal → 400
+- `curl` smoke: forward_permission with empty body → 400
+
+---
+
+## Phase 3 — Important reliability (2 tasks)
+
+### T3.1 — IM-03 `u32::try_from` no-panic path
+**File**: `rust/crates/desktop-core/src/lib.rs:4308`
+**Change**: Replace `.expect(...)` with `.map_err(|_| AgenticError::Internal("response block index overflow".to_string()))?`. The function `response_to_events` must return `Result<Vec<AssistantEvent>, AgenticError>`. Cascade update all call sites.
+**Alternative (simpler)**: keep return type infallible; cap blocks at `u32::MAX` via `.take(u32::MAX as usize)` + log warning.
+**Decision**: Use the simpler alternative (cap + log) to avoid a ripple-effect refactor. Panic on > 4B content blocks is theoretically only reachable via malicious/broken API and capping is safe.
+**Test**: Add unit test `response_with_many_blocks_does_not_panic`.
+**Acceptance**:
+- cargo test pass
+- No `expect()` at the panic site
+
+### T3.2 — IM-04 Tool execution timeout
+**File**: `rust/crates/desktop-core/src/agentic_loop.rs:556-560`
+**Change**:
+```rust
+let result = match tokio::time::timeout(
+    Duration::from_secs(120),
+    tokio::task::spawn_blocking(move || {
+        execute_tool_in_workspace(&tool_cwd, &name, &input_value)
+    })
+).await {
+    Ok(Ok(result)) => result,
+    Ok(Err(e)) => Err(format!("tool task panicked: {e}")),
+    Err(_) => Err("tool execution timeout (120s)".to_string()),
+};
+```
+**Test**: Add a built-in test tool that sleeps 200s; verify timeout triggers.
+**Acceptance**:
+- cargo test pass
+- Long-running tool returns timeout error, does not block process
+
+### Checkpoint 3
+- `cargo test --workspace` — still green
+- `cargo clippy` (non-strict) — no new warnings in changed files
+- Stress: invoke `execute_turn()` 50× in a loop — no leaks
+
+---
+
+## Phase 4 — Suggestions (batched)
+
+Batched into 2-3 commits to keep diffs focused.
+
+### T4.1 — SG-01 Debug endpoints cfg-gated
+**Change**: Wrap `/api/desktop/debug/mcp/{probe,call}` route registrations in `#[cfg(debug_assertions)]` block, with runtime fallback via `std::env::var("OCL_ENABLE_DEBUG").is_ok()` for release diagnostics.
+
+### T4.2 — SG-02 Permission mode turn-caching docs
+**Change**: Add a rustdoc comment at `lib.rs:2918` explaining that permission_mode is captured per-turn and a mid-turn UI change won't affect the in-flight turn. Reference audit-lessons L-06.
+
+### T4.3 — SG-03 `strip_yaml_frontmatter` boundary safety
+**Change**: `system_prompt.rs:359` — replace manual slice with `rest.get(end_idx + 5..).unwrap_or(rest)` which is safe against non-boundary indices.
+
+### T4.4 — SG-04 CLI `--json` redaction
+**Change**: `desktop-cli/src/main.rs` — add `redact_sensitive_fields(value: &mut Value)` that recursively walks the JSON and replaces values of keys in `{token, password, secret, api_key, apiKey, access_token, refresh_token}` with `"***"`. Call it before JSON pretty-print.
+**Test**: New unit test `redact_nested_sensitive_fields`.
+
+### T4.5 — SG-05 Drop-handler folder rejection
+**Change**: `InputBar.tsx:212-221` — filter out entries where `file.webkitRelativePath && file.webkitRelativePath !== file.name` and surface "Folders are not supported" via `setUploadError`.
+
+### T4.6 — SG-06 Sidebar context menu listener stability
+**Change**: `SessionWorkbenchSidebar.tsx:89-99` — change dep array to `[]`, use the ref check inline and call `setContextMenu(null)` through a ref to latest state to avoid stale closures. Use `setTimeout(0)` to delay listener registration past the opening click.
+
+### T4.7 — SG-07 CORS policy comment
+**Change**: `desktop-server/lib.rs:161-164` — add doc comment explaining the liberal CORS is intentional for the local-only Tauri scenario and must not be relaxed further.
+
+### T4.8 — SG-08 Attachment chip stable key
+**Change**: Add a `id: string` field to `ProcessedAttachment` generated with `crypto.randomUUID()` at upload time. Use `att.id` as React key.
+
+### T4.9 — SG-09 Handler naming consistency
+**Change**: Rename all handlers that lack the `_handler` suffix to add it. This is mechanical. Touches ~15 route registrations and function defs.
+
+### Final Checkpoint
+- `cargo test --workspace` — all green (expect 95+ tests now)
+- `cargo check --workspace --all-targets` — 0 errors
+- `npx tsc --noEmit` in desktop-shell — 0 errors
+- Backend smoke: full E2E flow of sessions + permissions + attachments
+- CLI smoke: all 12 documented ocl commands
+- Git diff review: no accidental scope creep
+- Single squashed-commit push OR staged commits per phase (user preference)
+
+---
+
+## Out of scope
+
+- L-series (audit-lessons.md) — all already fixed in earlier rounds
+- S-01/S-02/S-03 — already fixed in `ff37438` / `a3a8091`
+- Tauri shell manual click-through — requires user + screen
+- Real-LLM E2E (needs credentials user declined to share)
+- Full accessibility audit — separate sprint
+- Performance profiling — separate sprint
+
+---
+
+## Success criteria (exit bar)
+
+1. **0 Critical** remaining
+2. **0 Important** remaining
+3. **≤3 Suggestion** remaining (the ones deferred here)
+4. Test count ≥ 90 passing (current 82 + ~8 new)
+5. Zero new compile warnings with `cargo build` (not strict clippy)
+6. Zero TS errors
+7. All CLI commands still work end-to-end
+8. Commit history: clean, one commit per phase or one squashed
+
+---
+
+## Estimated effort
+
+| Phase | Tasks | Est. | Parallelizable |
+|---|---|---|---|
+| Phase 0 | 2 | 20 min | yes |
+| Phase 1 | 4 | 70 min | yes (after T0) |
+| Phase 2 | 3 | 40 min | yes |
+| Phase 3 | 2 | 50 min | yes |
+| Phase 4 | 9 | 90 min | mostly yes |
+| Checkpoints × 4 | — | 40 min | no |
+| **Total** | **20 tasks** | **~5 hours** | |
+
+---
+
+## Risk log
+
+| Risk | Mitigation |
+|---|---|
+| T2.1 return type change cascades | Start with `ApiResult` only; existing tests will fail fast |
+| T3.1 "cap + log" path hides real bugs | Add `tracing::warn!` so ops sees it |
+| T3.2 timeout breaks legitimate long tools | 120s default, make env-overridable via `OCL_TOOL_TIMEOUT_SECS` |
+| T4.9 rename breaks git blame | Do this as the last commit so history is clean |
+| RTL sanitizer accidentally strips legitimate chars | Unit tests with CJK + Arabic (non-RTL-override) + Hebrew |

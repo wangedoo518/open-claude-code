@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use async_stream::stream;
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{Method, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -156,8 +156,22 @@ struct SearchQuery {
 type ApiError = (StatusCode, Json<ErrorResponse>);
 type ApiResult<T> = Result<T, ApiError>;
 
+/// Global body-size ceiling for all HTTP endpoints.
+///
+/// Set to 15 MiB (slightly above the 10 MiB frontend attachment cap) to
+/// accommodate base64-encoded uploads, which inflate payloads by ~33 %.
+/// Requests larger than this return 413 without reaching handler code.
+const MAX_REQUEST_BODY_BYTES: usize = 15 * 1024 * 1024;
+
 #[must_use]
 pub fn app(state: AppState) -> Router {
+    // CORS policy: permissive by design.
+    //
+    // The desktop server binds to 127.0.0.1 only (see `main.rs` DEFAULT_ADDRESS),
+    // so it is not reachable from other hosts. The Tauri shell loads the
+    // frontend from a `tauri://` or `http://` origin that varies by platform,
+    // so we accept any origin and headers. Do NOT relax this further (e.g.
+    // by binding to 0.0.0.0) without re-reviewing this policy.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_headers(Any)
@@ -286,6 +300,7 @@ pub fn app(state: AppState) -> Router {
             "/api/desktop/dispatch/items/{id}",
             delete(delete_dispatch_item_handler).post(update_dispatch_item),
         )
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(cors)
         .with_state(state)
 }
@@ -974,6 +989,33 @@ async fn process_attachment_handler(
             )
         })?;
 
+    // CR-04: Enforce a strict 10 MiB cap on the *decoded* payload.
+    //
+    // The global DefaultBodyLimit (15 MiB in `app()`) blocks obvious DoS
+    // attempts, but base64 inflates binary content by ~33 %, so a 10 MiB
+    // real file comes in as ~13.4 MiB on the wire. Checking the pre-decode
+    // string length first lets us reject early without allocating the
+    // decoded buffer.
+    //
+    // Frontend (`InputBar.tsx:validateAttachment`) also enforces a 10 MiB
+    // cap on raw file size, so this is a defense-in-depth check for any
+    // caller that bypasses the UI (CLI, curl, third-party integrations).
+    const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+    // Base64 expands bytes by 4/3, round up: max_b64 = ceil(max * 4 / 3) + pad
+    const MAX_BASE64_CHARS: usize = (MAX_ATTACHMENT_BYTES * 4) / 3 + 4;
+    if base64_data.len() > MAX_BASE64_CHARS {
+        return Err((
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: format!(
+                    "attachment base64 too large: {} chars (max {})",
+                    base64_data.len(),
+                    MAX_BASE64_CHARS
+                ),
+            }),
+        ));
+    }
+
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(base64_data)
         .map_err(|e| {
@@ -984,6 +1026,21 @@ async fn process_attachment_handler(
                 }),
             )
         })?;
+
+    // Re-check after decode. A crafted base64 with lots of padding could
+    // technically produce more bytes than the char-length check predicted.
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err((
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: format!(
+                    "attachment decoded too large: {} bytes (max {})",
+                    bytes.len(),
+                    MAX_ATTACHMENT_BYTES
+                ),
+            }),
+        ));
+    }
 
     let result = process_attachment(filename, &bytes);
     let kind_str = match result.kind {
@@ -1374,5 +1431,126 @@ mod tests {
             .await
             .expect("create dispatch item response should decode");
         assert_eq!(created_dispatch_item.item.title, "Inbox follow-up");
+    }
+
+    /// T1.4: attachment handler enforces a 10 MiB decoded-size cap,
+    /// rejecting payloads that fit under the global 15 MiB body limit
+    /// but would exceed the semantic attachment ceiling.
+    #[tokio::test]
+    async fn attachment_rejects_oversized_payload() {
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        // Create ~11 MiB of raw bytes → ~14.7 MiB base64. Under the
+        // global 15 MiB limit but over the 10 MiB attachment cap.
+        use base64::Engine;
+        let raw = vec![b'X'; 11 * 1024 * 1024];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        let body = serde_json::json!({
+            "filename": "toobig.txt",
+            "base64": b64,
+        });
+
+        let response = client
+            .post(server.url("/api/desktop/attachments/process"))
+            .json(&body)
+            .send()
+            .await
+            .expect("send oversized attachment");
+
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            "expected 413 for oversized attachment"
+        );
+
+        let error: serde_json::Value =
+            response.json().await.expect("error payload");
+        let msg = error["error"].as_str().unwrap_or("");
+        assert!(
+            msg.contains("too large"),
+            "expected 'too large' in error message, got: {msg}"
+        );
+    }
+
+    /// T1.4: normal-sized attachments still work after the cap was added.
+    #[tokio::test]
+    async fn attachment_accepts_small_text_payload() {
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        use base64::Engine;
+        let content = b"Hello from the T1.4 test!";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(content);
+        let body = serde_json::json!({
+            "filename": "hello.txt",
+            "base64": b64,
+        });
+
+        let response = client
+            .post(server.url("/api/desktop/attachments/process"))
+            .json(&body)
+            .send()
+            .await
+            .expect("send small attachment");
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let payload: serde_json::Value = response.json().await.expect("json");
+        assert_eq!(payload["filename"], "hello.txt");
+        assert_eq!(payload["kind"], "text");
+    }
+
+    /// T0.1: global body-size limit must reject payloads larger than
+    /// `MAX_REQUEST_BODY_BYTES` (15 MiB) before they reach handler code.
+    /// Without this guard, a malicious local caller could OOM the server.
+    ///
+    /// Note: Axum's `DefaultBodyLimit` rejection manifests in one of two
+    /// ways depending on whether the body is sent streamed or all-at-once:
+    ///  1. If Content-Length is present, Axum returns 413 Payload Too Large
+    ///  2. If the body is chunked/streamed, the server may close the
+    ///     connection mid-stream (ConnectionAborted / reset)
+    /// Both indicate successful rejection — the test accepts either.
+    #[tokio::test]
+    async fn oversized_request_body_rejected() {
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        // Build a ~16 MiB JSON body — above the 15 MiB ceiling.
+        let huge_payload = "A".repeat(16 * 1024 * 1024);
+        let body = serde_json::json!({
+            "filename": "huge.txt",
+            "base64": huge_payload,
+        });
+
+        let result = client
+            .post(server.url("/api/desktop/attachments/process"))
+            .json(&body)
+            .send()
+            .await;
+
+        match result {
+            Ok(response) => {
+                // Path 1: clean rejection with status code.
+                assert_eq!(
+                    response.status(),
+                    reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+                    "expected 413, got {} — DefaultBodyLimit layer may be missing",
+                    response.status()
+                );
+            }
+            Err(e) => {
+                // Path 2: server closed the connection mid-body. This is
+                // also an acceptable rejection mode. A handler OOM or
+                // success would NOT produce a connection error.
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("ConnectionAborted")
+                        || msg.contains("connection")
+                        || msg.contains("reset")
+                        || msg.contains("Io"),
+                    "unexpected non-connection error: {msg}"
+                );
+            }
+        }
     }
 }

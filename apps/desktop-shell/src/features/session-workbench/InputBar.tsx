@@ -22,6 +22,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { sanitizeFilename } from "@/lib/security";
 import {
   useSettingsStore,
   type PermissionMode,
@@ -63,6 +64,91 @@ async function uploadAttachment(file: File): Promise<ProcessedAttachment> {
     throw new Error(`upload failed: ${response.status} ${response.statusText}`);
   }
   return (await response.json()) as ProcessedAttachment;
+}
+
+/* ─── Attachment validation (CR-02) ─────────────────────────────── */
+
+/** Hard size cap in bytes — keep in sync with backend (15 MiB body limit). */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * MIME types accepted for upload. Restricting to a whitelist avoids silently
+ * forwarding arbitrary binaries (executables, archives) to the backend tool
+ * layer where they would be treated as text or trigger stub handling.
+ */
+const ALLOWED_MIME_TYPES: ReadonlySet<string> = new Set([
+  // Text
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "text/x-log",
+  "text/tab-separated-values",
+  // Structured
+  "application/json",
+  "application/xml",
+  "application/x-yaml",
+  "application/yaml",
+  // Source code files often arrive with these common types
+  "application/javascript",
+  "application/typescript",
+  "application/x-sh",
+  // Images
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  // Docs
+  "application/pdf",
+]);
+
+/**
+ * Extensions whose content is safe to treat as text-like even when the
+ * browser reports an empty MIME type (common on Windows for newer code
+ * file extensions). Used as a fallback when `file.type === ""`.
+ */
+const ALLOWED_TEXT_EXTENSIONS: ReadonlySet<string> = new Set([
+  "txt", "md", "log", "json", "yaml", "yml", "xml", "csv", "tsv",
+  "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "rb", "sh",
+  "toml", "ini", "cfg", "conf", "env", "gitignore",
+  "html", "css", "scss", "vue", "svelte",
+  "c", "cpp", "h", "hpp", "cs", "swift", "kt", "dart", "php",
+]);
+
+/**
+ * Validate a file before upload. Returns `null` if the file is acceptable,
+ * or a human-readable error string explaining why it was rejected.
+ *
+ * Rejection reasons:
+ *  - Size > MAX_ATTACHMENT_BYTES
+ *  - MIME not in ALLOWED_MIME_TYPES and extension not in ALLOWED_TEXT_EXTENSIONS
+ *  - Looks like a directory drop (size 0 AND no extension)
+ */
+function validateAttachment(file: File): string | null {
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    return `${file.name} is ${mb} MB — exceeds 10 MB limit`;
+  }
+
+  // Heuristic: folders dropped via dataTransfer.files appear as 0-byte
+  // entries with no file extension. Reject these proactively.
+  if (file.size === 0 && !file.name.includes(".")) {
+    return `${file.name} looks like a folder — only individual files are supported`;
+  }
+
+  if (file.type && ALLOWED_MIME_TYPES.has(file.type)) {
+    return null;
+  }
+
+  // Fallback: accept known text-like extensions when MIME is missing or
+  // unrecognized (common for source code files on various OSes).
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext && ALLOWED_TEXT_EXTENSIONS.has(ext)) {
+    return null;
+  }
+
+  const mimeLabel = file.type || "unknown type";
+  return `${file.name} (${mimeLabel}) is not an allowed file type`;
 }
 
 /* ─── Permission mode config ────────────────────────────────────── */
@@ -171,22 +257,34 @@ export function InputBar({
     if (list.length === 0) return;
     setIsUploading(true);
     setUploadError(null);
+
+    // CR-02: Validate each file BEFORE attempting upload. Failures are
+    // collected so the user sees every rejected file, not just the last.
+    const errors: string[] = [];
     const uploaded: ProcessedAttachment[] = [];
+
     for (const file of list) {
+      const rejection = validateAttachment(file);
+      if (rejection) {
+        errors.push(rejection);
+        continue;
+      }
       try {
-        // Cap file size at 10 MB to prevent UI freeze on huge uploads.
-        if (file.size > 10 * 1024 * 1024) {
-          setUploadError(`${file.name} exceeds 10 MB limit`);
-          continue;
-        }
         const result = await uploadAttachment(file);
         uploaded.push(result);
       } catch (e) {
-        setUploadError(
-          e instanceof Error ? e.message : "attachment upload failed",
-        );
+        const msg = e instanceof Error ? e.message : "attachment upload failed";
+        errors.push(`${file.name}: ${msg}`);
       }
     }
+
+    if (errors.length > 0) {
+      // Show up to 2 errors inline; collapse the rest into a count.
+      const preview = errors.slice(0, 2).join("; ");
+      const more = errors.length > 2 ? ` (+${errors.length - 2} more)` : "";
+      setUploadError(preview + more);
+    }
+
     setAttachments((prev) => [...prev, ...uploaded]);
     setIsUploading(false);
   }, []);
@@ -278,14 +376,17 @@ export function InputBar({
     if (attachments.length > 0) {
       const attachmentBlock = attachments
         .map((a) => {
+          // CR-03 defense-in-depth: sanitize filenames before including
+          // them in LLM context, so RTL overrides can't leak downstream.
+          const safeName = sanitizeFilename(a.filename);
           if (a.kind === "image_base64") {
-            return `## ${a.filename}\n\n[Image attached: ${a.byte_size} bytes]\n`;
+            return `## ${safeName}\n\n[Image attached: ${a.byte_size} bytes]\n`;
           }
           if (a.kind === "binary_stub") {
-            return `## ${a.filename}\n\n${a.content}\n`;
+            return `## ${safeName}\n\n${a.content}\n`;
           }
           // text
-          return `## ${a.filename}\n\n\`\`\`\n${a.content}\n\`\`\`${a.truncated ? "\n\n_(content was truncated)_" : ""}\n`;
+          return `## ${safeName}\n\n\`\`\`\n${a.content}\n\`\`\`${a.truncated ? "\n\n_(content was truncated)_" : ""}\n`;
         })
         .join("\n");
       finalMessage = `# Attached files\n\n${attachmentBlock}\n${trimmed}`;
@@ -463,32 +564,39 @@ export function InputBar({
       {/* Attachment chips row */}
       {(attachments.length > 0 || uploadError) && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          {attachments.map((att, i) => (
-            <div
-              key={`${att.filename}-${i}`}
-              className="flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/20 px-2 py-1 text-caption"
-              title={`${att.filename} (${att.byte_size} bytes${att.truncated ? ", truncated" : ""})`}
-            >
-              {att.kind === "image_base64" ? (
-                <ImageIcon className="size-3" style={{ color: "var(--claude-blue)" }} />
-              ) : att.kind === "binary_stub" ? (
-                <AlertCircle className="size-3" style={{ color: "var(--color-warning)" }} />
-              ) : (
-                <FileText className="size-3" style={{ color: "var(--muted-foreground)" }} />
-              )}
-              <span className="max-w-[180px] truncate font-medium">
-                {att.filename}
-              </span>
-              <button
-                type="button"
-                className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => removeAttachment(i)}
-                aria-label={`Remove ${att.filename}`}
+          {attachments.map((att, i) => {
+            // CR-03: Sanitize filename before display. Strips RTL override
+            // and zero-width chars so e.g. `evil\u202Etxt.exe` cannot be
+            // visually disguised as `eviltxt.exe`.
+            const safeName = sanitizeFilename(att.filename);
+            return (
+              <div
+                key={`${safeName}-${att.byte_size}-${i}`}
+                className="flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/20 px-2 py-1 text-caption"
+                title={`${safeName} (${att.byte_size} bytes${att.truncated ? ", truncated" : ""})`}
+                dir="ltr"
               >
-                <XIcon className="size-2.5" />
-              </button>
-            </div>
-          ))}
+                {att.kind === "image_base64" ? (
+                  <ImageIcon className="size-3" style={{ color: "var(--claude-blue)" }} />
+                ) : att.kind === "binary_stub" ? (
+                  <AlertCircle className="size-3" style={{ color: "var(--color-warning)" }} />
+                ) : (
+                  <FileText className="size-3" style={{ color: "var(--muted-foreground)" }} />
+                )}
+                <span className="max-w-[180px] truncate font-medium" dir="ltr">
+                  {safeName}
+                </span>
+                <button
+                  type="button"
+                  className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => removeAttachment(i)}
+                  aria-label={`Remove ${safeName}`}
+                >
+                  <XIcon className="size-2.5" />
+                </button>
+              </div>
+            );
+          })}
           {isUploading && (
             <span className="text-caption text-muted-foreground">Uploading…</span>
           )}
@@ -666,13 +774,17 @@ export function InputBar({
           <button
             className={cn(
               "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-label font-medium text-white transition-colors",
-              value.trim()
+              // CR-01: Enable Send when EITHER text or attachments are present.
+              // handleSend() (line ~259) already allows attachment-only sends,
+              // so the disabled check must mirror that logic or users cannot
+              // send files without typing text first.
+              value.trim() || attachments.length > 0
                 ? "cursor-pointer"
                 : "cursor-not-allowed opacity-50"
             )}
             style={{ backgroundColor: "var(--claude-orange)" }}
             onClick={handleSend}
-            disabled={!value.trim()}
+            disabled={!value.trim() && attachments.length === 0}
           >
             <SendHorizonal className="size-3" />
             <span>Send</span>
