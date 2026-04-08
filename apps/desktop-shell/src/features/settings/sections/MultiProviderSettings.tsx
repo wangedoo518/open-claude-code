@@ -47,11 +47,17 @@ export function MultiProviderSettings() {
   const providersQuery = useQuery({
     queryKey: ["providers", "list"],
     queryFn: () => listProviders(),
+    // Providers change infrequently; avoid refetching on every remount.
+    // Mutations explicitly invalidate this key.
+    staleTime: 30_000,
   });
 
   const templatesQuery = useQuery({
     queryKey: ["providers", "templates"],
     queryFn: () => listProviderTemplates(),
+    // Templates are static (built-in list from the backend binary);
+    // treat them as fresh for the whole session.
+    staleTime: Infinity,
   });
 
   const activateMutation = useMutation({
@@ -325,20 +331,23 @@ function AddProviderForm({
     [templates, templateId]
   );
 
-  // Keep the custom id in sync with the template id on initial selection
-  // so users who just want the default don't have to type anything.
+  // Prefill the form whenever the selected template changes (including the
+  // first render when templates finish loading). We always overwrite the
+  // custom fields because the <select> onChange handler above already clears
+  // them — so this effect is the single source of "what the template
+  // defaults look like". Depending on `selectedTemplate` (not just
+  // `templateId`) avoids a stale-closure bug where the prefill could miss
+  // the initial `templates` load race.
   useEffect(() => {
-    if (selectedTemplate && customId === "") {
-      setCustomId(selectedTemplate.id);
-    }
-    if (selectedTemplate && customModel === "") {
-      setCustomModel(selectedTemplate.default_model);
-    }
-    if (selectedTemplate && customBaseUrl === "") {
-      setCustomBaseUrl(selectedTemplate.base_url);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateId]);
+    if (!selectedTemplate) return;
+    setCustomId((prev) => (prev === "" ? selectedTemplate.id : prev));
+    setCustomModel((prev) =>
+      prev === "" ? selectedTemplate.default_model : prev
+    );
+    setCustomBaseUrl((prev) =>
+      prev === "" ? selectedTemplate.base_url : prev
+    );
+  }, [selectedTemplate]);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();

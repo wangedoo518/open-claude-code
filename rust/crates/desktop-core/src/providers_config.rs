@@ -308,6 +308,27 @@ fn validate_id(id: &str) -> Result<(), ProvidersConfigError> {
     Ok(())
 }
 
+/// Upper bounds on the `extra_headers` map so a bad config can't create
+/// a request with hundreds of headers or a multi-megabyte header value.
+/// These caps are generous — real providers use at most a couple of extra
+/// headers (e.g. `anthropic-beta`, `x-api-version`).
+const MAX_EXTRA_HEADERS: usize = 32;
+const MAX_HEADER_NAME_LEN: usize = 256;
+const MAX_HEADER_VALUE_LEN: usize = 2048;
+
+/// Headers the user is NOT allowed to set via `extra_headers` because
+/// they are already managed by the HTTP client or would clobber auth.
+/// Match is case-insensitive.
+const RESERVED_HEADER_NAMES: &[&str] = &[
+    "authorization",
+    "x-api-key",
+    "content-type",
+    "content-length",
+    "host",
+    "cookie",
+    "set-cookie",
+];
+
 /// Validate a provider entry. Catches the most common misconfigurations
 /// early so errors surface on save rather than on first turn execution.
 fn validate_entry(entry: &ProviderEntry) -> Result<(), ProvidersConfigError> {
@@ -321,22 +342,25 @@ fn validate_entry(entry: &ProviderEntry) -> Result<(), ProvidersConfigError> {
             "model is empty".to_string(),
         ));
     }
-    // OpenAI-compat requires an explicit base_url (there's no universal
-    // default — DeepSeek/Qwen/Kimi/GLM all live at different hosts).
-    if entry.kind == ProviderKind::OpenAiCompat {
-        match entry.base_url.as_deref().map(str::trim) {
-            Some(s) if !s.is_empty() => {
-                if !s.starts_with("http://") && !s.starts_with("https://") {
-                    return Err(ProvidersConfigError::Invalid(format!(
-                        "base_url must be http/https: {s}"
-                    )));
-                }
-            }
+    // base_url rules:
+    //   - OpenAiCompat: REQUIRED, must be http/https (no universal default).
+    //   - Anthropic:    OPTIONAL, but if provided must still be http/https
+    //                   so we can't silently accept a typo or a bare host.
+    match entry.kind {
+        ProviderKind::OpenAiCompat => match entry.base_url.as_deref().map(str::trim) {
+            Some(s) if !s.is_empty() => validate_http_url(s)?,
             _ => {
                 return Err(ProvidersConfigError::Invalid(
                     "openai_compat providers require an explicit base_url"
                         .to_string(),
-                ))
+                ));
+            }
+        },
+        ProviderKind::Anthropic => {
+            if let Some(s) = entry.base_url.as_deref().map(str::trim) {
+                if !s.is_empty() {
+                    validate_http_url(s)?;
+                }
             }
         }
     }
@@ -346,6 +370,62 @@ fn validate_entry(entry: &ProviderEntry) -> Result<(), ProvidersConfigError> {
                 "max_tokens out of range: {mt}"
             )));
         }
+    }
+    // extra_headers bounds: cap the count, per-header name/value length,
+    // and refuse to let the user override auth-bearing headers that we
+    // already manage elsewhere. A bad config shouldn't be able to send
+    // a request with 10 000 headers or silently replace `Authorization`.
+    if entry.extra_headers.len() > MAX_EXTRA_HEADERS {
+        return Err(ProvidersConfigError::Invalid(format!(
+            "extra_headers has too many entries ({}); max {}",
+            entry.extra_headers.len(),
+            MAX_EXTRA_HEADERS
+        )));
+    }
+    for (name, value) in &entry.extra_headers {
+        if name.is_empty() || name.len() > MAX_HEADER_NAME_LEN {
+            return Err(ProvidersConfigError::Invalid(format!(
+                "extra_headers: header name length out of range (1..={MAX_HEADER_NAME_LEN})"
+            )));
+        }
+        if value.len() > MAX_HEADER_VALUE_LEN {
+            return Err(ProvidersConfigError::Invalid(format!(
+                "extra_headers: value for `{name}` exceeds {MAX_HEADER_VALUE_LEN} chars"
+            )));
+        }
+        // RFC 7230 token characters only — no CR/LF/NUL/spaces which
+        // would enable header injection.
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_graphic() && c != ':' && c != '(' && c != ')' && c != ',')
+        {
+            return Err(ProvidersConfigError::Invalid(format!(
+                "extra_headers: header name `{name}` contains invalid characters"
+            )));
+        }
+        if value.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err(ProvidersConfigError::Invalid(format!(
+                "extra_headers: value for `{name}` contains control characters"
+            )));
+        }
+        let lower = name.to_ascii_lowercase();
+        if RESERVED_HEADER_NAMES.contains(&lower.as_str()) {
+            return Err(ProvidersConfigError::Invalid(format!(
+                "extra_headers: header `{name}` is reserved and cannot be overridden"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Shared helper: a base_url must parse as an http/https URL. We keep
+/// the check intentionally shallow (no full URL parser) so the error
+/// message stays actionable ("must be http/https: ...").
+fn validate_http_url(s: &str) -> Result<(), ProvidersConfigError> {
+    if !s.starts_with("http://") && !s.starts_with("https://") {
+        return Err(ProvidersConfigError::Invalid(format!(
+            "base_url must be http/https: {s}"
+        )));
     }
     Ok(())
 }
@@ -750,6 +830,82 @@ mod tests {
         e.display_name = None;
         let json = serde_json::to_string(&e).unwrap();
         assert!(!json.contains("display_name"));
+    }
+
+    #[test]
+    fn anthropic_base_url_is_validated_when_provided() {
+        // Regression guard for C-05: an Anthropic entry with a garbage
+        // base_url used to silently pass because only OpenAiCompat hit
+        // the http/https check. Now both kinds validate.
+        let mut e = sample_anthropic();
+        e.base_url = Some("ftp://no.example.com".to_string());
+        let err = validate_entry(&e).unwrap_err();
+        assert!(
+            matches!(err, ProvidersConfigError::Invalid(ref msg) if msg.contains("http/https")),
+            "expected http/https error, got {err:?}"
+        );
+
+        // But a legitimate http/https override (e.g. corporate proxy)
+        // must still be accepted.
+        e.base_url = Some("https://proxy.internal/anthropic".to_string());
+        assert!(validate_entry(&e).is_ok());
+
+        // And the empty-string / None cases both pass (use default).
+        e.base_url = Some(String::new());
+        assert!(validate_entry(&e).is_ok());
+        e.base_url = None;
+        assert!(validate_entry(&e).is_ok());
+    }
+
+    #[test]
+    fn extra_headers_bounds_enforced() {
+        // C-01 regression guard: unbounded extra_headers would let a
+        // bad config construct multi-megabyte requests or override the
+        // auth header we manage ourselves.
+        let mut e = sample_openai_compat();
+
+        // Too many headers
+        for i in 0..(MAX_EXTRA_HEADERS + 1) {
+            e.extra_headers
+                .insert(format!("X-Header-{i}"), "v".to_string());
+        }
+        assert!(validate_entry(&e).is_err());
+
+        // Reserved name (case-insensitive)
+        e.extra_headers.clear();
+        e.extra_headers
+            .insert("Authorization".to_string(), "Bearer hax".to_string());
+        assert!(validate_entry(&e).is_err());
+        e.extra_headers.clear();
+        e.extra_headers
+            .insert("X-API-KEY".to_string(), "hax".to_string());
+        assert!(validate_entry(&e).is_err());
+
+        // Header value with CRLF (injection attempt)
+        e.extra_headers.clear();
+        e.extra_headers
+            .insert("X-Custom".to_string(), "line1\r\nInjected: yes".to_string());
+        assert!(validate_entry(&e).is_err());
+
+        // Overlong name
+        e.extra_headers.clear();
+        e.extra_headers
+            .insert("X".repeat(MAX_HEADER_NAME_LEN + 1), "v".to_string());
+        assert!(validate_entry(&e).is_err());
+
+        // Overlong value
+        e.extra_headers.clear();
+        e.extra_headers
+            .insert("X-Ok".to_string(), "v".repeat(MAX_HEADER_VALUE_LEN + 1));
+        assert!(validate_entry(&e).is_err());
+
+        // Good headers pass
+        e.extra_headers.clear();
+        e.extra_headers
+            .insert("anthropic-beta".to_string(), "tools-2024-05-16".to_string());
+        e.extra_headers
+            .insert("X-Api-Version".to_string(), "2024-10-01".to_string());
+        assert!(validate_entry(&e).is_ok());
     }
 
     #[test]
