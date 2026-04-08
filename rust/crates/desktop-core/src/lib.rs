@@ -44,6 +44,7 @@ mod oauth_runtime;
 pub mod protocol_codegen;
 pub mod secure_storage;
 pub mod system_prompt;
+pub mod wechat_ilink;
 
 pub use codex_auth::{
     DesktopCodexAuthOverview, DesktopCodexAuthSource, DesktopCodexInstallationRecord,
