@@ -11,10 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::{
     detect_provider_kind, max_tokens_for_model, read_base_url as read_claw_base_url,
-    read_xai_base_url, resolve_model_alias, resolve_startup_auth_source, AuthSource,
-    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
-    OutputContentBlock, ProviderClient, ProviderKind, StreamEvent as ApiStreamEvent, ToolChoice,
-    ToolResultContentBlock,
+    read_xai_base_url, resolve_model_alias, resolve_startup_auth_source, AnthropicClient,
+    AuthSource, ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest,
+    MessageResponse, OpenAiCompatClient, OpenAiCompatConfig, OutputContentBlock, ProviderClient,
+    ProviderKind, StreamEvent as ApiStreamEvent, ToolChoice, ToolResultContentBlock,
 };
 use plugins::{PluginManager, PluginManagerConfig};
 use runtime::{
@@ -42,6 +42,7 @@ mod codex_auth;
 mod managed_auth;
 mod oauth_runtime;
 pub mod protocol_codegen;
+pub mod providers_config;
 pub mod secure_storage;
 pub mod system_prompt;
 pub mod wechat_ilink;
@@ -3798,7 +3799,22 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
         }
     };
 
-    let resolved_model = resolve_model_alias(runtime_config.model().unwrap_or(DEFAULT_MODEL_ID));
+    // Phase 3: load the multi-provider registry from `.claw/providers.json`.
+    // If an active provider is set, it takes precedence over both the
+    // runtime_config.model() setting AND the env-var credential chain.
+    // This is the hook that lets users register multiple LLM providers
+    // side-by-side and switch via `POST /api/desktop/providers/{id}/activate`
+    // without editing env vars or restarting the shell.
+    let providers_cfg = providers_config::load(&cwd).ok();
+    let active_provider = providers_cfg
+        .as_ref()
+        .and_then(|c| c.active_entry())
+        .cloned();
+
+    let resolved_model = match &active_provider {
+        Some(entry) => entry.model.clone(),
+        None => resolve_model_alias(runtime_config.model().unwrap_or(DEFAULT_MODEL_ID)),
+    };
     let model_label = humanize_model_label(&resolved_model);
     let system_prompt = match load_system_prompt(
         &cwd,
@@ -3830,22 +3846,42 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
             }
         };
 
-    let default_auth = match default_auth_source(&resolved_model, &runtime_config) {
-        Ok(auth) => auth,
-        Err(error) => {
-            return fallback_turn_result(
-                session,
-                &request.message,
-                model_label.clone(),
-                format!("failed to resolve model authentication: {error}"),
-            )
-        }
+    // When providers.json has an active entry, build the ProviderClient
+    // directly from it and skip the env-var-based default_auth_source
+    // path entirely. Otherwise fall through to the legacy chain so older
+    // users with only ANTHROPIC_API_KEY / codex OAuth keep working.
+    let (default_auth, client_override) = match &active_provider {
+        Some(entry) => match build_provider_client_from_entry(entry) {
+            Ok(client) => (None, Some(client)),
+            Err(error) => {
+                return fallback_turn_result(
+                    session,
+                    &request.message,
+                    model_label.clone(),
+                    format!(
+                        "providers.json active entry is misconfigured: {error}"
+                    ),
+                )
+            }
+        },
+        None => match default_auth_source(&resolved_model, &runtime_config) {
+            Ok(auth) => (auth, None),
+            Err(error) => {
+                return fallback_turn_result(
+                    session,
+                    &request.message,
+                    model_label.clone(),
+                    format!("failed to resolve model authentication: {error}"),
+                )
+            }
+        },
     };
 
     let api_client = match DesktopRuntimeClient::new(
         resolved_model.to_string(),
         default_auth,
         tool_registry.clone(),
+        client_override,
     ) {
         Ok(client) => client,
         Err(error) => {
@@ -4073,6 +4109,66 @@ fn direct_anthropic_client(api_key: String) -> DesktopManagedAuthRuntimeClient {
     }
 }
 
+/// Construct a `ProviderClient` directly from a [`providers_config::ProviderEntry`],
+/// bypassing `ProviderClient::from_model_with_anthropic_auth`'s env-var based
+/// auto-detection.
+///
+/// This is the glue that lets Phase 3's `.claw/providers.json` config drive
+/// the runtime client without stuffing values into process-wide env vars.
+/// The legacy env-var path (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) is
+/// still honored as a fallback when there's no active provider.
+fn build_provider_client_from_entry(
+    entry: &providers_config::ProviderEntry,
+) -> Result<ProviderClient, String> {
+    use providers_config::ProviderKind as CfgKind;
+    match entry.kind {
+        CfgKind::Anthropic => {
+            if entry.api_key.trim().is_empty() {
+                return Err("anthropic provider has empty api_key".to_string());
+            }
+            // The upstream AnthropicClient::from_auth accepts an
+            // AuthSource (bearer or api key). We use ApiKey so the
+            // downstream code adds the `x-api-key` header.
+            let client = AnthropicClient::from_auth(AuthSource::ApiKey(
+                entry.api_key.clone(),
+            ));
+            // NOTE: Anthropic does not currently expose a public
+            // `with_base_url` setter in our vendored crate. For
+            // DashScope's `/apps/anthropic` compat endpoint we'd need
+            // to extend AnthropicClient. Until then, Anthropic-kind
+            // entries always talk to api.anthropic.com. OpenAI-compat
+            // is the recommended mode for anything non-native.
+            Ok(ProviderClient::Anthropic(client))
+        }
+        CfgKind::OpenAiCompat => {
+            let base_url = entry.effective_base_url();
+            if base_url.is_empty() {
+                return Err(
+                    "openai_compat provider has empty base_url".to_string()
+                );
+            }
+            if entry.api_key.trim().is_empty() {
+                return Err(
+                    "openai_compat provider has empty api_key".to_string()
+                );
+            }
+            // OpenAiCompatConfig has `&'static str` fields so we use
+            // the `openai()` template as a base and override the
+            // `base_url` at runtime via the client's `with_base_url`
+            // builder. The template's `api_key_env` / `base_url_env`
+            // fields are only used by `from_env`, which we do NOT
+            // call, so providing a non-matching template here is
+            // harmless.
+            let client = OpenAiCompatClient::new(
+                entry.api_key.clone(),
+                OpenAiCompatConfig::openai(),
+            )
+            .with_base_url(base_url);
+            Ok(ProviderClient::OpenAi(client))
+        }
+    }
+}
+
 fn permission_policy(mode: PermissionMode, tool_registry: &GlobalToolRegistry) -> PermissionPolicy {
     match tool_registry.permission_specs(None) {
         Ok(specs) => specs.into_iter().fold(
@@ -4104,15 +4200,28 @@ struct DesktopRuntimeClient {
 }
 
 impl DesktopRuntimeClient {
+    /// Build a runtime client, optionally injecting an explicit
+    /// [`ProviderClient`] instead of letting the api crate autodetect
+    /// the provider from env vars + model name.
+    ///
+    /// Phase 3 uses this to drive the client from
+    /// `.claw/providers.json` (multi-provider registry). When
+    /// `client_override` is `None` the legacy env-var path still
+    /// applies, preserving backward compat with pre-Phase-3 setups.
     fn new(
         model: String,
         default_auth: Option<AuthSource>,
         tool_registry: GlobalToolRegistry,
+        client_override: Option<ProviderClient>,
     ) -> Result<Self, String> {
+        let client = match client_override {
+            Some(client) => client,
+            None => ProviderClient::from_model_with_anthropic_auth(&model, default_auth)
+                .map_err(|error| error.to_string())?,
+        };
         Ok(Self {
             runtime: tokio::runtime::Runtime::new().map_err(|error| error.to_string())?,
-            client: ProviderClient::from_model_with_anthropic_auth(&model, default_auth)
-                .map_err(|error| error.to_string())?,
+            client,
             model,
             tool_registry,
         })

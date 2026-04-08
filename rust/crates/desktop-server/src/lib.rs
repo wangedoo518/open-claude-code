@@ -327,6 +327,26 @@ pub fn app(state: AppState) -> Router {
             "/api/desktop/dispatch/items/{id}",
             delete(delete_dispatch_item_handler).post(update_dispatch_item),
         )
+        // ── Phase 3: multi-provider registry ──────────────────────
+        // Read/write `.claw/providers.json` in the caller's project so
+        // users can register Anthropic + DeepSeek + Qwen + Kimi + GLM
+        // side-by-side and switch with one API call.
+        .route(
+            "/api/desktop/providers",
+            get(list_providers_handler).post(upsert_provider_handler),
+        )
+        .route(
+            "/api/desktop/providers/templates",
+            get(list_provider_templates_handler),
+        )
+        .route(
+            "/api/desktop/providers/{id}",
+            delete(delete_provider_handler),
+        )
+        .route(
+            "/api/desktop/providers/{id}/activate",
+            post(activate_provider_handler),
+        )
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(cors)
         .with_state(state)
@@ -1392,6 +1412,317 @@ async fn update_dispatch_item(
         .await
         .map_err(into_api_error)?;
     Ok(Json(DesktopDispatchItemResponse { item }))
+}
+
+// ── Phase 3: multi-provider registry handlers ───────────────────────
+//
+// These endpoints read/write `.claw/providers.json` in the caller's
+// project directory. API keys are echoed back in GET responses with the
+// field REDACTED so the frontend can show provider status without
+// exposing credentials. The raw key is only ever returned by the
+// upsert handler's own echo (so the caller can verify what they sent)
+// and even then is masked by default.
+
+/// Redact an api key for display: show first 4 + last 4 chars only.
+/// Used in list/get responses so the frontend can confirm a key is
+/// present without leaking it.
+fn redact_api_key_for_display(key: &str) -> String {
+    let len = key.chars().count();
+    if len <= 8 {
+        return "***".to_string();
+    }
+    let prefix: String = key.chars().take(4).collect();
+    let suffix: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{prefix}...{suffix} ({len} chars)")
+}
+
+/// Serialize a ProviderEntry for API response with the api_key redacted.
+fn entry_to_redacted_json(
+    id: &str,
+    entry: &desktop_core::providers_config::ProviderEntry,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "kind": match entry.kind {
+            desktop_core::providers_config::ProviderKind::Anthropic => "anthropic",
+            desktop_core::providers_config::ProviderKind::OpenAiCompat => "openai_compat",
+        },
+        "display_name": entry.display_name,
+        "base_url": entry.effective_base_url(),
+        "api_key_display": redact_api_key_for_display(&entry.api_key),
+        "api_key_length": entry.api_key.chars().count(),
+        "model": entry.model,
+        "max_tokens": entry.effective_max_tokens(),
+    })
+}
+
+/// Resolve the project path for provider operations. Defaults to the
+/// process cwd so the user's normal workflow (desktop-server started
+/// from the project root) just works.
+///
+/// Accepts an optional `project_path` query parameter so other projects
+/// can point at their own `.claw/providers.json`.
+fn resolve_project_path_for_providers(
+    provided: Option<&str>,
+) -> Result<std::path::PathBuf, ApiError> {
+    if let Some(raw) = provided {
+        if !raw.trim().is_empty() {
+            return desktop_core::validate_project_path(raw).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse { error: e }),
+                )
+            });
+        }
+    }
+    std::env::current_dir().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("cannot resolve cwd: {e}"),
+            }),
+        )
+    })
+}
+
+/// `GET /api/desktop/providers`
+///
+/// List all providers registered in `.claw/providers.json` for the
+/// current project (or the one specified via `?project_path=`).
+/// API keys are redacted.
+async fn list_providers_handler(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project = resolve_project_path_for_providers(
+        params.get("project_path").map(String::as_str),
+    )?;
+    let config = desktop_core::providers_config::load(&project).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to load providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    let providers: Vec<serde_json::Value> = config
+        .providers
+        .iter()
+        .map(|(id, entry)| entry_to_redacted_json(id, entry))
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "version": config.version,
+        "active": config.active,
+        "providers": providers,
+    })))
+}
+
+/// `POST /api/desktop/providers`
+///
+/// Create or update a provider entry. Request body:
+/// ```json
+/// {
+///   "id": "deepseek-prod",
+///   "project_path": "...",     // optional, defaults to cwd
+///   "entry": {
+///     "kind": "openai_compat",
+///     "base_url": "https://api.deepseek.com/v1",
+///     "api_key": "sk-...",
+///     "model": "deepseek-chat",
+///     "display_name": "DeepSeek",   // optional
+///     "max_tokens": 8192            // optional
+///   }
+/// }
+/// ```
+async fn upsert_provider_handler(
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "missing or empty 'id' field".to_string(),
+                }),
+            )
+        })?;
+
+    let project = resolve_project_path_for_providers(
+        body.get("project_path").and_then(|v| v.as_str()),
+    )?;
+
+    let entry_json = body.get("entry").cloned().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "missing 'entry' field".to_string(),
+            }),
+        )
+    })?;
+
+    let entry: desktop_core::providers_config::ProviderEntry =
+        serde_json::from_value(entry_json).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid provider entry: {e}"),
+                }),
+            )
+        })?;
+
+    let mut config = desktop_core::providers_config::load(&project).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to load providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    config.upsert(id, entry).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("upsert failed: {e}"),
+            }),
+        )
+    })?;
+
+    desktop_core::providers_config::save(&project, &config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to save providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    let saved = config.providers.get(id).expect("just inserted");
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "entry": entry_to_redacted_json(id, saved),
+        "active": config.active,
+    })))
+}
+
+/// `DELETE /api/desktop/providers/{id}`
+async fn delete_provider_handler(
+    Path(id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project = resolve_project_path_for_providers(
+        params.get("project_path").map(String::as_str),
+    )?;
+
+    let mut config = desktop_core::providers_config::load(&project).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to load providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    config.remove(&id).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("remove failed: {e}"),
+            }),
+        )
+    })?;
+
+    desktop_core::providers_config::save(&project, &config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to save providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "id": id,
+        "active": config.active,
+    })))
+}
+
+/// `POST /api/desktop/providers/{id}/activate`
+///
+/// Set the active provider. Takes effect on the next agentic turn —
+/// no server restart required.
+async fn activate_provider_handler(
+    Path(id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project = resolve_project_path_for_providers(
+        params.get("project_path").map(String::as_str),
+    )?;
+
+    let mut config = desktop_core::providers_config::load(&project).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to load providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    config.activate(&id).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("activate failed: {e}"),
+            }),
+        )
+    })?;
+
+    desktop_core::providers_config::save(&project, &config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to save providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "active": config.active,
+    })))
+}
+
+/// `GET /api/desktop/providers/templates`
+///
+/// Returns the built-in provider templates the user can pick from
+/// when adding a new provider (DeepSeek / Qwen / Kimi / GLM / etc.).
+async fn list_provider_templates_handler() -> Json<serde_json::Value> {
+    let templates = desktop_core::providers_config::builtin_templates();
+    let items: Vec<serde_json::Value> = templates
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "display_name": t.display_name,
+                "kind": match t.kind {
+                    desktop_core::providers_config::ProviderKind::Anthropic => "anthropic",
+                    desktop_core::providers_config::ProviderKind::OpenAiCompat => "openai_compat",
+                },
+                "base_url": t.base_url,
+                "default_model": t.default_model,
+                "max_tokens": t.max_tokens,
+                "description": t.description,
+                "api_key_url": t.api_key_url,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "templates": items }))
 }
 
 pub async fn serve(state: AppState, address: SocketAddr) -> std::io::Result<()> {
