@@ -353,13 +353,53 @@ fn load_skill_file(path: &Path) -> Option<WorkspaceSkill> {
 }
 
 /// Strip leading `---\n...\n---\n` YAML front matter block if present.
+///
+/// SG-03: Uses `get()` instead of direct slice indexing. The delimiter
+/// `"\n---\n"` is ASCII so `end_idx + 5` will land on a char boundary in
+/// practice, but `get()` is a belt-and-braces guard that returns the
+/// original content unchanged if indexing ever becomes invalid (e.g. a
+/// future refactor changes the delimiter to contain multi-byte chars).
 fn strip_yaml_frontmatter(content: &str) -> &str {
     if let Some(rest) = content.strip_prefix("---\n") {
         if let Some(end_idx) = rest.find("\n---\n") {
-            return &rest[end_idx + 5..];
+            return rest.get(end_idx + 5..).unwrap_or(content);
         }
     }
     content
+}
+
+#[cfg(test)]
+mod strip_yaml_tests {
+    use super::strip_yaml_frontmatter;
+
+    #[test]
+    fn strips_frontmatter() {
+        let input = "---\ntitle: Foo\n---\nBody text";
+        assert_eq!(strip_yaml_frontmatter(input), "Body text");
+    }
+
+    #[test]
+    fn preserves_without_frontmatter() {
+        let input = "Just body text";
+        assert_eq!(strip_yaml_frontmatter(input), input);
+    }
+
+    #[test]
+    fn preserves_if_opening_but_no_closing() {
+        let input = "---\ntitle: Foo\nbody without closer";
+        assert_eq!(strip_yaml_frontmatter(input), input);
+    }
+
+    #[test]
+    fn handles_empty() {
+        assert_eq!(strip_yaml_frontmatter(""), "");
+    }
+
+    #[test]
+    fn handles_frontmatter_with_cjk_body() {
+        let input = "---\ntitle: foo\n---\n中文内容";
+        assert_eq!(strip_yaml_frontmatter(input), "中文内容");
+    }
 }
 
 const AGENT_PREAMBLE: &str = r#"You are an AI coding assistant running inside a desktop application. You help users with software engineering tasks including reading, writing, and editing code, running commands, searching files, and more.

@@ -2915,6 +2915,20 @@ impl DesktopState {
                 // Load runtime config ONCE and extract both permission mode
                 // and hooks. Defaults to WorkspaceWrite (not DangerFullAccess)
                 // so write operations trigger the permission dialog.
+                //
+                // SG-02: The permission mode is captured ONCE at turn start
+                // and remains fixed for the entire agentic loop. If a user
+                // changes `permissionMode` mid-turn via the UI (which calls
+                // set_permission_mode() → writes .claude/settings.json),
+                // the in-flight turn will NOT observe the change — it will
+                // complete using the mode that was active when the user
+                // pressed Send. The next turn will pick up the new mode.
+                //
+                // This is intentional: re-reading the config on every tool
+                // invocation would race with the filesystem and make
+                // permission decisions non-deterministic within a turn.
+                // The user-facing consequence is documented in
+                // docs/audit-lessons.md L-06.
                 let (bypass_permissions, hooks_config) = {
                     let loader = ConfigLoader::default_for(&project_path_buf);
                     match loader.load() {

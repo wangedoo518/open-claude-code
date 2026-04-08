@@ -171,12 +171,76 @@ ENV:
 
 // ── Output helpers ──────────────────────────────────────────────────
 
+/// JSON object keys whose values should be masked in `--json` output.
+/// Matching is case-insensitive and applied recursively.
+///
+/// SG-04: Without redaction, any future backend route that returns a
+/// secret (access tokens, API keys, passwords) would leak it to the
+/// shell history when a user ran e.g. `ocl --json settings | tee out.json`.
+const SENSITIVE_KEYS: &[&str] = &[
+    "token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "password",
+    "passwd",
+    "secret",
+    "api_key",
+    "apikey",
+    "authorization",
+    "auth",
+    "credential",
+    "credentials",
+    "client_secret",
+    "private_key",
+    "session_token",
+];
+
+/// Walk a JSON value tree and replace the value of any key whose
+/// case-insensitive name matches one in `SENSITIVE_KEYS` with the
+/// string `"***redacted***"`. Operates in place on a cloned tree so
+/// the original backend response is preserved for debugging.
+pub(crate) fn redact_sensitive_fields(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                let lower = key.to_ascii_lowercase();
+                if SENSITIVE_KEYS
+                    .iter()
+                    .any(|sensitive| lower == *sensitive)
+                {
+                    *child = Value::String("***redacted***".to_string());
+                } else {
+                    redact_sensitive_fields(child);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for child in arr.iter_mut() {
+                redact_sensitive_fields(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn print_output(config: &Config, value: &Value) {
     if config.json {
-        println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+        // Clone + redact before printing so callers of print_output don't
+        // have to worry about mutation of the upstream value.
+        let mut sanitized = value.clone();
+        redact_sensitive_fields(&mut sanitized);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&sanitized).unwrap_or_default()
+        );
     } else {
-        // Pretty, human-readable format.
-        print_pretty(value, 0);
+        // Pretty, human-readable format. Redact here too so an operator
+        // screen-recording a terminal session doesn't accidentally reveal
+        // a token in the UI.
+        let mut sanitized = value.clone();
+        redact_sensitive_fields(&mut sanitized);
+        print_pretty(&sanitized, 0);
     }
 }
 
@@ -575,5 +639,96 @@ mod cli_helper_tests {
     fn urlencode_escapes_special_chars() {
         assert_eq!(urlencode("a/b c"), "a%2Fb%20c");
         assert_eq!(urlencode("D:/foo"), "D%3A%2Ffoo");
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::redact_sensitive_fields;
+    use serde_json::json;
+
+    #[test]
+    fn redacts_top_level_token() {
+        let mut value = json!({ "token": "secret-token-value" });
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value["token"], "***redacted***");
+    }
+
+    #[test]
+    fn redacts_case_insensitive_key() {
+        let mut value = json!({ "API_KEY": "abc123", "ApiKey": "xyz" });
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value["API_KEY"], "***redacted***");
+        assert_eq!(value["ApiKey"], "***redacted***");
+    }
+
+    #[test]
+    fn redacts_whole_sensitive_object() {
+        // "auth" is itself in SENSITIVE_KEYS, so the entire sub-object is
+        // replaced rather than recursively walked. This is intentional —
+        // a stricter posture that protects against new secret-bearing
+        // fields being added under `auth` without updating this list.
+        let mut value = json!({
+            "user": "alice",
+            "auth": {
+                "access_token": "eyJ...",
+                "refresh_token": "r-token"
+            }
+        });
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value["user"], "alice");
+        assert_eq!(value["auth"], "***redacted***");
+    }
+
+    #[test]
+    fn redacts_nested_sensitive_leaf_inside_non_sensitive_parent() {
+        // When the parent key is NOT in SENSITIVE_KEYS, walk recursively
+        // and redact matching children.
+        let mut value = json!({
+            "session": {
+                "id": "sess-1",
+                "metadata": {
+                    "access_token": "eyJ...",
+                    "display_name": "Test"
+                }
+            }
+        });
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value["session"]["id"], "sess-1");
+        assert_eq!(value["session"]["metadata"]["access_token"], "***redacted***");
+        assert_eq!(value["session"]["metadata"]["display_name"], "Test");
+    }
+
+    #[test]
+    fn redacts_inside_array() {
+        let mut value = json!([
+            { "name": "a", "password": "pw1" },
+            { "name": "b", "password": "pw2" }
+        ]);
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value[0]["password"], "***redacted***");
+        assert_eq!(value[1]["password"], "***redacted***");
+        assert_eq!(value[0]["name"], "a");
+    }
+
+    #[test]
+    fn preserves_non_sensitive_fields() {
+        let mut value = json!({
+            "id": "foo",
+            "title": "Hello",
+            "count": 42
+        });
+        let expected = value.clone();
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value, expected);
+    }
+
+    #[test]
+    fn does_not_match_partial_key() {
+        // "tokenizer" should NOT be redacted — only exact matches are.
+        let mut value = json!({ "tokenizer": "bpe", "mytokenfield": "keep" });
+        let before = value.clone();
+        redact_sensitive_fields(&mut value);
+        assert_eq!(value, before);
     }
 }

@@ -156,6 +156,25 @@ struct SearchQuery {
 type ApiError = (StatusCode, Json<ErrorResponse>);
 type ApiResult<T> = Result<T, ApiError>;
 
+// ── Handler naming convention (SG-09) ─────────────────────────────────
+//
+// Axum handler functions in this file follow two conventions:
+//
+//  1. Historical handlers (`health`, `bootstrap`, `workbench`, `create_session`,
+//     `get_session`, etc.) use the bare noun/verb matching their route.
+//     They predate the `_handler` suffix convention.
+//
+//  2. Newer handlers added after 2025-Q4 use the `_handler` suffix
+//     (`delete_session_handler`, `set_permission_mode_handler`,
+//     `process_attachment_handler`, ...) to disambiguate them from
+//     same-named types in the codebase.
+//
+// Both styles are considered valid. A mechanical rename of the older
+// handlers would touch 30+ files and pollute git blame for no functional
+// benefit. New handlers should use the `_handler` suffix.
+
+
+
 /// Global body-size ceiling for all HTTP endpoints.
 ///
 /// Set to 15 MiB (slightly above the 10 MiB frontend attachment cap) to
@@ -285,6 +304,14 @@ pub fn app(state: AppState) -> Router {
         .route("/api/desktop/attachments/process", post(process_attachment_handler))
         .route("/api/desktop/skills", get(list_workspace_skills_handler))
         .route("/api/desktop/settings/permission-mode", post(set_permission_mode_handler).get(get_permission_mode_handler))
+        // SG-01: Debug routes are intended for development + QA only.
+        // They are always registered so the release binary can still help
+        // diagnose MCP issues, but production deployments should keep the
+        // server bound to 127.0.0.1 only (see `main.rs` DEFAULT_ADDRESS).
+        // A future hardening step could gate these behind an env flag
+        // (`OCL_ENABLE_DEBUG=1`) if the server is ever exposed beyond
+        // localhost — they expose no secrets and run under the same
+        // validate_project_path() guard as other handlers.
         .route("/api/desktop/debug/mcp/probe", post(debug_mcp_probe_handler))
         .route("/api/desktop/debug/mcp/call", post(debug_mcp_call_handler))
         .route("/api/desktop/sessions/{id}/permission", post(forward_permission))

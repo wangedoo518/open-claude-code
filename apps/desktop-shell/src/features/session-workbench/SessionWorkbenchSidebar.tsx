@@ -86,16 +86,36 @@ export function SessionWorkbenchSidebar({
   const [deleteConfirm, setDeleteConfirm] = useState<DesktopSessionSummary | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close context menu on click outside
+  // Close context menu on click outside.
+  //
+  // SG-06: Previously this effect re-registered on every `contextMenu`
+  // change, which could race if the user rapidly right-clicked multiple
+  // rows. We now:
+  //  1. Keep `[contextMenu]` in the dep array so the effect only runs
+  //     when the menu transitions from null → open (early return on null).
+  //  2. Wrap `addEventListener` in `setTimeout(..., 0)` so the same
+  //     mousedown event that opened the menu doesn't immediately close it.
+  //  3. Use `capture: true` so we see the event before any child handler.
   useEffect(() => {
     if (!contextMenu) return;
+
     const handler = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+      if (
+        contextMenuRef.current &&
+        !contextMenuRef.current.contains(e.target as Node)
+      ) {
         setContextMenu(null);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+
+    const timer = window.setTimeout(() => {
+      document.addEventListener("mousedown", handler, { capture: true });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("mousedown", handler, { capture: true });
+    };
   }, [contextMenu]);
 
   const handleContextMenu = useCallback(

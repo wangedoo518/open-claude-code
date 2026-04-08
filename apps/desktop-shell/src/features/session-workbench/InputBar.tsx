@@ -311,8 +311,56 @@ export function InputBar({
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      if (e.dataTransfer.files.length > 0) {
-        void handleFiles(e.dataTransfer.files);
+
+      // SG-05: Filter out directory entries. The File API does not expose
+      // a direct `isDirectory` flag, but folders dragged from the OS come
+      // through in one of two ways:
+      //   1. With webkitGetAsEntry() returning a directory entry — best
+      //      signal, but only works via items not files. We prefer this.
+      //   2. As 0-byte File objects whose name has no extension — the
+      //      validateAttachment() helper also catches this as a fallback.
+      //
+      // Using `dataTransfer.items` lets us reject folders before they
+      // even enter the upload pipeline.
+      const items = e.dataTransfer.items;
+      const fileList: File[] = [];
+      let rejectedFolders = 0;
+
+      if (items && items.length > 0) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.kind !== "file") continue;
+
+          // webkitGetAsEntry is the Chrome/Edge/Firefox non-standard API
+          // for inspecting drag items as filesystem entries. TS doesn't
+          // type it, so we cast through unknown.
+          const entry = (
+            item as unknown as {
+              webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
+            }
+          ).webkitGetAsEntry?.();
+
+          if (entry?.isDirectory) {
+            rejectedFolders++;
+            continue;
+          }
+
+          const f = item.getAsFile();
+          if (f) fileList.push(f);
+        }
+      } else {
+        // Fallback to `files` if items is empty (some older browsers).
+        fileList.push(...Array.from(e.dataTransfer.files));
+      }
+
+      if (rejectedFolders > 0) {
+        setUploadError(
+          `${rejectedFolders} folder${rejectedFolders === 1 ? "" : "s"} ignored — only individual files are supported`,
+        );
+      }
+
+      if (fileList.length > 0) {
+        void handleFiles(fileList);
       }
     },
     [handleFiles],
