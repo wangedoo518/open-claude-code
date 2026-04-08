@@ -7,8 +7,17 @@ use crate::types::{MessageRequest, MessageResponse};
 pub mod anthropic;
 pub mod openai_compat;
 
+// `ProviderFuture` + `Provider` are part of the upstream `api` crate's
+// public surface. The downstream consumers in this workspace (desktop-core,
+// agentic_loop, etc.) use the concrete `OpenAiCompatClient` and
+// `AnthropicClient` types directly rather than this dyn-compatible trait,
+// so from the vendored crate's point of view they appear unused.
+// CI runs with `-D warnings`, which promotes `dead_code` to a hard
+// error — keep the API surface available by allowing it explicitly.
+#[allow(dead_code)]
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send + 'a>>;
 
+#[allow(dead_code)]
 pub trait Provider {
     type Stream;
 
