@@ -21,6 +21,7 @@ pub mod handlers;
 pub mod login;
 pub mod markdown_split;
 pub mod monitor;
+pub mod pending_logins;
 pub mod types;
 
 pub use account::{
@@ -33,6 +34,7 @@ pub use desktop_handler::DesktopAgentHandler;
 pub use handlers::EchoHandler;
 pub use login::{LoginConfirmation, LoginError, LoginStatus, QrLoginSession};
 pub use monitor::{run_monitor, MessageHandler, MonitorConfig, MonitorError, MonitorStatus};
+pub use pending_logins::{PendingLoginSlot, PendingLoginState, PENDING_LOGIN_TTL_SECS};
 pub use types::{
     BaseInfo, GetUpdatesResp, MessageItem, QrCodeResponse, QrStatusResponse, TextItem,
     WeixinAccountData, WeixinMessage, CHANNEL_VERSION, DEFAULT_BASE_URL,

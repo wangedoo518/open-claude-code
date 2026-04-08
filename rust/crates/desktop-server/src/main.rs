@@ -1,20 +1,14 @@
 use std::env;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use desktop_core::wechat_ilink::{
-    account::{list_account_ids, load_account, normalize_account_id, save_account},
-    desktop_handler::DesktopAgentHandler,
+    account::{normalize_account_id, save_account},
     login::{LoginStatus, QrLoginSession},
-    monitor::{run_monitor, MessageHandler, MonitorConfig, MonitorStatus},
     types::{WeixinAccountData, DEFAULT_BASE_URL},
-    IlinkClient,
 };
 use desktop_core::DesktopState;
 use desktop_server::{serve, AppState};
-use tokio::sync::watch;
-use tokio_util::sync::CancellationToken;
 
 const DEFAULT_ADDRESS: &str = "127.0.0.1:4357";
 
@@ -78,49 +72,13 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let state = DesktopState::live();
 
     // Spawn the WeChat iLink long-poll monitor(s) for every persisted account
-    // before we start the HTTP server. The monitor task lives for the process
-    // lifetime; we keep the SpawnedMonitor handles in scope so the
-    // CancellationTokens and watch senders stay alive.
-    let _wechat_monitors = spawn_wechat_monitors_for_all_accounts(&state).await;
+    // before we start the HTTP server. Handles are now stored inside
+    // DesktopState so HTTP routes can cancel them dynamically when the user
+    // deletes a WeChat account from the frontend (Phase 6C).
+    state.spawn_wechat_monitors_for_all_accounts().await;
 
     serve(AppState::new(state), address).await?;
     Ok(())
-}
-
-/// Background tasks spawned for the WeChat monitor. Held in scope so the
-/// `CancellationToken` and the watch sender stay alive.
-struct SpawnedMonitor {
-    #[allow(dead_code)]
-    cancel: CancellationToken,
-    #[allow(dead_code)]
-    status_rx: watch::Receiver<MonitorStatus>,
-}
-
-/// Spawn one monitor per persisted WeChat account. Skips silently when
-/// no accounts exist (e.g. user hasn't run `wechat-login` yet).
-async fn spawn_wechat_monitors_for_all_accounts(state: &DesktopState) -> Vec<SpawnedMonitor> {
-    let ids = match list_account_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            eprintln!("[wechat] failed to list accounts: {e}");
-            return Vec::new();
-        }
-    };
-
-    if ids.is_empty() {
-        eprintln!("[wechat] no accounts persisted yet — skipping monitor startup");
-        eprintln!("[wechat]   run `desktop-server wechat-login` to bind a WeChat ClawBot");
-        return Vec::new();
-    }
-
-    let mut spawned = Vec::new();
-    for account_id in ids {
-        match spawn_monitor_for_account(state, &account_id).await {
-            Ok(handle) => spawned.push(handle),
-            Err(e) => eprintln!("[wechat] could not spawn monitor for {account_id}: {e}"),
-        }
-    }
-    spawned
 }
 
 /// Ensure `CLAW_CONFIG_HOME` is set to a path that is BOTH valid on the
@@ -182,69 +140,6 @@ fn ensure_claw_config_home_is_valid() {
             env::set_var("CLAW_CONFIG_HOME", &path);
         }
     }
-}
-
-/// Resolve the default project path that newly-created WeChat sessions
-/// should be associated with. Order of precedence:
-///   1. `WECHAT_DEFAULT_PROJECT_PATH` env var
-///   2. Current process working directory
-///   3. Hard-coded fallback ("." — relative cwd)
-fn resolve_wechat_default_project_path() -> String {
-    if let Ok(path) = env::var("WECHAT_DEFAULT_PROJECT_PATH") {
-        if !path.trim().is_empty() {
-            return path;
-        }
-    }
-    env::current_dir()
-        .ok()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| ".".to_string())
-}
-
-/// Build the iLink client + DesktopAgentHandler from a persisted account
-/// and spawn its long-poll monitor task.
-async fn spawn_monitor_for_account(
-    state: &DesktopState,
-    account_id: &str,
-) -> Result<SpawnedMonitor, Box<dyn std::error::Error>> {
-    let data = load_account(account_id)?
-        .ok_or_else(|| format!("account {account_id} listed but file is missing"))?;
-
-    let token = data
-        .token
-        .clone()
-        .ok_or_else(|| format!("account {account_id} has no bot_token"))?;
-    let base_url = data
-        .base_url
-        .clone()
-        .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
-
-    let client = IlinkClient::new(base_url, token)?;
-    let cancel = CancellationToken::new();
-    let (status_tx, status_rx) = watch::channel(MonitorStatus::default());
-
-    // Phase 2b: real DesktopAgentHandler bridges WeChat → DesktopState.
-    // Each WeChat user gets their own desktop session (per openid mapping).
-    let project_path = resolve_wechat_default_project_path();
-    eprintln!(
-        "[wechat] default project path for new WeChat sessions: {project_path}"
-    );
-    let handler: Arc<dyn MessageHandler> =
-        Arc::new(DesktopAgentHandler::new(state.clone(), account_id, project_path)?);
-
-    let config = MonitorConfig {
-        account_id: account_id.to_string(),
-        client,
-        handler,
-        cancel: cancel.clone(),
-    };
-
-    eprintln!("[wechat] starting monitor for account={account_id}");
-    tokio::spawn(async move {
-        run_monitor(config, status_tx).await;
-    });
-
-    Ok(SpawnedMonitor { cancel, status_rx })
 }
 
 /// One-shot QR-code login flow for the WeChat ClawBot iLink integration.

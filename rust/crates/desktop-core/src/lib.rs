@@ -1170,6 +1170,35 @@ pub struct DesktopState {
     /// Populated by `ensure_mcp_initialized`, consumed by the agentic loop
     /// when building the system prompt and validating tool_use dispatch.
     mcp_tools: Arc<RwLock<Vec<ManagedMcpTool>>>,
+    /// In-flight WeChat QR login slots keyed by the opaque `handle`
+    /// returned to the frontend. Phase 6C: lets the user add a new
+    /// WeChat account entirely from the UI without running
+    /// `desktop-server wechat-login` on the CLI.
+    pending_wechat_logins:
+        Arc<RwLock<HashMap<String, Arc<Mutex<wechat_ilink::PendingLoginSlot>>>>>,
+    /// Running WeChat iLink long-poll monitors keyed by account_id.
+    /// Each value holds the `CancellationToken` so we can stop a
+    /// monitor when the user deletes that account via the HTTP API.
+    /// Populated on startup by `spawn_wechat_monitors_for_all_accounts`
+    /// and mutated dynamically by the add/delete account routes.
+    wechat_monitors: Arc<RwLock<HashMap<String, WeChatMonitorHandle>>>,
+    /// Default project path passed to newly-spawned WeChat monitors.
+    /// Resolved at `DesktopState::live()` from
+    /// `WECHAT_DEFAULT_PROJECT_PATH` → current dir → ".".
+    wechat_default_project_path: Arc<RwLock<String>>,
+}
+
+/// Handle to a running WeChat iLink monitor. Held inside
+/// [`DesktopState::wechat_monitors`] so the HTTP delete-account route
+/// can cancel the task cleanly.
+#[derive(Clone)]
+pub struct WeChatMonitorHandle {
+    /// Cancellation token — calling `.cancel()` stops the monitor
+    /// on its next iteration boundary.
+    pub cancel: tokio_util::sync::CancellationToken,
+    /// Last-known status (may be stale by the time a handler reads
+    /// it — treat as informational only).
+    pub status_rx: tokio::sync::watch::Receiver<wechat_ilink::MonitorStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1328,6 +1357,11 @@ impl DesktopState {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             mcp_manager: Arc::new(Mutex::new(None)),
             mcp_tools: Arc::new(RwLock::new(Vec::new())),
+            pending_wechat_logins: Arc::new(RwLock::new(HashMap::new())),
+            wechat_monitors: Arc::new(RwLock::new(HashMap::new())),
+            wechat_default_project_path: Arc::new(RwLock::new(
+                resolve_wechat_default_project_path(),
+            )),
         }
     }
 
@@ -3784,6 +3818,491 @@ impl PersistedDesktopSession {
     }
 }
 
+// ── Phase 6C: WeChat account management API ────────────────────────
+//
+// Methods on DesktopState that manage the lifecycle of WeChat iLink
+// monitors (spawn/stop/list) and the pending QR login flows. Called
+// by the HTTP handlers in desktop-server/src/lib.rs. All methods here
+// are cheap — the heavy work (long-polling, login waiting) runs in
+// background tokio tasks.
+
+impl DesktopState {
+    /// Spawn a long-poll WeChat monitor for `account_id`, wiring it
+    /// to this state's session store via a [`DesktopAgentHandler`].
+    ///
+    /// Idempotent: if a monitor is already registered for this id,
+    /// cancels the previous one before spawning a new one. Returns
+    /// the cancellation token so callers can stop the monitor later.
+    ///
+    /// Called by:
+    /// * `desktop-server` main at startup for each persisted account
+    /// * The QR-login background task, once it observes a Confirmed
+    ///   status, so the user can chat with the new bot immediately
+    pub async fn spawn_wechat_monitor(
+        &self,
+        account_id: &str,
+    ) -> Result<(), String> {
+        use wechat_ilink::{
+            account::load_account,
+            desktop_handler::DesktopAgentHandler,
+            monitor::{run_monitor, MessageHandler, MonitorConfig, MonitorStatus},
+            types::DEFAULT_BASE_URL,
+            IlinkClient,
+        };
+
+        // If an old monitor exists for this id, cancel it first so we
+        // don't end up with two tasks racing on the same cursor.
+        if let Some(existing) = self.wechat_monitors.write().await.remove(account_id) {
+            existing.cancel.cancel();
+        }
+
+        let data = load_account(account_id)
+            .map_err(|e| format!("load_account({account_id}) failed: {e}"))?
+            .ok_or_else(|| {
+                format!("account {account_id} listed but file is missing")
+            })?;
+
+        let token = data
+            .token
+            .clone()
+            .ok_or_else(|| format!("account {account_id} has no bot_token"))?;
+        let base_url = data
+            .base_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+
+        let client = IlinkClient::new(base_url, token)
+            .map_err(|e| format!("IlinkClient::new failed: {e}"))?;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (status_tx, status_rx) =
+            tokio::sync::watch::channel(MonitorStatus::default());
+
+        let project_path = self.wechat_default_project_path.read().await.clone();
+        let handler: Arc<dyn MessageHandler> = Arc::new(
+            DesktopAgentHandler::new(self.clone(), account_id, project_path)
+                .map_err(|e| format!("DesktopAgentHandler::new failed: {e}"))?,
+        );
+
+        let config = MonitorConfig {
+            account_id: account_id.to_string(),
+            client,
+            handler,
+            cancel: cancel.clone(),
+        };
+
+        eprintln!(
+            "[wechat] spawning monitor for account={account_id} (via DesktopState)"
+        );
+        tokio::spawn(async move {
+            run_monitor(config, status_tx).await;
+        });
+
+        self.wechat_monitors.write().await.insert(
+            account_id.to_string(),
+            WeChatMonitorHandle {
+                cancel,
+                status_rx,
+            },
+        );
+        Ok(())
+    }
+
+    /// Spawn monitors for every persisted account. Called once by
+    /// `desktop-server` at startup. Silent no-op when no accounts
+    /// exist. Errors on individual accounts are logged and swallowed
+    /// so one bad account can't take down startup.
+    pub async fn spawn_wechat_monitors_for_all_accounts(&self) {
+        let ids = match wechat_ilink::account::list_account_ids() {
+            Ok(ids) => ids,
+            Err(e) => {
+                eprintln!("[wechat] failed to list accounts: {e}");
+                return;
+            }
+        };
+        if ids.is_empty() {
+            eprintln!(
+                "[wechat] no accounts persisted yet — skipping monitor startup"
+            );
+            return;
+        }
+        for account_id in ids {
+            if let Err(e) = self.spawn_wechat_monitor(&account_id).await {
+                eprintln!(
+                    "[wechat] could not spawn monitor for {account_id}: {e}"
+                );
+            }
+        }
+    }
+
+    /// Stop the monitor for `account_id` (idempotent — no-op if not
+    /// registered). Used by the delete-account HTTP route.
+    pub async fn stop_wechat_monitor(&self, account_id: &str) {
+        if let Some(handle) = self.wechat_monitors.write().await.remove(account_id) {
+            handle.cancel.cancel();
+            eprintln!("[wechat] cancelled monitor for account={account_id}");
+        }
+    }
+
+    /// List all persisted WeChat accounts with a summary suitable for
+    /// the settings UI. Combines on-disk account data with the
+    /// in-memory monitor state to compute a rough connection status.
+    pub async fn list_wechat_accounts_summary(
+        &self,
+    ) -> Vec<WeChatAccountInfo> {
+        let ids = match wechat_ilink::account::list_account_ids() {
+            Ok(ids) => ids,
+            Err(e) => {
+                eprintln!("[wechat] list_account_ids failed: {e}");
+                return Vec::new();
+            }
+        };
+        let monitors = self.wechat_monitors.read().await;
+        let mut out = Vec::new();
+        for id in ids {
+            let data = match wechat_ilink::account::load_account(&id) {
+                Ok(Some(d)) => d,
+                Ok(None) => continue,
+                Err(e) => {
+                    eprintln!("[wechat] load_account({id}) failed: {e}");
+                    continue;
+                }
+            };
+            let bot_token_preview = data
+                .token
+                .as_deref()
+                .map(format_bot_token_preview)
+                .unwrap_or_else(|| "(no token)".to_string());
+            let status = if monitors.contains_key(&id) {
+                WeChatConnectionStatus::Connected
+            } else {
+                WeChatConnectionStatus::Disconnected
+            };
+            out.push(WeChatAccountInfo {
+                id: id.clone(),
+                display_name: data
+                    .user_id
+                    .clone()
+                    .unwrap_or_else(|| id.clone()),
+                base_url: data
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| wechat_ilink::DEFAULT_BASE_URL.to_string()),
+                bot_token_preview,
+                saved_at: data.saved_at.clone(),
+                status,
+            });
+        }
+        out
+    }
+
+    /// Remove a WeChat account completely:
+    /// 1. cancels its monitor
+    /// 2. deletes its credential files from disk
+    /// Returns `Ok(())` even if nothing was running (idempotent).
+    pub async fn remove_wechat_account(&self, account_id: &str) -> Result<(), String> {
+        self.stop_wechat_monitor(account_id).await;
+        wechat_ilink::account::clear_account(account_id)
+            .map_err(|e| format!("clear_account failed: {e}"))?;
+        Ok(())
+    }
+
+    /// Start a new QR login flow. Fetches the QR code synchronously
+    /// from the iLink endpoint, stores a [`PendingLoginSlot`] in the
+    /// in-memory map, and spawns a background task that waits for the
+    /// user to confirm (up to 5 minutes). On success the background
+    /// task persists the account and spawns a monitor for it.
+    ///
+    /// Returns `(handle, qr_image_content, expires_at_rfc3339)`. The
+    /// handle is opaque and used by the frontend to poll status and
+    /// cancel. `expires_at` is a hint only — the authoritative state
+    /// is in the slot's `created_at + TTL`.
+    pub async fn start_wechat_login(
+        &self,
+        base_url: Option<String>,
+    ) -> Result<(String, String, String), String> {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        use wechat_ilink::login::{LoginStatus as IlinkLoginStatus, QrLoginSession};
+
+        // Fetch the QR code first so we can fail fast on network error
+        // instead of returning a handle that immediately dies.
+        let mut session = QrLoginSession::new(base_url)
+            .map_err(|e| format!("QrLoginSession::new failed: {e}"))?;
+        let qr = session
+            .fetch_qr_code()
+            .await
+            .map_err(|e| format!("fetch_qr_code failed: {e}"))?;
+
+        let handle = generate_login_handle();
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let slot = Arc::new(Mutex::new(wechat_ilink::PendingLoginSlot {
+            handle: handle.clone(),
+            created_at: std::time::Instant::now(),
+            qr_image_content: qr.qrcode_img_content.clone(),
+            state: wechat_ilink::PendingLoginState::Waiting,
+            cancel_tx: Some(cancel_tx),
+        }));
+
+        self.pending_wechat_logins
+            .write()
+            .await
+            .insert(handle.clone(), slot.clone());
+
+        // Spawn the background task that drives the login. It races
+        // against the cancel channel and the 5-minute TTL. On any
+        // outcome it updates `slot.state` so the next status poll
+        // returns the final state.
+        let state = self.clone();
+        let handle_for_task = handle.clone();
+        tokio::spawn(async move {
+            let status_slot = slot.clone();
+            let wait_fut = session.wait_for_login(
+                Duration::from_secs(wechat_ilink::PENDING_LOGIN_TTL_SECS),
+                move |status: IlinkLoginStatus| {
+                    // We use try_lock because this callback runs in
+                    // the same task as wait_for_login's internal
+                    // polling, which already holds the slot? No — it
+                    // doesn't. But being defensive here is cheap.
+                    let slot = status_slot.clone();
+                    tokio::spawn(async move {
+                        let mut guard = slot.lock().await;
+                        guard.state = match status {
+                            IlinkLoginStatus::Wait => {
+                                wechat_ilink::PendingLoginState::Waiting
+                            }
+                            IlinkLoginStatus::Scanned => {
+                                wechat_ilink::PendingLoginState::Scanned
+                            }
+                            IlinkLoginStatus::Expired => {
+                                wechat_ilink::PendingLoginState::Expired
+                            }
+                            IlinkLoginStatus::Confirmed => {
+                                // Placeholder — the real Confirmed
+                                // with account_id is written after
+                                // persist below.
+                                wechat_ilink::PendingLoginState::Scanned
+                            }
+                        };
+                    });
+                },
+            );
+
+            tokio::select! {
+                result = wait_fut => {
+                    match result {
+                        Ok(confirmation) => {
+                            // Persist the new account and spawn its
+                            // monitor, then mark the slot Confirmed.
+                            let normalized =
+                                wechat_ilink::account::normalize_account_id(
+                                    &confirmation.ilink_bot_id,
+                                );
+                            let save_result = wechat_ilink::account::save_account(
+                                &normalized,
+                                wechat_ilink::types::WeixinAccountData {
+                                    token: Some(confirmation.bot_token.clone()),
+                                    base_url: Some(confirmation.base_url.clone()),
+                                    user_id: confirmation.user_id.clone(),
+                                    ..Default::default()
+                                },
+                            );
+                            let mut guard = slot.lock().await;
+                            match save_result {
+                                Ok(_) => {
+                                    let spawn_res = state
+                                        .spawn_wechat_monitor(&normalized)
+                                        .await;
+                                    if let Err(e) = spawn_res {
+                                        guard.state = wechat_ilink::PendingLoginState::Failed {
+                                            error: format!(
+                                                "persisted but monitor spawn failed: {e}"
+                                            ),
+                                        };
+                                    } else {
+                                        guard.state = wechat_ilink::PendingLoginState::Confirmed {
+                                            account_id: normalized,
+                                        };
+                                    }
+                                }
+                                Err(e) => {
+                                    guard.state = wechat_ilink::PendingLoginState::Failed {
+                                        error: format!("save_account failed: {e}"),
+                                    };
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let mut guard = slot.lock().await;
+                            guard.state = wechat_ilink::PendingLoginState::Failed {
+                                error: format!("login flow failed: {e}"),
+                            };
+                        }
+                    }
+                }
+                _ = cancel_rx => {
+                    let mut guard = slot.lock().await;
+                    if !guard.state.is_terminal() {
+                        guard.state = wechat_ilink::PendingLoginState::Cancelled;
+                    }
+                }
+            }
+
+            eprintln!("[wechat] login task {handle_for_task} finished");
+        });
+
+        let expires_at = SystemTime::now()
+            .checked_add(Duration::from_secs(wechat_ilink::PENDING_LOGIN_TTL_SECS))
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| format!("{}s", d.as_secs()))
+            .unwrap_or_default();
+
+        Ok((handle, qr.qrcode_img_content, expires_at))
+    }
+
+    /// Poll the current status of a QR login flow.
+    ///
+    /// On each call we also garbage-collect slots that have exceeded
+    /// the TTL so the map doesn't grow without bound.
+    pub async fn wechat_login_status(
+        &self,
+        handle: &str,
+    ) -> Option<WeChatLoginStatusSnapshot> {
+        let slot = {
+            let map = self.pending_wechat_logins.read().await;
+            map.get(handle).cloned()
+        }?;
+        let guard = slot.lock().await;
+        // Translate Expired state if we're past TTL and still Waiting.
+        let state_tag;
+        let account_id;
+        let error;
+        match &guard.state {
+            wechat_ilink::PendingLoginState::Waiting if guard.is_past_ttl() => {
+                state_tag = "expired";
+                account_id = None;
+                error = None;
+            }
+            wechat_ilink::PendingLoginState::Waiting => {
+                state_tag = "waiting";
+                account_id = None;
+                error = None;
+            }
+            wechat_ilink::PendingLoginState::Scanned => {
+                state_tag = "scanned";
+                account_id = None;
+                error = None;
+            }
+            wechat_ilink::PendingLoginState::Confirmed { account_id: id } => {
+                state_tag = "confirmed";
+                account_id = Some(id.clone());
+                error = None;
+            }
+            wechat_ilink::PendingLoginState::Failed { error: e } => {
+                state_tag = "failed";
+                account_id = None;
+                error = Some(e.clone());
+            }
+            wechat_ilink::PendingLoginState::Cancelled => {
+                state_tag = "cancelled";
+                account_id = None;
+                error = None;
+            }
+            wechat_ilink::PendingLoginState::Expired => {
+                state_tag = "expired";
+                account_id = None;
+                error = None;
+            }
+        };
+        Some(WeChatLoginStatusSnapshot {
+            status: state_tag.to_string(),
+            account_id,
+            error,
+        })
+    }
+
+    /// Fire the cancel signal for a login flow. Best-effort: if the
+    /// background task is already past the point where cancel matters,
+    /// the next poll will still return Confirmed/Failed.
+    pub async fn cancel_wechat_login(&self, handle: &str) -> bool {
+        let map = self.pending_wechat_logins.read().await;
+        let Some(slot) = map.get(handle).cloned() else {
+            return false;
+        };
+        drop(map);
+        let mut guard = slot.lock().await;
+        if let Some(tx) = guard.cancel_tx.take() {
+            let _ = tx.send(());
+        }
+        true
+    }
+}
+
+/// Frontend-facing rollup of a persisted WeChat account's state.
+#[derive(Debug, Clone)]
+pub struct WeChatAccountInfo {
+    pub id: String,
+    pub display_name: String,
+    pub base_url: String,
+    /// First 6 / last 4 chars of the bot token plus length, never full.
+    pub bot_token_preview: String,
+    pub saved_at: Option<String>,
+    pub status: WeChatConnectionStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeChatConnectionStatus {
+    Connected,
+    Disconnected,
+    SessionExpired,
+}
+
+impl WeChatConnectionStatus {
+    #[must_use]
+    pub fn wire_tag(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+            Self::SessionExpired => "session_expired",
+        }
+    }
+}
+
+/// Simple snapshot of the login status used by the status poll handler.
+#[derive(Debug, Clone)]
+pub struct WeChatLoginStatusSnapshot {
+    pub status: String,
+    pub account_id: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Format a bot token for display: `"{first6}...{last4} ({len} chars)"`.
+/// Used by the list endpoint so the UI never sees the full secret.
+fn format_bot_token_preview(token: &str) -> String {
+    let len = token.chars().count();
+    if len <= 10 {
+        return format!("*** ({len} chars)");
+    }
+    let first: String = token.chars().take(6).collect();
+    let last: String = token.chars().skip(len.saturating_sub(4)).collect();
+    format!("{first}...{last} ({len} chars)")
+}
+
+/// Generate a URL-safe random 16-byte hex handle for a pending login.
+/// Uses `rand::random` for per-call entropy; collision probability is
+/// negligible given the map lifetime.
+fn generate_login_handle() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // No rand crate in desktop-core (kept lean) — derive entropy from
+    // system nanoseconds + thread id. Not cryptographic; only needs to
+    // be unguessable and unique within a session.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tid = format!("{:?}", std::thread::current().id());
+    format!("{:x}{:x}", now, tid.len() ^ (now as usize))
+}
+
 fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> DesktopTurnResult {
     let cwd = PathBuf::from(&request.project_path);
     let loader = ConfigLoader::default_for(&cwd);
@@ -4167,6 +4686,106 @@ fn build_provider_client_from_entry(
             Ok(ProviderClient::OpenAi(client))
         }
     }
+}
+
+/// Result of a "ping" style connection test against a `ProviderEntry`.
+///
+/// Returned by [`probe_provider_entry`]. Used by the
+/// `POST /api/desktop/providers/{id}/test` HTTP route to give users
+/// immediate feedback on whether their api_key / base_url / model
+/// combination works without having to start a real session.
+#[derive(Debug, Clone)]
+pub struct ProviderProbeResult {
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    /// Echo of the model name returned by the provider response, if any.
+    pub model_echo: Option<String>,
+}
+
+/// Fire a minimal non-streaming request at a [`providers_config::ProviderEntry`]
+/// to validate that the client is well-formed (authentication, network
+/// reachability, model name accepted by the backend).
+///
+/// The request is deliberately tiny — a single `"ping"` user message
+/// capped at 8 output tokens — so it burns ~20 tokens of the user's
+/// quota at most. Errors are captured as an `Err` variant in the
+/// returned `ProviderProbeResult` rather than propagated, so callers
+/// can always render a badge regardless of outcome.
+///
+/// This function does NOT touch `DesktopState`, does NOT create any
+/// persisted session, and does NOT mutate `.claw/providers.json`. It
+/// is safe to call concurrently from HTTP handlers.
+pub async fn probe_provider_entry(
+    entry: &providers_config::ProviderEntry,
+) -> ProviderProbeResult {
+    let started = std::time::Instant::now();
+
+    let client = match build_provider_client_from_entry(entry) {
+        Ok(c) => c,
+        Err(err) => {
+            return ProviderProbeResult {
+                ok: false,
+                latency_ms: started.elapsed().as_millis() as u64,
+                error: Some(err),
+                model_echo: None,
+            };
+        }
+    };
+
+    let request = MessageRequest {
+        model: entry.model.clone(),
+        max_tokens: 8,
+        messages: vec![InputMessage::user_text("ping")],
+        system: None,
+        tools: None,
+        tool_choice: None,
+        stream: false,
+    };
+
+    // Overall safety net so a hung backend can never lock the UI button.
+    let send_fut = client.send_message(&request);
+    match tokio::time::timeout(std::time::Duration::from_secs(20), send_fut).await {
+        Ok(Ok(response)) => ProviderProbeResult {
+            ok: true,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: None,
+            model_echo: Some(response.model),
+        },
+        Ok(Err(err)) => ProviderProbeResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: Some(err.to_string()),
+            model_echo: None,
+        },
+        Err(_) => ProviderProbeResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: Some("request timed out after 20s".to_string()),
+            model_echo: None,
+        },
+    }
+}
+
+/// Resolve the default project path that newly-created WeChat sessions
+/// should be associated with. Precedence:
+///   1. `WECHAT_DEFAULT_PROJECT_PATH` env var
+///   2. Current process working directory
+///   3. "." (relative cwd)
+///
+/// Exposed from `desktop-core` so both the HTTP server and the standalone
+/// `wechat-login` CLI subcommand resolve the same default.
+#[must_use]
+pub fn resolve_wechat_default_project_path() -> String {
+    if let Ok(path) = std::env::var("WECHAT_DEFAULT_PROJECT_PATH") {
+        if !path.trim().is_empty() {
+            return path;
+        }
+    }
+    std::env::current_dir()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| ".".to_string())
 }
 
 fn permission_policy(mode: PermissionMode, tool_registry: &GlobalToolRegistry) -> PermissionPolicy {

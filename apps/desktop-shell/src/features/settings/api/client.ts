@@ -279,3 +279,125 @@ export async function activateProvider(
     { method: "POST" }
   );
 }
+
+/** Result of POST /api/desktop/providers/{id}/test — a minimal live
+ *  round-trip against the configured base_url to validate the API key,
+ *  model name, and network path. Consumes ~20 tokens of the user's quota. */
+export interface ProviderTestResult {
+  ok: boolean;
+  latency_ms: number;
+  error?: string | null;
+  /** Echo of the model name returned by the provider, when available. */
+  model_echo?: string | null;
+}
+
+export async function testProvider(
+  id: string,
+  projectPath?: string
+): Promise<ProviderTestResult> {
+  const query = projectPath
+    ? `?project_path=${encodeURIComponent(projectPath)}`
+    : "";
+  return fetchJson<ProviderTestResult>(
+    `/api/desktop/providers/${encodeURIComponent(id)}/test${query}`,
+    { method: "POST" }
+  );
+}
+
+// ── Phase 6: WeChat account management ────────────────────────────
+//
+// These routes pair with the WeChat iLink backend to let the user
+// add/remove WeChat accounts entirely from the desktop UI (no CLI).
+//
+// See `rust/crates/desktop-server/src/lib.rs` handlers
+// `list_wechat_accounts_handler`, `start_wechat_login_handler`,
+// `wechat_login_status_handler`, `cancel_wechat_login_handler`,
+// `delete_wechat_account_handler`.
+
+export type WeChatAccountStatus =
+  | "connected"
+  | "disconnected"
+  | "session_expired";
+
+export interface WeChatAccountSummary {
+  id: string;
+  display_name: string;
+  base_url: string;
+  /** First 6 / last 4 chars of the bot token plus length, for display only. */
+  bot_token_preview: string;
+  /** ISO-8601 string of the cursor timestamp (when the monitor last saw traffic). */
+  last_active_at: string | null;
+  status: WeChatAccountStatus;
+}
+
+export interface WeChatAccountsResponse {
+  accounts: WeChatAccountSummary[];
+}
+
+export interface WeChatLoginStartRequest {
+  base_url?: string;
+}
+
+export interface WeChatLoginStartResponse {
+  handle: string;
+  /** Full data URI (`data:image/png;base64,...`) safe to set as <img src>. */
+  qr_image_base64: string;
+  expires_at: string;
+}
+
+export type WeChatLoginStatus =
+  | "waiting"
+  | "scanned"
+  | "confirmed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface WeChatLoginStatusResponse {
+  status: WeChatLoginStatus;
+  account_id?: string | null;
+  error?: string | null;
+}
+
+export async function listWeChatAccounts(): Promise<WeChatAccountsResponse> {
+  return fetchJson<WeChatAccountsResponse>("/api/desktop/wechat/accounts");
+}
+
+export async function startWeChatLogin(
+  baseUrl?: string
+): Promise<WeChatLoginStartResponse> {
+  const body: WeChatLoginStartRequest = baseUrl ? { base_url: baseUrl } : {};
+  return fetchJson<WeChatLoginStartResponse>(
+    "/api/desktop/wechat/login/start",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+export async function getWeChatLoginStatus(
+  handle: string
+): Promise<WeChatLoginStatusResponse> {
+  return fetchJson<WeChatLoginStatusResponse>(
+    `/api/desktop/wechat/login/${encodeURIComponent(handle)}/status`
+  );
+}
+
+export async function cancelWeChatLogin(
+  handle: string
+): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(
+    `/api/desktop/wechat/login/${encodeURIComponent(handle)}/cancel`,
+    { method: "POST" }
+  );
+}
+
+export async function deleteWeChatAccount(
+  id: string
+): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(
+    `/api/desktop/wechat/accounts/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
+}

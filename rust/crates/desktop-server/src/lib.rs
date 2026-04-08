@@ -347,6 +347,31 @@ pub fn app(state: AppState) -> Router {
             "/api/desktop/providers/{id}/activate",
             post(activate_provider_handler),
         )
+        .route(
+            "/api/desktop/providers/{id}/test",
+            post(test_provider_handler),
+        )
+        // ── Phase 6C: WeChat account management ────────────────────
+        .route(
+            "/api/desktop/wechat/accounts",
+            get(list_wechat_accounts_handler),
+        )
+        .route(
+            "/api/desktop/wechat/accounts/{id}",
+            delete(delete_wechat_account_handler),
+        )
+        .route(
+            "/api/desktop/wechat/login/start",
+            post(start_wechat_login_handler),
+        )
+        .route(
+            "/api/desktop/wechat/login/{handle}/status",
+            get(wechat_login_status_handler),
+        )
+        .route(
+            "/api/desktop/wechat/login/{handle}/cancel",
+            post(cancel_wechat_login_handler),
+        )
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(cors)
         .with_state(state)
@@ -1564,7 +1589,7 @@ async fn upsert_provider_handler(
         )
     })?;
 
-    let entry: desktop_core::providers_config::ProviderEntry =
+    let mut entry: desktop_core::providers_config::ProviderEntry =
         serde_json::from_value(entry_json).map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
@@ -1582,6 +1607,16 @@ async fn upsert_provider_handler(
             }),
         )
     })?;
+
+    // Edit-mode merge: if the client sent an empty api_key AND an entry
+    // with this id already exists, keep the previously stored api_key so
+    // the user doesn't have to re-paste it just to change the model name.
+    // Empty api_key on a brand-new id still fails validation in upsert.
+    if entry.api_key.is_empty() {
+        if let Some(existing) = config.providers.get(id) {
+            entry.api_key = existing.api_key.clone();
+        }
+    }
 
     config.upsert(id, entry).map_err(|e| {
         (
@@ -1696,6 +1731,159 @@ async fn activate_provider_handler(
         "ok": true,
         "active": config.active,
     })))
+}
+
+/// `POST /api/desktop/providers/{id}/test`
+///
+/// Fire a minimal 1-message probe against the provider to validate
+/// api_key + base_url + model name without starting a real session.
+/// The probe request is capped at 8 output tokens, so it burns ~20
+/// tokens of the user's quota at most. The handler never fails the
+/// HTTP request on a provider error — it returns `{ ok: false, error }`
+/// so the UI can render a red "test failed" badge uniformly.
+async fn test_provider_handler(
+    Path(id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project = resolve_project_path_for_providers(
+        params.get("project_path").map(String::as_str),
+    )?;
+
+    let config = desktop_core::providers_config::load(&project).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to load providers.json: {e}"),
+            }),
+        )
+    })?;
+
+    let entry = config.providers.get(&id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("provider `{id}` not found"),
+            }),
+        )
+    })?;
+
+    let result = desktop_core::probe_provider_entry(entry).await;
+
+    Ok(Json(serde_json::json!({
+        "ok": result.ok,
+        "latency_ms": result.latency_ms,
+        "error": result.error,
+        "model_echo": result.model_echo,
+    })))
+}
+
+// ── Phase 6C: WeChat account management HTTP handlers ──────────────
+//
+// Lets the frontend drive a full QR-login → monitor-spawn flow from
+// the Settings UI without requiring the `desktop-server wechat-login`
+// CLI. All real work happens inside DesktopState methods; these
+// handlers are thin JSON wrappers.
+
+/// `GET /api/desktop/wechat/accounts` — list persisted WeChat bots
+/// with their connection status (connected / disconnected / expired).
+async fn list_wechat_accounts_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let accounts = state.desktop.list_wechat_accounts_summary().await;
+    let items: Vec<serde_json::Value> = accounts
+        .into_iter()
+        .map(|a| {
+            serde_json::json!({
+                "id": a.id,
+                "display_name": a.display_name,
+                "base_url": a.base_url,
+                "bot_token_preview": a.bot_token_preview,
+                "last_active_at": a.saved_at,
+                "status": a.status.wire_tag(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "accounts": items }))
+}
+
+/// `DELETE /api/desktop/wechat/accounts/{id}` — stop the monitor and
+/// delete credential files from disk. Idempotent.
+async fn delete_wechat_account_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state.desktop.remove_wechat_account(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to remove wechat account `{id}`: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/desktop/wechat/login/start` — fetch a fresh QR code and
+/// spawn a background task that waits (up to 5 min) for the user to
+/// scan + confirm on their phone. Returns an opaque `handle` the
+/// frontend uses for subsequent status polls and cancellation.
+async fn start_wechat_login_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let base_url = body
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let (handle, qr_image_content, expires_at) =
+        state.desktop.start_wechat_login(base_url).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("start_wechat_login failed: {e}"),
+                }),
+            )
+        })?;
+    Ok(Json(serde_json::json!({
+        "handle": handle,
+        "qr_image_base64": qr_image_content,
+        "expires_at": expires_at,
+    })))
+}
+
+/// `GET /api/desktop/wechat/login/{handle}/status` — poll the current
+/// state of a pending login. Returns 404 if the handle doesn't exist
+/// (either never created, or already garbage-collected).
+async fn wechat_login_status_handler(
+    State(state): State<AppState>,
+    Path(handle): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let snapshot = state.desktop.wechat_login_status(&handle).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("login handle `{handle}` not found"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({
+        "status": snapshot.status,
+        "account_id": snapshot.account_id,
+        "error": snapshot.error,
+    })))
+}
+
+/// `POST /api/desktop/wechat/login/{handle}/cancel` — fire the cancel
+/// signal to the background login task. The next status poll will
+/// return either `cancelled` or, if the task was already past the
+/// point where cancel matters, the final `confirmed`/`failed` state.
+async fn cancel_wechat_login_handler(
+    State(state): State<AppState>,
+    Path(handle): Path<String>,
+) -> Json<serde_json::Value> {
+    let cancelled = state.desktop.cancel_wechat_login(&handle).await;
+    Json(serde_json::json!({ "ok": cancelled }))
 }
 
 /// `GET /api/desktop/providers/templates`

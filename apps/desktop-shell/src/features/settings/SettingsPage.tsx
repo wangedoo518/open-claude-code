@@ -5,6 +5,7 @@ import {
   Settings,
   Key,
   KeyRound,
+  MessageCircle,
   Plug,
   Shield,
   Keyboard,
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { GeneralSettings } from "./sections/GeneralSettings";
 import { ProviderSettings } from "./sections/ProviderSettings";
 import { MultiProviderSettings } from "./sections/MultiProviderSettings";
+import { WeChatSettings } from "./sections/WeChatSettings";
 import { McpSettings } from "./sections/McpSettings";
 import { PermissionSettings } from "./sections/PermissionSettings";
 import { DataSettings } from "./sections/DataSettings";
@@ -38,6 +40,7 @@ type SettingsSection =
   | "general"
   | "provider"
   | "llm-providers"
+  | "wechat"
   | "mcp"
   | "permissions"
   | "shortcuts"
@@ -63,6 +66,15 @@ const MENU_ITEMS: MenuItem[] = [
     i18nKey: "settings.llmProviders",
     icon: KeyRound,
     labelOverride: "LLM Providers",
+  },
+  // Phase 6C: WeChat account management (list + QR login + delete).
+  // Sits between multi-provider (backend config) and MCP (tool config)
+  // because it's a per-user "which channels do you talk through" setting.
+  {
+    id: "wechat",
+    i18nKey: "settings.wechat",
+    icon: MessageCircle,
+    labelOverride: "WeChat 账号",
   },
   { id: "mcp", i18nKey: "settings.mcp", icon: Plug },
   { id: "permissions", i18nKey: "settings.permissions", icon: Shield },
@@ -164,7 +176,7 @@ export function SettingsPage() {
 function SectionLoading() {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-4 py-3 text-body-sm text-muted-foreground">
       <Loader2 className="size-4 animate-spin" />
       <span>{t("settings.loading")}</span>
     </div>
@@ -192,6 +204,9 @@ function SettingsContent({
   // Multi-provider registry has its own React Query hooks and is not
   // blocked by the other settings queries.
   if (section === "llm-providers") return <MultiProviderSettings />;
+  // Same story for WeChat accounts — fully self-contained React Query +
+  // polling, never blocked on bootstrap/settings/customize.
+  if (section === "wechat") return <WeChatSettings />;
 
   // Other sections need backend data
   if (isLoading) return <SectionLoading />;
@@ -228,7 +243,7 @@ function SettingsContent({
 function ComingSoon() {
   const { t } = useTranslation();
   return (
-    <div className="py-8 text-center text-sm text-muted-foreground">
+    <div className="py-8 text-center text-body-sm text-muted-foreground">
       {t("settings.comingSoon")}
     </div>
   );
