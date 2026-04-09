@@ -46,3 +46,24 @@ export interface RawDetailResponse {
   entry: RawEntry;
   body: string;
 }
+
+// ── S4 Inbox layer ────────────────────────────────────────────────
+
+export interface InboxEntry {
+  id: number;
+  kind: string;
+  status: "pending" | "approved" | "rejected";
+  title: string;
+  description: string;
+  source_raw_id?: number | null;
+  created_at: string;
+  resolved_at?: string | null;
+}
+
+export interface InboxListResponse {
+  entries: InboxEntry[];
+  pending_count: number;
+  total_count: number;
+}
+
+export type InboxResolveAction = "approve" | "reject";

@@ -8,6 +8,9 @@
 
 import { fetchJson } from "@/lib/desktop/transport";
 import type {
+  InboxEntry,
+  InboxListResponse,
+  InboxResolveAction,
   IngestRawRequest,
   RawDetailResponse,
   RawEntry,
@@ -46,4 +49,29 @@ export async function listRawEntries(): Promise<RawListResponse> {
  */
 export async function getRawEntry(id: number): Promise<RawDetailResponse> {
   return fetchJson<RawDetailResponse>(`/api/wiki/raw/${id}`);
+}
+
+// ── S4 Inbox ───────────────────────────────────────────────────
+
+/** GET `/api/wiki/inbox` — list every inbox task with counts. */
+export async function listInboxEntries(): Promise<InboxListResponse> {
+  return fetchJson<InboxListResponse>("/api/wiki/inbox");
+}
+
+/**
+ * POST `/api/wiki/inbox/:id/resolve` — approve or reject a pending
+ * task. Server validates the action and returns the updated entry.
+ */
+export async function resolveInboxEntry(
+  id: number,
+  action: InboxResolveAction,
+): Promise<InboxEntry> {
+  const response = await fetchJson<{ entry: InboxEntry }>(
+    `/api/wiki/inbox/${id}/resolve`,
+    {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    },
+  );
+  return response.entry;
 }

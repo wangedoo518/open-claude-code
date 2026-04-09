@@ -411,6 +411,16 @@ pub fn app(state: AppState) -> Router {
             get(list_wiki_raw_handler).post(ingest_wiki_raw_handler),
         )
         .route("/api/wiki/raw/{id}", get(get_wiki_raw_handler))
+        // ── ClawWiki S4 inbox layer routes ─────────────────────────
+        // Maintainer-proposed tasks that need user approval. S4 MVP:
+        // raw-ingest side-effect auto-appends a `new-raw` task; future
+        // sprints add conflict / stale / deprecate kinds once the
+        // maintainer LLM runs.
+        .route("/api/wiki/inbox", get(list_wiki_inbox_handler))
+        .route(
+            "/api/wiki/inbox/{id}/resolve",
+            post(resolve_wiki_inbox_handler),
+        )
         // ── Phase 6C: WeChat account management ────────────────────
         .route(
             "/api/desktop/wechat/accounts",
@@ -1686,6 +1696,30 @@ async fn ingest_wiki_raw_handler(
         )
     })?;
 
+    // S4 side-channel: every successful raw write appends a pending
+    // `new-raw` task to the inbox so the maintainer Inbox page has
+    // something to display. We swallow errors from append_inbox_pending
+    // because inbox bookkeeping should NEVER block a successful ingest —
+    // losing one inbox task is recoverable, losing a raw entry is not.
+    let inbox_title = format!("New raw entry #{:05}", entry.id);
+    let inbox_desc = format!(
+        "Raw entry `{}` was ingested from source `{}`. \
+         Proposed action: summarise into a concept page.",
+        entry.filename, entry.source
+    );
+    if let Err(err) = wiki_store::append_inbox_pending(
+        &paths,
+        "new-raw",
+        &inbox_title,
+        &inbox_desc,
+        Some(entry.id),
+    ) {
+        eprintln!(
+            "[warn] raw entry {} written but inbox append failed: {err}",
+            entry.id
+        );
+    }
+
     Ok(Json(raw_entry_to_json(&entry)))
 }
 
@@ -1734,6 +1768,62 @@ async fn get_wiki_raw_handler(
             }),
         )),
     }
+}
+
+// ── ClawWiki S4: inbox HTTP handlers ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ResolveInboxRequest {
+    /// Either `"approve"` or `"reject"`. Anything else returns 400.
+    action: String,
+}
+
+async fn list_wiki_inbox_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let entries = wiki_store::list_inbox_entries(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("list_inbox_entries failed: {e}"),
+            }),
+        )
+    })?;
+    let pending = entries.iter().filter(|e| e.status == "pending").count();
+    Ok(Json(serde_json::json!({
+        "entries": entries,
+        "pending_count": pending,
+        "total_count": entries.len(),
+    })))
+}
+
+async fn resolve_wiki_inbox_handler(
+    Path(id): Path<u32>,
+    Json(body): Json<ResolveInboxRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let updated = wiki_store::resolve_inbox_entry(&paths, id, &body.action).map_err(
+        |e| match e {
+            wiki_store::WikiStoreError::NotFound(_) => (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("inbox entry not found: {id}"),
+                }),
+            ),
+            wiki_store::WikiStoreError::Invalid(msg) => (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid inbox action: {msg}"),
+                }),
+            ),
+            other => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("resolve_inbox_entry failed: {other}"),
+                }),
+            ),
+        },
+    )?;
+    Ok(Json(serde_json::json!({ "entry": updated })))
 }
 
 fn raw_entry_to_json(entry: &wiki_store::RawEntry) -> serde_json::Value {

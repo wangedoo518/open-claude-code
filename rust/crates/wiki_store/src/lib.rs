@@ -592,6 +592,154 @@ fn strip_frontmatter(content: &str) -> &str {
     content
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Inbox layer (S4.1)
+// ─────────────────────────────────────────────────────────────────────
+//
+// The Inbox is the wiki_maintainer's queue of pending human-review
+// decisions. Per ClawWiki canonical §6.1 and §11.2, it holds every
+// maintainer-proposed action that needs user approval: "new raw
+// entry → propose concept page", "stale page → re-verify",
+// "conflict → pick canonical", etc.
+//
+// S4 MVP: only the `new-raw` kind is produced, and only by the
+// `ingest_wiki_raw_handler` side-channel in desktop-server. Real
+// maintainer proposals (conflict / stale / deprecate) land once
+// codex_broker::chat_completion is wired in a future sprint.
+//
+// Persistence: a plaintext JSON array at `{meta_dir}/inbox.json`.
+// Unlike the Codex account pool this is NOT encrypted — the records
+// contain no secrets, only public wiki metadata (ids, slugs, dates).
+// Plaintext lets the user open the file directly if they want to
+// audit or migrate.
+
+/// One line item in the Inbox. Discriminated by `kind`; `source_raw_id`
+/// points at the raw layer entry that caused this task (e.g. the
+/// `NNNNN_paste_hello_2026-04-09.md` file that just landed).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InboxEntry {
+    /// Monotonically-increasing id, scoped to the inbox file. Never
+    /// reused even after resolve — we just append.
+    pub id: u32,
+    /// What kind of maintainer task this is. For S4 always `"new-raw"`.
+    pub kind: String,
+    /// Current status. Starts as `"pending"`, moves to `"approved"`
+    /// or `"rejected"` after the user resolves it.
+    pub status: String,
+    /// Short human-readable title shown in the Inbox list.
+    pub title: String,
+    /// Longer description shown in the detail pane.
+    pub description: String,
+    /// The raw layer entry id that caused this task, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_raw_id: Option<u32>,
+    /// ISO-8601 datetime the task was created.
+    pub created_at: String,
+    /// ISO-8601 datetime the task was resolved, or `None` while pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
+}
+
+/// Filename for the inbox persistence file under `{meta}/`.
+pub const INBOX_FILENAME: &str = "inbox.json";
+
+fn inbox_path(paths: &WikiPaths) -> PathBuf {
+    paths.meta.join(INBOX_FILENAME)
+}
+
+fn load_inbox_file(paths: &WikiPaths) -> Result<Vec<InboxEntry>> {
+    let path = inbox_path(paths);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let parsed: Vec<InboxEntry> = serde_json::from_slice(&bytes)
+        .map_err(|e| WikiStoreError::Invalid(format!("inbox.json parse error: {e}")))?;
+    Ok(parsed)
+}
+
+fn save_inbox_file(paths: &WikiPaths, entries: &[InboxEntry]) -> Result<()> {
+    fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
+    let bytes = serde_json::to_vec_pretty(entries)
+        .map_err(|e| WikiStoreError::Invalid(format!("inbox.json serialize error: {e}")))?;
+    let path = inbox_path(paths);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &bytes).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(())
+}
+
+/// Append a new pending inbox entry and return the stored record.
+/// Assigns the next id (max+1, or 1 if empty), timestamps with
+/// `now_iso8601`, writes atomically to disk.
+pub fn append_inbox_pending(
+    paths: &WikiPaths,
+    kind: &str,
+    title: &str,
+    description: &str,
+    source_raw_id: Option<u32>,
+) -> Result<InboxEntry> {
+    let mut entries = load_inbox_file(paths)?;
+    let next_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+    let entry = InboxEntry {
+        id: next_id,
+        kind: kind.to_string(),
+        status: "pending".to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        source_raw_id,
+        created_at: now_iso8601(),
+        resolved_at: None,
+    };
+    entries.push(entry.clone());
+    save_inbox_file(paths, &entries)?;
+    Ok(entry)
+}
+
+/// List every inbox entry, oldest first. Missing file returns empty.
+pub fn list_inbox_entries(paths: &WikiPaths) -> Result<Vec<InboxEntry>> {
+    load_inbox_file(paths)
+}
+
+/// Resolve a pending entry by id. `action` must be `"approve"` or
+/// `"reject"`; any other value fails with `WikiStoreError::Invalid`.
+/// Returns the updated record.
+pub fn resolve_inbox_entry(
+    paths: &WikiPaths,
+    id: u32,
+    action: &str,
+) -> Result<InboxEntry> {
+    let new_status = match action {
+        "approve" => "approved",
+        "reject" => "rejected",
+        other => {
+            return Err(WikiStoreError::Invalid(format!(
+                "unknown inbox action: {other}"
+            )))
+        }
+    };
+    let mut entries = load_inbox_file(paths)?;
+    let found = entries
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or(WikiStoreError::NotFound(id))?;
+    found.status = new_status.to_string();
+    found.resolved_at = Some(now_iso8601());
+    let updated = found.clone();
+    save_inbox_file(paths, &entries)?;
+    Ok(updated)
+}
+
+/// Count pending inbox entries. Used by the Dashboard and Sidebar
+/// badge. O(n) in the inbox size — fine for the MVP since the inbox
+/// never exceeds a few hundred entries during normal use.
+pub fn count_pending_inbox(paths: &WikiPaths) -> Result<usize> {
+    Ok(load_inbox_file(paths)?
+        .iter()
+        .filter(|e| e.status == "pending")
+        .count())
+}
+
 /// Hand-rolled UTC ISO-8601 timestamp formatter, second precision.
 /// We use `std::time` rather than pulling `chrono` for one function.
 fn now_iso8601() -> String {
@@ -952,5 +1100,114 @@ mod tests {
         assert_eq!(format_iso8601(0), "1970-01-01T00:00:00Z");
         // Y2K
         assert_eq!(format_iso8601(946_684_800), "2000-01-01T00:00:00Z");
+    }
+
+    // ── S4.1 Inbox layer tests ───────────────────────────────────
+
+    #[test]
+    fn inbox_list_empty_when_missing() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        assert_eq!(list_inbox_entries(&paths).unwrap().len(), 0);
+        assert_eq!(count_pending_inbox(&paths).unwrap(), 0);
+    }
+
+    #[test]
+    fn inbox_append_assigns_sequential_ids() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let e1 =
+            append_inbox_pending(&paths, "new-raw", "first", "desc", Some(1)).unwrap();
+        let e2 =
+            append_inbox_pending(&paths, "new-raw", "second", "desc", Some(2)).unwrap();
+        let e3 =
+            append_inbox_pending(&paths, "new-raw", "third", "desc", None).unwrap();
+
+        assert_eq!(e1.id, 1);
+        assert_eq!(e2.id, 2);
+        assert_eq!(e3.id, 3);
+        assert_eq!(e1.status, "pending");
+        assert_eq!(e1.source_raw_id, Some(1));
+        assert_eq!(e3.source_raw_id, None);
+
+        let listed = list_inbox_entries(&paths).unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(count_pending_inbox(&paths).unwrap(), 3);
+    }
+
+    #[test]
+    fn inbox_resolve_approve_flips_status() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let entry =
+            append_inbox_pending(&paths, "new-raw", "test", "desc", Some(1)).unwrap();
+        let resolved = resolve_inbox_entry(&paths, entry.id, "approve").unwrap();
+
+        assert_eq!(resolved.id, entry.id);
+        assert_eq!(resolved.status, "approved");
+        assert!(resolved.resolved_at.is_some());
+
+        // Re-reading from disk must reflect the change.
+        let listed = list_inbox_entries(&paths).unwrap();
+        assert_eq!(listed[0].status, "approved");
+        assert_eq!(count_pending_inbox(&paths).unwrap(), 0);
+    }
+
+    #[test]
+    fn inbox_resolve_reject_marks_rejected() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        append_inbox_pending(&paths, "new-raw", "keep", "", Some(1)).unwrap();
+        let bad = append_inbox_pending(&paths, "new-raw", "drop", "", Some(2)).unwrap();
+
+        resolve_inbox_entry(&paths, bad.id, "reject").unwrap();
+
+        let entries = list_inbox_entries(&paths).unwrap();
+        assert_eq!(entries[0].status, "pending");
+        assert_eq!(entries[1].status, "rejected");
+        assert_eq!(count_pending_inbox(&paths).unwrap(), 1);
+    }
+
+    #[test]
+    fn inbox_resolve_unknown_id_returns_not_found() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let err = resolve_inbox_entry(&paths, 999, "approve").unwrap_err();
+        assert!(matches!(err, WikiStoreError::NotFound(999)));
+    }
+
+    #[test]
+    fn inbox_resolve_unknown_action_is_invalid() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let e = append_inbox_pending(&paths, "new-raw", "t", "", None).unwrap();
+        let err = resolve_inbox_entry(&paths, e.id, "banana").unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+    }
+
+    #[test]
+    fn inbox_persists_across_calls() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        append_inbox_pending(&paths, "new-raw", "task-a", "", Some(1)).unwrap();
+        append_inbox_pending(&paths, "new-raw", "task-b", "", Some(2)).unwrap();
+
+        // Simulate process restart by re-resolving paths and reading.
+        let paths_fresh = WikiPaths::resolve(tmp.path());
+        let listed = list_inbox_entries(&paths_fresh).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].title, "task-a");
+        assert_eq!(listed[1].title, "task-b");
     }
 }
