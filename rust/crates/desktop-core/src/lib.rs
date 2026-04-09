@@ -4378,26 +4378,65 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
             }
         };
 
-    // S0.4 cut day: there is no provider override anymore. Everything
-    // flows through the legacy env-var / codex auth chain until the S2
-    // codex_broker takes over the resolution.
-    let default_auth = match default_auth_source(&resolved_model, &runtime_config) {
-        Ok(auth) => auth,
-        Err(error) => {
-            return fallback_turn_result(
-                session,
-                &request.message,
-                model_label.clone(),
-                format!("failed to resolve model authentication: {error}"),
-            )
-        }
+    // A.2: consult the process-global codex_broker first. If it has a
+    // fresh account, build the ProviderClient directly from the pool's
+    // access token and skip the env-var chain. If the broker isn't
+    // installed (tests) or the pool is empty/exhausted, fall back to
+    // `default_auth_source` which is the pre-A.2 behavior.
+    //
+    // This is the hinge point where the canonical §9.2 promise "Token
+    // 100% 内部消化" becomes operational. Before this wiring the
+    // pool was cold data; every turn now picks a token out of it and
+    // runs the LLM round-trip through an OpenAiCompat client bound to
+    // that token. The token never leaves the closure that builds the
+    // client — it's cloned once into the `OpenAiCompatClient` and
+    // dropped with the client on turn completion.
+    let (default_auth, client_override) = match codex_broker::global() {
+        Some(broker) => match broker.build_provider_client() {
+            Ok(client) => {
+                eprintln!(
+                    "[runtime] using codex_broker pool for turn (model={resolved_model})"
+                );
+                (None, Some(client))
+            }
+            Err(err) => {
+                eprintln!(
+                    "[runtime] codex_broker has no usable account ({err}); \
+                     falling back to env-var credential chain"
+                );
+                match default_auth_source(&resolved_model, &runtime_config) {
+                    Ok(auth) => (auth, None),
+                    Err(error) => {
+                        return fallback_turn_result(
+                            session,
+                            &request.message,
+                            model_label.clone(),
+                            format!(
+                                "failed to resolve model authentication: {error}"
+                            ),
+                        )
+                    }
+                }
+            }
+        },
+        None => match default_auth_source(&resolved_model, &runtime_config) {
+            Ok(auth) => (auth, None),
+            Err(error) => {
+                return fallback_turn_result(
+                    session,
+                    &request.message,
+                    model_label.clone(),
+                    format!("failed to resolve model authentication: {error}"),
+                )
+            }
+        },
     };
 
     let api_client = match DesktopRuntimeClient::new(
         resolved_model.to_string(),
         default_auth,
         tool_registry.clone(),
-        None,
+        client_override,
     ) {
         Ok(client) => client,
         Err(error) => {

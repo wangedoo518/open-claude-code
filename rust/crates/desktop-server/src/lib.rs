@@ -86,9 +86,16 @@ impl AppState {
                 desktop_core::codex_broker::CodexBroker::new(&paths.meta)
                     .expect("broker second-try must succeed")
             });
+        let broker_arc = Arc::new(broker);
+        // A.2: install as the process-global so desktop-core's
+        // `execute_live_turn` free-function can consult it without
+        // having to thread an AppState handle through the session
+        // runtime. First install wins; tests that construct a second
+        // AppState silently skip.
+        desktop_core::codex_broker::install_global(Arc::clone(&broker_arc));
         Self {
             desktop,
-            broker: Arc::new(broker),
+            broker: broker_arc,
         }
     }
 
