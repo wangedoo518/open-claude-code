@@ -53,6 +53,12 @@ pub mod protocol_codegen;
 pub mod secure_storage;
 pub mod system_prompt;
 pub mod wechat_ilink;
+// ClawWiki S4: adapter bridging codex_broker::CodexBroker to
+// wiki_maintainer::BrokerSender. Implements the maintainer's trait
+// for a wrapper struct (orphan rule forbids impl on foreign types)
+// so desktop-server's wiki routes can pass the process-global broker
+// straight into propose_for_raw_entry.
+pub mod wiki_maintainer_adapter;
 
 pub use codex_auth::{
     DesktopCodexAuthOverview, DesktopCodexAuthSource, DesktopCodexInstallationRecord,

@@ -16,6 +16,11 @@ import type {
   RawEntry,
   RawListResponse,
   SchemaResponse,
+  WikiApproveWithWriteResponse,
+  WikiPageDetailResponse,
+  WikiPageProposal,
+  WikiPagesListResponse,
+  WikiProposalResponse,
 } from "./types";
 
 /**
@@ -80,4 +85,57 @@ export async function resolveInboxEntry(
 /** GET `/api/wiki/schema` — read `schema/CLAUDE.md` verbatim. */
 export async function getWikiSchema(): Promise<SchemaResponse> {
   return fetchJson<SchemaResponse>("/api/wiki/schema");
+}
+
+// ── S4 Wiki Maintainer MVP ────────────────────────────────────
+
+/**
+ * POST `/api/wiki/inbox/:id/propose` — fires one chat_completion
+ * through the Codex broker to produce a `WikiPageProposal` for the
+ * raw entry referenced by this inbox task. Does NOT touch disk.
+ *
+ * Error handling: on 503 (empty broker pool) the caller should
+ * show a "add a Codex account" CTA; on 502 (LLM returned bad JSON
+ * or invalid shape) the caller should surface the message to the
+ * user. `fetchJson` throws on any non-2xx; inspect the thrown
+ * error's `.status` if available.
+ */
+export async function proposeForInboxEntry(
+  id: number,
+): Promise<WikiProposalResponse> {
+  return fetchJson<WikiProposalResponse>(
+    `/api/wiki/inbox/${id}/propose`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * POST `/api/wiki/inbox/:id/approve-with-write` — persist the
+ * proposal to `wiki/concepts/{slug}.md` and flip the inbox entry
+ * to `approved`. The frontend re-sends the proposal body because
+ * the server does not cache proposals between requests.
+ */
+export async function approveInboxWithWrite(
+  id: number,
+  proposal: WikiPageProposal,
+): Promise<WikiApproveWithWriteResponse> {
+  return fetchJson<WikiApproveWithWriteResponse>(
+    `/api/wiki/inbox/${id}/approve-with-write`,
+    {
+      method: "POST",
+      body: JSON.stringify({ proposal }),
+    },
+  );
+}
+
+/** GET `/api/wiki/pages` — list every concept page (no body text). */
+export async function listWikiPages(): Promise<WikiPagesListResponse> {
+  return fetchJson<WikiPagesListResponse>("/api/wiki/pages");
+}
+
+/** GET `/api/wiki/pages/:slug` — fetch a single concept page. */
+export async function getWikiPage(slug: string): Promise<WikiPageDetailResponse> {
+  return fetchJson<WikiPageDetailResponse>(
+    `/api/wiki/pages/${encodeURIComponent(slug)}`,
+  );
 }

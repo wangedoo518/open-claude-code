@@ -428,6 +428,30 @@ pub fn app(state: AppState) -> Router {
             "/api/wiki/inbox/{id}/resolve",
             post(resolve_wiki_inbox_handler),
         )
+        // ── ClawWiki S4 maintainer MVP (engram-style) ──────────────
+        // `propose` fires one chat_completion against the Codex pool
+        // via the wiki_maintainer crate and returns a JSON proposal
+        // without touching disk. `approve-with-write` is the
+        // human-confirmed follow-up: it writes the concept page to
+        // `wiki/concepts/{slug}.md` and flips the inbox entry to
+        // `approved` atomically. Canonical §4 blade 3.
+        .route(
+            "/api/wiki/inbox/{id}/propose",
+            post(propose_wiki_inbox_handler),
+        )
+        .route(
+            "/api/wiki/inbox/{id}/approve-with-write",
+            post(approve_wiki_inbox_with_write_handler),
+        )
+        // ── ClawWiki S4 wiki concept pages (read) ──────────────────
+        // Pure read routes for the Wiki tab and the InboxPage diff
+        // preview. Writes ONLY happen through the propose →
+        // approve-with-write flow above, so no POST /api/wiki/pages
+        // exists (the plan had one; review trimmed it because there's
+        // no UI producing standalone pages without a raw-entry
+        // seed — that's a follow-up sprint).
+        .route("/api/wiki/pages", get(list_wiki_pages_handler))
+        .route("/api/wiki/pages/{slug}", get(get_wiki_page_handler))
         // ── ClawWiki S6 schema layer (read-only) ───────────────────
         // Returns the text of `schema/CLAUDE.md` so the SchemaEditorPage
         // can render the maintainer agent's rule book. Per canonical
@@ -1927,6 +1951,289 @@ fn raw_entry_to_json(entry: &wiki_store::RawEntry) -> serde_json::Value {
         "source_url": entry.source_url,
         "ingested_at": entry.ingested_at,
         "byte_size": entry.byte_size,
+    })
+}
+
+// ── ClawWiki S4: maintainer MVP HTTP handlers ─────────────────────
+//
+// These handlers wrap `wiki_maintainer::propose_for_raw_entry` and
+// `wiki_store::{write_wiki_page, list_wiki_pages, read_wiki_page}`
+// — the engram-style MVP per canonical §4 blade 3.
+//
+// Design notes:
+//
+// * `propose` NEVER touches the filesystem. It reads the raw entry,
+//   fires one chat_completion through the process-global broker via
+//   `BrokerAdapter::from_global`, parses the JSON, returns. If the
+//   pool is empty the handler returns 503 with a clear message so
+//   the frontend can render an "add a Codex account" CTA.
+// * `approve-with-write` takes the proposal *from the request body*,
+//   not from any server-side cache. This is deliberate — we don't
+//   want to hold LLM outputs in memory between requests. The
+//   frontend keeps the proposal in its own state and re-sends on
+//   approve. Write goes first, then `resolve_inbox_entry(approve)`.
+//   Worst case on partial failure: page is on disk, inbox still
+//   pending. The user can retry the approve and get a 200 from the
+//   second resolve_inbox_entry call.
+// * `list_wiki_pages` and `get_wiki_page` are plain read routes;
+//   no auth, no permissions (ClawWiki's entire wiki/ is local and
+//   user-owned — anyone with access to the desktop-server binding
+//   has access to the wiki).
+
+/// `POST /api/wiki/inbox/{id}/propose`
+///
+/// Produce a `WikiPageProposal` for the raw entry referenced by the
+/// given inbox task. The inbox entry itself is NOT mutated — this
+/// route only previews. A follow-up `approve-with-write` call is
+/// required to persist anything.
+///
+/// Errors:
+///   * 404 if the inbox entry doesn't exist or has no source_raw_id
+///   * 404 if the raw entry is gone (stale inbox)
+///   * 503 if the Codex broker has no usable account in the pool
+///   * 502 if the LLM returns bad JSON
+///   * 500 on unexpected I/O failure
+async fn propose_wiki_inbox_handler(
+    Path(id): Path<u32>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+
+    // Step 1: find the inbox entry and pull its source_raw_id.
+    let entries = wiki_store::list_inbox_entries(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("list_inbox_entries failed: {e}"),
+            }),
+        )
+    })?;
+    let entry = entries.iter().find(|e| e.id == id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("inbox entry not found: {id}"),
+            }),
+        )
+    })?;
+    let raw_id = entry.source_raw_id.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("inbox entry {id} has no source_raw_id"),
+            }),
+        )
+    })?;
+
+    // Step 2: build a broker adapter. When the process-global broker
+    // is not installed (CLI tool path, tests) we explicitly return
+    // 503 so the frontend can distinguish "LLM unavailable" from
+    // "raw entry missing" and render the right CTA.
+    let adapter = desktop_core::wiki_maintainer_adapter::BrokerAdapter::from_global()
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "codex broker is not installed in this process".to_string(),
+                }),
+            )
+        })?;
+
+    // Step 3: fire the proposal.
+    let proposal =
+        wiki_maintainer::propose_for_raw_entry(&paths, raw_id, &adapter)
+            .await
+            .map_err(|e| match e {
+                wiki_maintainer::MaintainerError::RawNotAvailable(msg) => (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: format!("raw entry not available: {msg}"),
+                    }),
+                ),
+                wiki_maintainer::MaintainerError::Broker(msg) => {
+                    // NoAccountAvailable lands here via BrokerAdapter's
+                    // string flattening. Pin the 503 on anything that
+                    // includes the pool-empty signal; everything else
+                    // is an upstream LLM error worth a 502.
+                    let is_empty_pool =
+                        msg.contains("no codex account") || msg.contains("pool_size");
+                    let code = if is_empty_pool {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        StatusCode::BAD_GATEWAY
+                    };
+                    (
+                        code,
+                        Json(ErrorResponse {
+                            error: format!("broker error: {msg}"),
+                        }),
+                    )
+                }
+                wiki_maintainer::MaintainerError::BadJson { reason, preview } => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ErrorResponse {
+                        error: format!("LLM returned malformed JSON: {reason}; preview: {preview}"),
+                    }),
+                ),
+                wiki_maintainer::MaintainerError::InvalidProposal(msg) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ErrorResponse {
+                        error: format!("LLM proposal shape invalid: {msg}"),
+                    }),
+                ),
+            })?;
+
+    Ok(Json(serde_json::json!({
+        "proposal": wiki_page_proposal_to_json(&proposal),
+        "inbox_id": id,
+        "source_raw_id": raw_id,
+    })))
+}
+
+/// Request body for `POST /api/wiki/inbox/{id}/approve-with-write`.
+///
+/// The frontend re-sends the full proposal object it received from
+/// `propose` (the server doesn't cache proposals). The frontend is
+/// allowed to edit the fields before approving — so the user can
+/// fix a typo in the title or trim the body before persisting.
+#[derive(Debug, Deserialize)]
+struct ApproveWithWriteRequest {
+    proposal: WikiPageProposalBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiPageProposalBody {
+    slug: String,
+    title: String,
+    summary: String,
+    body: String,
+    #[serde(default)]
+    source_raw_id: Option<u32>,
+}
+
+/// `POST /api/wiki/inbox/{id}/approve-with-write`
+///
+/// Persist the proposal as a wiki page and resolve the inbox entry
+/// as `approved`. Two-step operation:
+///   1. `wiki_store::write_wiki_page(slug, title, summary, body)`
+///   2. `wiki_store::resolve_inbox_entry(id, "approve")`
+///
+/// Step 1 failures (invalid slug, I/O error) fail the whole request
+/// with nothing written. Step 2 failures (inbox already resolved,
+/// missing, etc.) are logged but do not fail the request — the
+/// wiki page IS on disk at that point and the user can re-approve
+/// from the Inbox UI to finish the bookkeeping. This is the "write
+/// first, bookkeep second" pattern from the plan.
+async fn approve_wiki_inbox_with_write_handler(
+    Path(id): Path<u32>,
+    Json(body): Json<ApproveWithWriteRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let p = body.proposal;
+
+    // Defense in depth: even though wiki_maintainer already
+    // validated the slug in `parse_proposal`, the frontend might
+    // have edited the proposal before re-sending. Let
+    // wiki_store::write_wiki_page validate again.
+    let written_path = wiki_store::write_wiki_page(
+        &paths,
+        &p.slug,
+        &p.title,
+        &p.summary,
+        &p.body,
+        p.source_raw_id,
+    )
+    .map_err(|e| match e {
+        wiki_store::WikiStoreError::Invalid(msg) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("invalid wiki page: {msg}"),
+            }),
+        ),
+        other => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("write_wiki_page failed: {other}"),
+            }),
+        ),
+    })?;
+
+    // Step 2: flip the inbox entry to approved. Soft-fail: we log
+    // and keep going even if resolve fails, because the wiki page
+    // is already persisted and re-running the approve from the
+    // frontend will get a 200 next time.
+    let inbox_result = wiki_store::resolve_inbox_entry(&paths, id, "approve");
+    let inbox_entry_json = match inbox_result {
+        Ok(updated) => Some(serde_json::to_value(&updated).unwrap_or(serde_json::Value::Null)),
+        Err(e) => {
+            eprintln!(
+                "approve-with-write: wiki page written but inbox resolve failed: {e}"
+            );
+            None
+        }
+    };
+
+    Ok(Json(serde_json::json!({
+        "written_path": written_path.display().to_string(),
+        "slug": p.slug,
+        "inbox_entry": inbox_entry_json,
+    })))
+}
+
+/// `GET /api/wiki/pages`
+///
+/// List every concept page under `wiki/concepts/`. Returns summaries
+/// (no body text) sorted by slug ascending.
+async fn list_wiki_pages_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let pages = wiki_store::list_wiki_pages(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("list_wiki_pages failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({
+        "pages": pages,
+        "total_count": pages.len(),
+    })))
+}
+
+/// `GET /api/wiki/pages/{slug}`
+///
+/// Fetch a single concept page by slug. Returns the parsed summary
+/// plus the body text. 404 if the slug doesn't exist or is invalid.
+async fn get_wiki_page_handler(
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let (summary, body) = wiki_store::read_wiki_page(&paths, &slug).map_err(|e| match e {
+        wiki_store::WikiStoreError::Invalid(msg) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("wiki page: {msg}"),
+            }),
+        ),
+        other => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read_wiki_page failed: {other}"),
+            }),
+        ),
+    })?;
+    Ok(Json(serde_json::json!({
+        "summary": summary,
+        "body": body,
+    })))
+}
+
+fn wiki_page_proposal_to_json(p: &wiki_maintainer::WikiPageProposal) -> serde_json::Value {
+    serde_json::json!({
+        "slug": p.slug,
+        "title": p.title,
+        "summary": p.summary,
+        "body": p.body,
+        "source_raw_id": p.source_raw_id,
     })
 }
 

@@ -79,6 +79,12 @@ pub const RAW_DIR: &str = "raw";
 /// the Inbox UI.
 pub const WIKI_DIR: &str = "wiki";
 
+/// Subdirectory under `wiki/` for concept pages specifically. Other
+/// canonical categories (people, topics, compare, changelog) get
+/// their own subdirs as future sprints add them; for S4 maintainer
+/// MVP only `concepts/` exists.
+pub const WIKI_CONCEPTS_SUBDIR: &str = "concepts";
+
 /// Subdirectory under the wiki root that holds human-curated rules
 /// (`CLAUDE.md`, `AGENTS.md`, templates, policies). The maintainer
 /// agent may PROPOSE changes via Inbox but never writes here directly.
@@ -620,6 +626,312 @@ fn strip_frontmatter(content: &str) -> &str {
         }
     }
     content
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Wiki layer CRUD (S4.2 — engram-style maintainer output target)
+// ─────────────────────────────────────────────────────────────────────
+//
+// `wiki/concepts/` is where the maintainer agent writes its output
+// per ClawWiki canonical §10 layer contract and §4 blade 3. Every
+// file is a human-reviewable concept page produced by
+// `wiki_maintainer::propose_for_raw_entry` followed by a human
+// "Approve & Write" click on the Inbox detail pane.
+//
+// Filename convention: `{slug}.md` (no numeric prefix — the slug IS
+// the primary key). A second write with the same slug OVERWRITES
+// the existing file; that's the MVP contract. A future sprint can
+// add an "already exists" warning path to the approve flow.
+//
+// Frontmatter shape matches canonical schema v1 (`type: concept`,
+// `status: draft`, `owner: maintainer`, `schema: v1`, plus
+// `title`, `summary`, optional `source_raw_id`, `created_at`).
+
+/// YAML frontmatter for concept wiki pages. Matches the canonical
+/// schema v1 "type: concept" shape from `templates/CLAUDE.md`
+/// §"Frontmatter (schema v1, required)".
+///
+/// Rust's `type` is a reserved keyword, so the discriminator field
+/// is stored as `kind` in Rust and emitted as `type` in YAML.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WikiFrontmatter {
+    /// Always `"concept"` for entries in `wiki/concepts/`. Future
+    /// sprints add `"people"`, `"topic"`, `"compare"`, `"changelog"`.
+    pub kind: String,
+    /// `"draft"` for newly-approved maintainer pages. The user can
+    /// promote to `"canonical"` via a future edit flow.
+    pub status: String,
+    /// Always `"maintainer"` for pages written via the engram flow.
+    pub owner: String,
+    /// Schema version pin: always `"v1"` until we bump.
+    pub schema: String,
+    /// Human-readable display title. May contain CJK, spaces, etc.
+    pub title: String,
+    /// Short one-line summary (≤ 200 chars per CLAUDE.md §Triggers).
+    pub summary: String,
+    /// The raw/ entry id that seeded this proposal. `None` when the
+    /// page was hand-written outside the maintainer flow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_raw_id: Option<u32>,
+    /// ISO-8601 datetime when the page was first written.
+    pub created_at: String,
+}
+
+impl WikiFrontmatter {
+    /// Build a frontmatter for a freshly-approved maintainer proposal.
+    /// `created_at` is filled with the current UTC datetime.
+    #[must_use]
+    pub fn for_concept(title: &str, summary: &str, source_raw_id: Option<u32>) -> Self {
+        Self {
+            kind: "concept".to_string(),
+            status: "draft".to_string(),
+            owner: "maintainer".to_string(),
+            schema: "v1".to_string(),
+            title: title.to_string(),
+            summary: summary.to_string(),
+            source_raw_id,
+            created_at: now_iso8601(),
+        }
+    }
+
+    /// Render the frontmatter as a YAML block delimited by `---`
+    /// lines, suitable for prepending to the markdown body.
+    ///
+    /// Hand-written (same reasoning as `RawFrontmatter::to_yaml_block`)
+    /// — field set is small, values are controlled, and we keep the
+    /// `wiki_store` crate at 2 deps total. The Rust `kind` field is
+    /// emitted as `type:` per canonical schema v1.
+    #[must_use]
+    pub fn to_yaml_block(&self) -> String {
+        let mut s = String::from("---\n");
+        s.push_str(&format!("type: {}\n", self.kind));
+        s.push_str(&format!("status: {}\n", self.status));
+        s.push_str(&format!("owner: {}\n", self.owner));
+        s.push_str(&format!("schema: {}\n", self.schema));
+        s.push_str(&format!("title: {}\n", self.title));
+        s.push_str(&format!("summary: {}\n", self.summary));
+        if let Some(raw_id) = self.source_raw_id {
+            s.push_str(&format!("source_raw_id: {raw_id}\n"));
+        }
+        s.push_str(&format!("created_at: {}\n", self.created_at));
+        s.push_str("---\n");
+        s
+    }
+}
+
+/// On-disk metadata for a single wiki concept page, returned by
+/// [`list_wiki_pages`] and [`read_wiki_page`]. Mirrors `RawEntry`'s
+/// shape for the raw layer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WikiPageSummary {
+    /// Slug (kebab-case ASCII). Primary key and filename stem.
+    pub slug: String,
+    /// Display title from the frontmatter.
+    pub title: String,
+    /// Short one-line summary from the frontmatter.
+    pub summary: String,
+    /// Optional raw/ entry id that seeded this page.
+    pub source_raw_id: Option<u32>,
+    /// ISO-8601 datetime from the frontmatter.
+    pub created_at: String,
+    /// File size in bytes (for the listing UI).
+    pub byte_size: u64,
+}
+
+/// Validate a wiki page slug. Rules match `slugify` output plus the
+/// subset of RFC 3986 unreserved chars the maintainer's
+/// `parse_proposal()` accepts (ASCII alphanumeric + `-`, `_`, `.`).
+///
+/// * Non-empty
+/// * ≤ 64 chars
+/// * ASCII alphanumeric or one of `-`, `_`, `.`
+///
+/// Used by all three wiki-layer CRUD entry points so bogus slugs
+/// from hand-edited API calls never touch the filesystem.
+fn validate_wiki_slug(slug: &str) -> Result<()> {
+    if slug.is_empty() {
+        return Err(WikiStoreError::Invalid("slug is empty".to_string()));
+    }
+    if slug.len() > 64 {
+        return Err(WikiStoreError::Invalid(format!(
+            "slug longer than 64 chars: {slug}"
+        )));
+    }
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(WikiStoreError::Invalid(format!(
+            "slug contains invalid chars: {slug}"
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve the absolute filesystem path for a wiki concept page
+/// given its slug. Pure — does not touch the filesystem, does not
+/// validate the slug (callers that hit disk must validate first).
+#[must_use]
+pub fn wiki_concept_path(paths: &WikiPaths, slug: &str) -> PathBuf {
+    paths.wiki.join(WIKI_CONCEPTS_SUBDIR).join(format!("{slug}.md"))
+}
+
+/// Write a concept wiki page to `wiki/concepts/{slug}.md`.
+///
+/// Idempotent by slug: a second call with the same slug
+/// OVERWRITES the existing file (canonical §4 blade 3 explicitly
+/// allows this — the maintainer is allowed to re-summarise with
+/// newer information, and the Inbox approve flow gates every write
+/// through a human decision anyway).
+///
+/// Atomic: writes to a sibling `.tmp` file then renames into place
+/// so a crash mid-write can't leave a half-written concept page on
+/// disk. Same technique as `save_inbox_file`.
+///
+/// Errors:
+///   * `WikiStoreError::Invalid` if `slug` fails validation
+///   * I/O errors (filesystem full, permission denied, ...)
+pub fn write_wiki_page(
+    paths: &WikiPaths,
+    slug: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    source_raw_id: Option<u32>,
+) -> Result<PathBuf> {
+    validate_wiki_slug(slug)?;
+    let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+    fs::create_dir_all(&concepts_dir).map_err(|e| WikiStoreError::io(concepts_dir.clone(), e))?;
+    let path = wiki_concept_path(paths, slug);
+
+    // Compose the full file content: YAML frontmatter + blank line + body.
+    let frontmatter = WikiFrontmatter::for_concept(title, summary, source_raw_id);
+    let mut content = frontmatter.to_yaml_block();
+    content.push('\n');
+    content.push_str(body);
+    if !body.ends_with('\n') {
+        content.push('\n');
+    }
+
+    // Atomic write: tmp + rename.
+    let tmp = path.with_extension("md.tmp");
+    fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(path)
+}
+
+/// List every wiki concept page under `wiki/concepts/`, sorted by
+/// slug ascending. Missing or empty directory both return an empty
+/// `Vec` (consistent with `list_raw_entries`).
+///
+/// Same "no index cache" philosophy as `list_raw_entries`: we
+/// re-parse the frontmatter of every `.md` file on each call. The
+/// directory rarely exceeds a few hundred entries during MVP and
+/// re-parsing avoids any drift-vs-disk bugs.
+pub fn list_wiki_pages(paths: &WikiPaths) -> Result<Vec<WikiPageSummary>> {
+    let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+    if !concepts_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut summaries: Vec<WikiPageSummary> = Vec::new();
+    let dir = fs::read_dir(&concepts_dir)
+        .map_err(|e| WikiStoreError::io(concepts_dir.clone(), e))?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let slug = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        // Silently skip filenames that don't match the slug contract
+        // (e.g. a stray README.md a user drops into the dir). Don't
+        // error the whole list — the frontend still wants to show
+        // the rest.
+        if validate_wiki_slug(&slug).is_err() {
+            continue;
+        }
+        if let Ok(summary) = parse_wiki_file(&path, &slug) {
+            summaries.push(summary);
+        }
+    }
+    summaries.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(summaries)
+}
+
+/// Read a single wiki concept page by slug. Returns the parsed
+/// summary plus the body text (everything after the closing `---`
+/// of the frontmatter, leading newline trimmed — same convention
+/// as `read_raw_entry`).
+///
+/// Errors with `WikiStoreError::Invalid` when the file doesn't
+/// exist; the `NotFound` variant currently carries only `u32` ids
+/// for the raw layer. A future sprint can switch it to an enum
+/// carrying either ids or slugs.
+pub fn read_wiki_page(paths: &WikiPaths, slug: &str) -> Result<(WikiPageSummary, String)> {
+    validate_wiki_slug(slug)?;
+    let path = wiki_concept_path(paths, slug);
+    if !path.is_file() {
+        return Err(WikiStoreError::Invalid(format!(
+            "wiki page not found: {slug}"
+        )));
+    }
+    let summary = parse_wiki_file(&path, slug)?;
+    let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let body = strip_frontmatter(&content).to_string();
+    Ok((summary, body))
+}
+
+/// Parse a single wiki file into a `WikiPageSummary`. The body
+/// itself is not returned — use [`read_wiki_page`] for that.
+fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
+    let content =
+        fs::read_to_string(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
+    let metadata = fs::metadata(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
+    let (title, summary, source_raw_id, created_at) = parse_wiki_frontmatter_fields(&content);
+    Ok(WikiPageSummary {
+        slug: slug.to_string(),
+        title,
+        summary,
+        source_raw_id,
+        created_at,
+        byte_size: metadata.len(),
+    })
+}
+
+/// Pull `title`, `summary`, `source_raw_id`, `created_at` out of the
+/// YAML frontmatter of a wiki page. Tolerant of missing fields —
+/// returns empty strings / `None` rather than erroring. Same
+/// defensive posture as `parse_frontmatter_fields` for raw entries.
+fn parse_wiki_frontmatter_fields(content: &str) -> (String, String, Option<u32>, String) {
+    let mut title = String::new();
+    let mut summary = String::new();
+    let mut source_raw_id: Option<u32> = None;
+    let mut created_at = String::new();
+    let mut in_frontmatter = false;
+    for line in content.lines() {
+        if line == "---" {
+            if in_frontmatter {
+                break;
+            }
+            in_frontmatter = true;
+            continue;
+        }
+        if !in_frontmatter {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("title: ") {
+            title = rest.to_string();
+        } else if let Some(rest) = line.strip_prefix("summary: ") {
+            summary = rest.to_string();
+        } else if let Some(rest) = line.strip_prefix("source_raw_id: ") {
+            source_raw_id = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("created_at: ") {
+            created_at = rest.to_string();
+        }
+    }
+    (title, summary, source_raw_id, created_at)
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1210,6 +1522,234 @@ mod tests {
         assert_eq!(format_iso8601(0), "1970-01-01T00:00:00Z");
         // Y2K
         assert_eq!(format_iso8601(946_684_800), "2000-01-01T00:00:00Z");
+    }
+
+    // ── S4.2 Wiki layer CRUD tests ───────────────────────────────
+
+    #[test]
+    fn write_wiki_page_creates_concepts_dir_and_file() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        // Precondition: wiki/concepts/ does NOT exist after init_wiki
+        // (init creates wiki/ but not its subdirs).
+        let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+        assert!(!concepts_dir.exists(), "concepts/ must not exist pre-write");
+
+        let written = write_wiki_page(
+            &paths,
+            "llm-wiki",
+            "LLM Wiki",
+            "Karpathy three-layer cognitive asset architecture.",
+            "# LLM Wiki\n\nThree layers: raw/ wiki/ schema/.\n",
+            Some(42),
+        )
+        .unwrap();
+
+        // Directory got created and the file lives at the expected path.
+        assert!(concepts_dir.is_dir(), "concepts/ not created by write");
+        assert!(written.ends_with("wiki/concepts/llm-wiki.md")
+            || written.ends_with("wiki\\concepts\\llm-wiki.md"));
+        assert!(written.is_file());
+
+        // File content has the canonical schema v1 shape: type: concept
+        // (NOT "kind:"), owner: maintainer, schema: v1, source_raw_id
+        // echoed, and the body appended after a blank line.
+        let content = fs::read_to_string(&written).unwrap();
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("type: concept\n"));
+        assert!(content.contains("status: draft\n"));
+        assert!(content.contains("owner: maintainer\n"));
+        assert!(content.contains("schema: v1\n"));
+        assert!(content.contains("title: LLM Wiki\n"));
+        assert!(content.contains(
+            "summary: Karpathy three-layer cognitive asset architecture.\n"
+        ));
+        assert!(content.contains("source_raw_id: 42\n"));
+        assert!(content.contains("# LLM Wiki"));
+        assert!(content.contains("Three layers: raw/ wiki/ schema/."));
+    }
+
+    #[test]
+    fn write_wiki_page_is_idempotent_by_slug() {
+        // Canonical §4 blade 3 allows the maintainer to re-summarise
+        // an existing page — the slug is the primary key, not the
+        // numeric id. Test: write twice with the same slug, verify
+        // the second write replaces (not duplicates) the first.
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let path1 = write_wiki_page(
+            &paths,
+            "topic-a",
+            "First Title",
+            "first summary",
+            "First body.\n",
+            Some(1),
+        )
+        .unwrap();
+
+        let path2 = write_wiki_page(
+            &paths,
+            "topic-a",
+            "Second Title",
+            "second summary",
+            "Second body revised.\n",
+            Some(2),
+        )
+        .unwrap();
+
+        // Same slug → same path
+        assert_eq!(path1, path2);
+
+        // Second write wins — file contains only the second content.
+        let content = fs::read_to_string(&path2).unwrap();
+        assert!(content.contains("title: Second Title"));
+        assert!(content.contains("Second body revised"));
+        assert!(!content.contains("First Title"));
+        assert!(!content.contains("First body"));
+
+        // And the list still shows exactly one page.
+        let listed = list_wiki_pages(&paths).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].slug, "topic-a");
+        assert_eq!(listed[0].title, "Second Title");
+        assert_eq!(listed[0].source_raw_id, Some(2));
+    }
+
+    #[test]
+    fn list_wiki_pages_returns_empty_for_fresh_wiki() {
+        // Fresh wiki root, no writes yet. `list_wiki_pages` must
+        // return an empty Vec (not error) even though the
+        // `wiki/concepts/` subdirectory doesn't exist yet.
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let listed = list_wiki_pages(&paths).unwrap();
+        assert!(listed.is_empty(), "fresh wiki must list zero pages");
+
+        // Also: even after we write one page and then list, the sort
+        // order is deterministic ascending-by-slug.
+        write_wiki_page(&paths, "bravo", "B", "b sum", "body b", None).unwrap();
+        write_wiki_page(&paths, "alpha", "A", "a sum", "body a", None).unwrap();
+        write_wiki_page(&paths, "charlie", "C", "c sum", "body c", None).unwrap();
+
+        let listed = list_wiki_pages(&paths).unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(listed[0].slug, "alpha");
+        assert_eq!(listed[1].slug, "bravo");
+        assert_eq!(listed[2].slug, "charlie");
+
+        // Decoy files are silently skipped.
+        let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+        fs::write(concepts_dir.join("not-a-page.txt"), "junk").unwrap();
+        fs::write(concepts_dir.join("has space.md"), "still junk").unwrap();
+        let listed = list_wiki_pages(&paths).unwrap();
+        assert_eq!(listed.len(), 3, "decoys must not appear in listing");
+    }
+
+    #[test]
+    fn read_wiki_page_roundtrip() {
+        // Write → read → verify every field survives the round-trip.
+        // This is the core contract between write_wiki_page and the
+        // eventual `GET /api/wiki/pages/:slug` handler.
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let body_in =
+            "# Engram\n\nOne-pass LLM maintainer.\n\nFires one chat_completion per raw entry.\n";
+        write_wiki_page(
+            &paths,
+            "engram",
+            "Engram",
+            "Single-pass maintainer flavor.",
+            body_in,
+            Some(7),
+        )
+        .unwrap();
+
+        let (summary, body) = read_wiki_page(&paths, "engram").unwrap();
+        assert_eq!(summary.slug, "engram");
+        assert_eq!(summary.title, "Engram");
+        assert_eq!(summary.summary, "Single-pass maintainer flavor.");
+        assert_eq!(summary.source_raw_id, Some(7));
+        assert!(!summary.created_at.is_empty());
+        assert!(summary.byte_size > 0);
+        assert_eq!(body, body_in);
+        assert!(!body.starts_with("---"));
+
+        // Missing slug → Invalid (not NotFound — see docstring on
+        // WikiStoreError::NotFound which is reserved for numeric ids).
+        let err = read_wiki_page(&paths, "does-not-exist").unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+    }
+
+    #[test]
+    fn write_wiki_page_rejects_invalid_slug() {
+        // Slug validation is the last defense against a buggy LLM
+        // (or a hostile HTTP caller) trying to path-escape the
+        // wiki/concepts/ directory. Pin the contract explicitly.
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        // Empty
+        let err = write_wiki_page(&paths, "", "T", "s", "b", None).unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        // Space
+        let err = write_wiki_page(&paths, "has space", "T", "s", "b", None).unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        // Path traversal
+        let err =
+            write_wiki_page(&paths, "../escape", "T", "s", "b", None).unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        // > 64 chars
+        let long = "a".repeat(65);
+        let err = write_wiki_page(&paths, &long, "T", "s", "b", None).unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        // Non-ASCII
+        let err =
+            write_wiki_page(&paths, "中文", "T", "s", "b", None).unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+    }
+
+    #[test]
+    fn wiki_frontmatter_emits_canonical_schema_v1() {
+        // Pin the YAML shape so a future refactor can't silently
+        // swap `type:` back to `kind:`. Canonical §"Frontmatter"
+        // requires `type:`.
+        let fm = WikiFrontmatter::for_concept(
+            "LLM Wiki",
+            "three layers",
+            Some(3),
+        );
+        let yaml = fm.to_yaml_block();
+        assert!(yaml.starts_with("---\n"));
+        assert!(yaml.ends_with("---\n"));
+        assert!(yaml.contains("type: concept\n"));
+        assert!(!yaml.contains("kind:"), "must emit `type:` not `kind:`");
+        assert!(yaml.contains("status: draft\n"));
+        assert!(yaml.contains("owner: maintainer\n"));
+        assert!(yaml.contains("schema: v1\n"));
+        assert!(yaml.contains("title: LLM Wiki\n"));
+        assert!(yaml.contains("summary: three layers\n"));
+        assert!(yaml.contains("source_raw_id: 3\n"));
+        assert!(yaml.contains("created_at: "));
+    }
+
+    #[test]
+    fn wiki_frontmatter_omits_source_raw_id_when_none() {
+        let fm = WikiFrontmatter::for_concept("Title", "Summary", None);
+        let yaml = fm.to_yaml_block();
+        assert!(!yaml.contains("source_raw_id:"));
     }
 
     // ── S4.1 Inbox layer tests ───────────────────────────────────

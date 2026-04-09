@@ -325,6 +325,7 @@ dependencies = [
  "tools",
  "url",
  "uuid",
+ "wiki_maintainer",
  "wiki_store",
 ]
 
@@ -347,6 +348,7 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "wiki_ingest",
+ "wiki_maintainer",
  "wiki_store",
 ]
 
@@ -2176,6 +2178,20 @@ name = "wiki_ingest"
 version = "0.1.0"
 dependencies = [
  "reqwest",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "wiki_store",
+]
+
+[[package]]
+name = "wiki_maintainer"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "async-trait",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

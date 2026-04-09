@@ -15,6 +15,7 @@ axum = "0.8"
 base64 = "0.22"
 bytes = "1"
 desktop-core = { path = "../desktop-core" }
+wiki_maintainer = { path = "../wiki_maintainer" }
 wiki_store = { path = "../wiki_store" }
 wiki_ingest = { path = "../wiki_ingest" }
 futures = "0.3"

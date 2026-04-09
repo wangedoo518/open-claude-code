@@ -89,3 +89,63 @@ export interface SchemaResponse {
   source: "disk";
   byte_size: number;
 }
+
+// ── S4 Wiki Maintainer MVP (engram-style) ────────────────────────
+//
+// Wire types for the maintainer flow: `propose` produces a
+// `WikiPageProposal` via one `chat_completion` call, then
+// `approve-with-write` persists it to `wiki/concepts/{slug}.md`
+// and resolves the corresponding inbox entry atomically.
+//
+// Mirrors the Rust types in `wiki_maintainer::WikiPageProposal`
+// and the `/api/wiki/inbox/:id/propose` response envelope.
+
+export interface WikiPageProposal {
+  /** kebab-case ASCII slug, primary key */
+  slug: string;
+  /** human-readable display title (may contain CJK) */
+  title: string;
+  /** one-line summary, ≤ 200 chars */
+  summary: string;
+  /** full markdown body, ≤ 200 words */
+  body: string;
+  /** raw/ entry id that seeded this proposal (echoed from server) */
+  source_raw_id: number;
+}
+
+export interface WikiProposalResponse {
+  proposal: WikiPageProposal;
+  inbox_id: number;
+  source_raw_id: number;
+}
+
+export interface WikiApproveWithWriteResponse {
+  /** Absolute path where the concept page was written. */
+  written_path: string;
+  slug: string;
+  /**
+   * Updated inbox entry after the approve. `null` if the inbox
+   * resolve failed after the page was written — the page is on
+   * disk and the user can retry approval from the Inbox UI.
+   */
+  inbox_entry: InboxEntry | null;
+}
+
+export interface WikiPageSummary {
+  slug: string;
+  title: string;
+  summary: string;
+  source_raw_id?: number | null;
+  created_at: string;
+  byte_size: number;
+}
+
+export interface WikiPagesListResponse {
+  pages: WikiPageSummary[];
+  total_count: number;
+}
+
+export interface WikiPageDetailResponse {
+  summary: WikiPageSummary;
+  body: string;
+}

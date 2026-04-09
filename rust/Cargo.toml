@@ -9,6 +9,7 @@ members = [
     # so each crate lands behind its own RED→GREEN→commit cycle.
     "crates/wiki_store",
     "crates/wiki_ingest",
+    "crates/wiki_maintainer",
 ]
 resolver = "2"
 

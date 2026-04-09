@@ -36,12 +36,20 @@ import {
   Clock,
   FileText,
   ArrowRight,
+  Sparkles,
+  Save,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { listInboxEntries, resolveInboxEntry } from "@/features/ingest/persist";
+import {
+  approveInboxWithWrite,
+  listInboxEntries,
+  proposeForInboxEntry,
+  resolveInboxEntry,
+} from "@/features/ingest/persist";
 import type {
   InboxEntry,
   InboxResolveAction,
+  WikiPageProposal,
 } from "@/features/ingest/types";
 
 const inboxKeys = {
@@ -270,14 +278,55 @@ function StatusIcon({ status }: { status: InboxEntry["status"] }) {
 
 function EntryDetail({ entry }: { entry: InboxEntry }) {
   const queryClient = useQueryClient();
-  const mutation = useMutation({
+
+  // Proposal state is scoped to the currently-selected entry so that
+  // switching to a different entry clears the preview (a proposal for
+  // entry #3 should not leak into the view for entry #4). We key the
+  // reset effect on `entry.id`.
+  const [proposal, setProposal] = useState<WikiPageProposal | null>(null);
+  useEffect(() => {
+    setProposal(null);
+  }, [entry.id]);
+
+  // Quick approve/reject without writing anything (backwards compat).
+  const resolveMutation = useMutation({
     mutationFn: (action: InboxResolveAction) => resolveInboxEntry(entry.id, action),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
     },
   });
 
+  // Fire the maintainer proposal: one chat_completion through the
+  // Codex broker. This does NOT mutate the inbox entry — the user
+  // still has to click "Approve & Write Wiki Page" or "Reject" next.
+  const proposeMutation = useMutation({
+    mutationFn: () => proposeForInboxEntry(entry.id),
+    onSuccess: (data) => {
+      setProposal(data.proposal);
+    },
+  });
+
+  // Persist the proposal as a wiki page AND resolve the inbox entry
+  // as approved in one atomic-ish step (write first, then resolve;
+  // worst case a half-failure leaves the page on disk and the user
+  // can retry the approve from the UI).
+  const writeMutation = useMutation({
+    mutationFn: (p: WikiPageProposal) => approveInboxWithWrite(entry.id, p),
+    onSuccess: () => {
+      setProposal(null);
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+    },
+  });
+
   const isResolved = entry.status !== "pending";
+  const canMaintain =
+    !isResolved &&
+    entry.kind === "new-raw" &&
+    entry.source_raw_id != null &&
+    proposal === null;
+
+  const anyPending =
+    resolveMutation.isPending || proposeMutation.isPending || writeMutation.isPending;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -322,21 +371,67 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
           {entry.description}
         </p>
 
-        <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
-          Maintainer Task Tree
-        </h3>
-        <div className="rounded-md border border-border/50 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
-          <div className="mb-1 text-body-sm text-muted-foreground">
-            🌲 TaskTree visualization lands once codex_broker wires
-            chat_completion.
-          </div>
-          <div className="text-caption text-muted-foreground/60">
-            For now the task is approved/rejected at the entry level —
-            one button per task, not per tool call.
-          </div>
-        </div>
+        {/* ── Maintainer proposal preview ───────────────────────── */}
+        {proposal ? (
+          <>
+            <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+              Proposed wiki page
+            </h3>
+            <ProposalPreview proposal={proposal} />
+          </>
+        ) : canMaintain ? (
+          <>
+            <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+              Maintainer
+            </h3>
+            <div className="rounded-md border border-border/50 bg-muted/10 px-4 py-6">
+              <div className="mb-2 text-body-sm text-foreground/90">
+                Ask the maintainer agent to summarise this raw entry
+                into a concept wiki page.
+              </div>
+              <div className="mb-3 text-caption text-muted-foreground">
+                Fires one <code className="rounded bg-muted/40 px-1">
+                  chat_completion
+                </code>{" "}
+                against the Codex pool (engram style, ≤ 200 words, ≤ 15
+                consecutive quoted words). Nothing is written to disk
+                until you approve.
+              </div>
+              <button
+                type="button"
+                onClick={() => proposeMutation.mutate()}
+                disabled={anyPending}
+                className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {proposeMutation.isPending ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Sparkles className="size-3" />
+                )}
+                Maintain this
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+              Maintainer Task Tree
+            </h3>
+            <div className="rounded-md border border-border/50 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
+              <div className="mb-1 text-body-sm text-muted-foreground">
+                🌲 TaskTree visualization lands once codex_broker wires
+                chat_completion.
+              </div>
+              <div className="text-caption text-muted-foreground/60">
+                For now the task is approved/rejected at the entry level —
+                one button per task, not per tool call.
+              </div>
+            </div>
+          </>
+        )}
 
-        {mutation.error && (
+        {/* ── Error strip: surfaces propose/write/resolve errors ── */}
+        {(proposeMutation.error || writeMutation.error || resolveMutation.error) && (
           <div
             className="mt-4 rounded-md border px-3 py-2 text-caption"
             style={{
@@ -347,7 +442,15 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
               color: "var(--color-error)",
             }}
           >
-            Failed to resolve: {String(mutation.error)}
+            {proposeMutation.error && (
+              <div>Propose failed: {String(proposeMutation.error)}</div>
+            )}
+            {writeMutation.error && (
+              <div>Write failed: {String(writeMutation.error)}</div>
+            )}
+            {resolveMutation.error && (
+              <div>Resolve failed: {String(resolveMutation.error)}</div>
+            )}
           </div>
         )}
       </div>
@@ -363,28 +466,84 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => mutation.mutate("reject")}
-              disabled={mutation.isPending}
+              onClick={() => resolveMutation.mutate("reject")}
+              disabled={anyPending}
               className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-body-sm font-medium text-muted-foreground transition-colors hover:border-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
             >
               <XCircle className="size-3" />
               Reject
             </button>
-            <button
-              type="button"
-              onClick={() => mutation.mutate("approve")}
-              disabled={mutation.isPending}
-              className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-            >
-              {mutation.isPending ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <CheckCircle2 className="size-3" />
-              )}
-              Approve
-            </button>
+            {proposal ? (
+              <button
+                type="button"
+                onClick={() => writeMutation.mutate(proposal)}
+                disabled={anyPending}
+                className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {writeMutation.isPending ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Save className="size-3" />
+                )}
+                Approve &amp; Write Wiki Page
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => resolveMutation.mutate("approve")}
+                disabled={anyPending}
+                className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {resolveMutation.isPending ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-3" />
+                )}
+                Approve
+              </button>
+            )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render a `WikiPageProposal` as a reviewable card: slug + title +
+ * summary + body preview. Hard-pins the body to pre-wrap so the
+ * LLM's newlines survive, and caps the visible body at a reasonable
+ * height (the whole body is always there, just in an internal
+ * scrollable region so the detail pane doesn't jump in size).
+ */
+function ProposalPreview({ proposal }: { proposal: WikiPageProposal }) {
+  return (
+    <div className="rounded-md border border-border/50 bg-background">
+      <div className="flex items-start justify-between gap-2 border-b border-border/40 px-4 py-2.5">
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="rounded-sm bg-muted/40 px-1 font-mono text-caption text-muted-foreground">
+              {proposal.slug}
+            </span>
+            <span className="text-caption text-muted-foreground">
+              from raw #{String(proposal.source_raw_id).padStart(5, "0")}
+            </span>
+          </div>
+          <div
+            className="mt-1 text-body font-semibold text-foreground"
+            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+          >
+            {proposal.title}
+          </div>
+          <div className="mt-1 text-caption text-muted-foreground">
+            {proposal.summary}
+          </div>
+        </div>
+      </div>
+      <div className="max-h-64 overflow-auto px-4 py-3">
+        <pre className="whitespace-pre-wrap text-body-sm text-foreground/90">
+          {proposal.body}
+        </pre>
       </div>
     </div>
   );
