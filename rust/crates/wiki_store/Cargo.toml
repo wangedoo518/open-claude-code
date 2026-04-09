@@ -1,0 +1,24 @@
+[package]
+name = "wiki_store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# ── Why a standalone crate? ────────────────────────────────────────
+# `wiki_store` owns the on-disk layout of `~/.clawwiki/` (raw/wiki/
+# schema/.clawwiki). Per ClawWiki canonical §11.2, this is one of the
+# six new crates that compose the ingestion + maintenance pipeline.
+# Keeping it separate from `desktop-core` lets the `wiki_maintainer`
+# and `wiki_ingest` crates depend on the layout without inheriting
+# `desktop-core`'s heavy http/agentic_loop dependency tree.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
