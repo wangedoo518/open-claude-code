@@ -418,6 +418,16 @@ pub fn app(state: AppState) -> Router {
             get(list_wiki_raw_handler).post(ingest_wiki_raw_handler),
         )
         .route("/api/wiki/raw/{id}", get(get_wiki_raw_handler))
+        // ── ClawWiki N: URL preview proxy (canonical §9.3) ─────────
+        // POST /api/wiki/fetch — fetches a URL through the
+        // server's HTTP client and returns the extracted markdown
+        // WITHOUT writing to disk. Designed for a future "preview
+        // before commit" UI: paste URL → click Preview → see the
+        // extracted body → click Commit to actually ingest. The
+        // ingest path (POST /api/wiki/raw above) does the same
+        // fetch internally; this route exists so the preview can
+        // happen WITHOUT side effects.
+        .route("/api/wiki/fetch", post(preview_wiki_fetch_handler))
         // ── ClawWiki S4 inbox layer routes ─────────────────────────
         // Maintainer-proposed tasks that need user approval. S4 MVP:
         // raw-ingest side-effect auto-appends a `new-raw` task; future
@@ -1811,6 +1821,72 @@ async fn ingest_wiki_raw_handler(
     }
 
     Ok(Json(raw_entry_to_json(&entry)))
+}
+
+/// `POST /api/wiki/fetch` (canonical §9.3 · feat N)
+///
+/// Preview a URL by running the same `wiki_ingest::url::fetch_and_body`
+/// pipeline that `POST /api/wiki/raw` uses, but **without** writing
+/// to disk or appending an Inbox task. Returns the extracted title,
+/// markdown body, source URL, and source tag in a JSON envelope.
+///
+/// This is the "preview before commit" surface for a future two-step
+/// UI flow: paste URL → click Preview → see extracted markdown →
+/// click Commit (which then hits `POST /api/wiki/raw`). MVP frontend
+/// doesn't have that two-step flow yet, but the route exists so the
+/// UI can be built without server-side changes later.
+///
+/// Body shape:
+/// ```json
+/// { "url": "https://mp.weixin.qq.com/s/..." }
+/// ```
+///
+/// Returns:
+/// ```json
+/// {
+///   "title": "...",
+///   "body": "# ...\n\n_Source: <...>_\n\n...",
+///   "source_url": "...",
+///   "source": "url"
+/// }
+/// ```
+///
+/// Errors:
+/// * 400 — empty/invalid url
+/// * 502 — upstream fetch failed (network, non-2xx, oversize)
+async fn preview_wiki_fetch_handler(
+    Json(body): Json<PreviewFetchRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let url = body.url.trim();
+    if url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "url must not be empty".to_string(),
+            }),
+        ));
+    }
+
+    let result = wiki_ingest::url::fetch_and_body(url).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: format!("url fetch failed: {e}"),
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "title": result.title,
+        "body": result.body,
+        "source_url": result.source_url,
+        "source": result.source,
+    })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PreviewFetchRequest {
+    url: String,
 }
 
 /// `GET /api/wiki/raw`
