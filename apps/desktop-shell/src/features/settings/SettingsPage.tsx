@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import {
   Settings,
   Key,
+  ServerCog,
   MessageCircle,
   Plug,
   Shield,
@@ -17,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { GeneralSettings } from "./sections/GeneralSettings";
 import { ProviderSettings } from "./sections/ProviderSettings";
+import { SubscriptionCodexPool } from "./sections/SubscriptionCodexPool";
 import { WeChatSettings } from "./sections/WeChatSettings";
 import { McpSettings } from "./sections/McpSettings";
 import { PermissionSettings } from "./sections/PermissionSettings";
@@ -37,6 +39,7 @@ import { useSettingsStore } from "@/state/settings-store";
 type SettingsSection =
   | "general"
   | "provider"
+  | "codex-pool"
   | "wechat"
   | "mcp"
   | "permissions"
@@ -54,9 +57,15 @@ interface MenuItem {
 const MENU_ITEMS: MenuItem[] = [
   { id: "general", i18nKey: "settings.general", icon: Settings },
   { id: "provider", i18nKey: "settings.provider", icon: Key },
-  // S0.4 cut day: the Phase 5 "LLM Providers" entry is gone. ClawWiki
-  // canonical §11.1 cut #6 — users do not pick a provider; the Codex
-  // pool (S2) is the single source.
+  // S2: Codex pool read-only panel. The broker lives in the Rust
+  // process (canonical §9.2); this entry is the only user-facing
+  // surface — there is no provider picker, no API-key paste form.
+  {
+    id: "codex-pool",
+    i18nKey: "settings.codexPool",
+    icon: ServerCog,
+    labelOverride: "Subscription & Codex Pool",
+  },
   // Phase 6C: WeChat account management (list + QR login + delete).
   // Sits between multi-provider (backend config) and MCP (tool config)
   // because it's a per-user "which channels do you talk through" setting.
@@ -191,8 +200,9 @@ function SettingsContent({
   // GeneralSettings and ShortcutsSettings use Redux / static data — no backend needed
   if (section === "general") return <GeneralSettings />;
   if (section === "shortcuts") return <ShortcutsSettings />;
-  // Multi-provider registry has its own React Query hooks and is not
-  // blocked by the other settings queries.
+  // S2 Codex pool has its own React Query hooks (broker status +
+  // account list + clear mutation) and is not blocked by bootstrap.
+  if (section === "codex-pool") return <SubscriptionCodexPool />;
   // Same story for WeChat accounts — fully self-contained React Query +
   // polling, never blocked on bootstrap/settings/customize.
   if (section === "wechat") return <WeChatSettings />;

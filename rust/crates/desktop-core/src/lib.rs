@@ -39,6 +39,11 @@ use tools::GlobalToolRegistry;
 pub mod agentic_loop;
 pub mod attachments;
 mod codex_auth;
+// ClawWiki S2: internal Codex subscription account pool per
+// canonical §9.2. Owns the cloud-managed accounts in-process with
+// AES-GCM at-rest persistence; chat_completion() is stubbed until
+// ask_runtime wires it in S3. NEVER exposed through any HTTP /v1/*.
+pub mod codex_broker;
 mod managed_auth;
 mod oauth_runtime;
 pub mod protocol_codegen;

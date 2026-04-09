@@ -27,20 +27,79 @@ use tower_http::cors::{Any, CorsLayer};
 // `/api/desktop/code-tools/*` routes. ClawWiki canonical §11.1 cut #3
 // — there is no /code page, no CLI launcher, no claude-bridge proxy.
 
-#[derive(Clone, Default)]
+use std::sync::Arc;
+
+#[derive(Clone)]
 pub struct AppState {
     desktop: DesktopState,
+    // S2: internal Codex account pool (canonical §9.2). Shared across
+    // handlers via Arc because AppState is Clone'd into every request.
+    // `Arc<CodexBroker>` — the inner RwLock + AtomicU64 handle their
+    // own sync; we never need a Mutex around the whole thing.
+    broker: Arc<desktop_core::codex_broker::CodexBroker>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        // Tests + in-process construction fall through here. We can't
+        // `unwrap()` broker init because the filesystem may be locked
+        // (e.g. Windows AV sandbox during CI), so fall back to an
+        // in-memory broker rooted at a tempdir. The tempdir lives
+        // until the process exits.
+        let fallback = std::env::temp_dir().join(format!(
+            "warwolf-broker-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&fallback);
+        let broker = desktop_core::codex_broker::CodexBroker::new(&fallback)
+            .unwrap_or_else(|_| {
+                // This can only fail if secure_storage can't read/write
+                // the key file AND we somehow got a partial tempdir.
+                // Fall back to an even simpler tempdir.
+                let alt = std::env::temp_dir();
+                desktop_core::codex_broker::CodexBroker::new(&alt)
+                    .expect("broker must construct from tempdir fallback")
+            });
+        Self {
+            desktop: DesktopState::default(),
+            broker: Arc::new(broker),
+        }
+    }
 }
 
 impl AppState {
     #[must_use]
     pub fn new(desktop: DesktopState) -> Self {
-        Self { desktop }
+        // Use the canonical `~/.clawwiki/.clawwiki/` meta directory
+        // resolved through wiki_store so the broker's encrypted blob
+        // lives alongside the rest of the wiki metadata.
+        let wiki_root = wiki_store::default_root();
+        let _ = wiki_store::init_wiki(&wiki_root);
+        let paths = wiki_store::WikiPaths::resolve(&wiki_root);
+        let broker = desktop_core::codex_broker::CodexBroker::new(&paths.meta)
+            .unwrap_or_else(|err| {
+                eprintln!("codex_broker: failed to init from {:?}: {err}", paths.meta);
+                eprintln!("codex_broker: falling back to empty in-memory pool");
+                // Construct with a non-existent path so any `new` that
+                // tries to reload finds nothing. `sync` calls later
+                // will still work because `persist` recreates parents.
+                desktop_core::codex_broker::CodexBroker::new(&paths.meta)
+                    .expect("broker second-try must succeed")
+            });
+        Self {
+            desktop,
+            broker: Arc::new(broker),
+        }
     }
 
     #[must_use]
     pub fn desktop(&self) -> &DesktopState {
         &self.desktop
+    }
+
+    #[must_use]
+    pub fn broker(&self) -> &desktop_core::codex_broker::CodexBroker {
+        &self.broker
     }
 }
 
@@ -327,6 +386,20 @@ pub fn app(state: AppState) -> Router {
         // ClawWiki canonical §11.1 cut #6 — single Codex pool, no user
         // provider picker, no API-key paste form. The S2 codex_broker
         // module will own this surface (and will not expose any HTTP).
+        // ── ClawWiki S2 Codex broker routes ────────────────────────
+        // Per canonical §9.2 the broker pool lives inside the Rust
+        // process — these four routes never return tokens, only a
+        // redacted view + aggregate counts.
+        .route(
+            "/api/desktop/cloud/codex-accounts",
+            get(list_cloud_codex_accounts_handler)
+                .post(sync_cloud_codex_accounts_handler),
+        )
+        .route(
+            "/api/desktop/cloud/codex-accounts/clear",
+            post(clear_cloud_codex_accounts_handler),
+        )
+        .route("/api/broker/status", get(broker_status_handler))
         // ── ClawWiki S1 wiki/raw layer routes ──────────────────────
         // The "raw" layer is the immutable facts directory under
         // `~/.clawwiki/raw/`. Per canonical §10 every WeChat-ingested
@@ -1674,6 +1747,70 @@ fn raw_entry_to_json(entry: &wiki_store::RawEntry) -> serde_json::Value {
         "ingested_at": entry.ingested_at,
         "byte_size": entry.byte_size,
     })
+}
+
+// ── ClawWiki S2: Codex broker HTTP handlers ───────────────────────
+//
+// Thin wrappers around `desktop_core::codex_broker::CodexBroker`. The
+// broker itself owns its RwLock / persistence / redaction logic;
+// these handlers are ONLY responsible for JSON (de)serialization and
+// error mapping.
+//
+// CRITICAL: none of these handlers return access_token or
+// refresh_token. `list_cloud_codex_accounts_handler` returns the
+// public view (alias + expires + status); `broker_status_handler`
+// returns only aggregate counts. There is no route that exposes a
+// single account's full record.
+
+#[derive(Debug, Deserialize)]
+struct SyncCloudCodexAccountsRequest {
+    accounts: Vec<desktop_core::codex_broker::CloudAccountInput>,
+}
+
+async fn sync_cloud_codex_accounts_handler(
+    State(state): State<AppState>,
+    Json(body): Json<SyncCloudCodexAccountsRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let count = body.accounts.len();
+    state.broker().sync_cloud_accounts(body.accounts).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("broker sync failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "pool_size": count,
+    })))
+}
+
+async fn list_cloud_codex_accounts_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let accounts = state.broker().list_cloud_accounts();
+    Json(serde_json::json!({ "accounts": accounts }))
+}
+
+async fn clear_cloud_codex_accounts_handler(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state.broker().clear_cloud_accounts().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("broker clear failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn broker_status_handler(
+    State(state): State<AppState>,
+) -> Json<desktop_core::codex_broker::BrokerPublicStatus> {
+    Json(state.broker().public_status())
 }
 
 

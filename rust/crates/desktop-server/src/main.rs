@@ -109,35 +109,64 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 /// We honor a user-supplied `CLAW_CONFIG_HOME` if already set, and never
 /// touch the env on macOS/Linux.
 fn ensure_claw_config_home_is_valid() {
-    if env::var_os("CLAW_CONFIG_HOME").is_some() {
-        return;
-    }
+    if env::var_os("CLAW_CONFIG_HOME").is_none() {
+        #[cfg(windows)]
+        {
+            let target = env::var_os("LOCALAPPDATA")
+                .map(std::path::PathBuf::from)
+                .map(|p| p.join("warwolf").join("claw"))
+                .or_else(|| {
+                    env::var_os("USERPROFILE")
+                        .map(std::path::PathBuf::from)
+                        .map(|p| {
+                            p.join("AppData").join("Local").join("warwolf").join("claw")
+                        })
+                });
 
-    #[cfg(windows)]
-    {
-        let target = env::var_os("LOCALAPPDATA")
-            .map(std::path::PathBuf::from)
-            .map(|p| p.join("warwolf").join("claw"))
-            .or_else(|| {
-                env::var_os("USERPROFILE")
-                    .map(std::path::PathBuf::from)
-                    .map(|p| p.join("AppData").join("Local").join("warwolf").join("claw"))
-            });
-
-        if let Some(path) = target {
-            eprintln!(
-                "[startup] forcing CLAW_CONFIG_HOME = {} (Windows AV/sandbox workaround)",
-                path.display()
-            );
-            // Pre-create the directory so the first persist call doesn't
-            // race against create_dir_all.
-            if let Err(e) = std::fs::create_dir_all(&path) {
+            if let Some(path) = target {
                 eprintln!(
-                    "[startup] warning: failed to pre-create {}: {e}",
+                    "[startup] forcing CLAW_CONFIG_HOME = {} (Windows AV/sandbox workaround)",
                     path.display()
                 );
+                if let Err(e) = std::fs::create_dir_all(&path) {
+                    eprintln!(
+                        "[startup] warning: failed to pre-create {}: {e}",
+                        path.display()
+                    );
+                }
+                env::set_var("CLAW_CONFIG_HOME", &path);
             }
-            env::set_var("CLAW_CONFIG_HOME", &path);
+        }
+    }
+
+    // S2: apply the same LOCALAPPDATA workaround to the
+    // secure_storage key file. The module defaults to
+    // `$USERPROFILE/.warwolf/.secret-key` which is blocked by AV on
+    // some Windows machines (the whole `.warwolf` dir is read-only
+    // even though `%LOCALAPPDATA%\warwolf\` works fine). Without this
+    // redirect `codex_broker::sync_cloud_accounts` fails with
+    // `os error 5 Access denied` when it tries to write the key.
+    if env::var_os("WARWOLF_SECRET_KEY_FILE").is_none()
+        && env::var_os("WARWOLF_SECRET_KEY_DIR").is_none()
+    {
+        #[cfg(windows)]
+        {
+            let dir = env::var_os("LOCALAPPDATA")
+                .map(std::path::PathBuf::from)
+                .map(|p| p.join("warwolf"));
+            if let Some(dir) = dir {
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    eprintln!(
+                        "[startup] warning: failed to pre-create secret-key dir {}: {e}",
+                        dir.display()
+                    );
+                }
+                eprintln!(
+                    "[startup] forcing WARWOLF_SECRET_KEY_DIR = {} (Windows AV/sandbox workaround)",
+                    dir.display()
+                );
+                env::set_var("WARWOLF_SECRET_KEY_DIR", &dir);
+            }
         }
     }
 }

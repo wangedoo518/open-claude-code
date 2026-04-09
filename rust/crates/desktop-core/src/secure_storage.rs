@@ -73,9 +73,30 @@ impl From<io::Error> for SecureStorageError {
 }
 
 /// Locate the machine-local key file. Created lazily by `load_or_create_key`.
+///
+/// Resolution order:
+///
+///   1. `WARWOLF_SECRET_KEY_FILE` env var — absolute path to the key
+///      file. Used by the desktop-server Windows startup workaround
+///      (see `desktop-server/src/main.rs ensure_claw_config_home_is_valid`)
+///      and by tests that want an isolated key.
+///   2. `WARWOLF_SECRET_KEY_DIR` env var — directory under which
+///      `.secret-key` is written. Convenience for callers that already
+///      have a writable state directory handy.
+///   3. `$USERPROFILE/.warwolf/.secret-key` (Windows) or
+///      `$HOME/.warwolf/.secret-key` (Unix) — the historical default.
+///      This path is blocked by AV/sandbox on some Windows machines
+///      where the whole `.warwolf` directory is read-only, so prefer
+///      one of the two overrides above in that environment.
+///   4. `./.secret-key` — last-resort fallback when neither HOME nor
+///      USERPROFILE are set.
 fn key_file_path() -> std::path::PathBuf {
-    // Use the same home-dir resolution as codex_auth: prefer USERPROFILE
-    // on Windows and HOME on Unix, falling back to "." if neither is set.
+    if let Some(path) = std::env::var_os("WARWOLF_SECRET_KEY_FILE") {
+        return std::path::PathBuf::from(path);
+    }
+    if let Some(dir) = std::env::var_os("WARWOLF_SECRET_KEY_DIR") {
+        return std::path::PathBuf::from(dir).join(".secret-key");
+    }
     let home = std::env::var("USERPROFILE")
         .ok()
         .or_else(|| std::env::var("HOME").ok())
