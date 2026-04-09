@@ -37,8 +37,38 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde::{Deserialize, Serialize};
+
+/// Process-global guard that serializes read-modify-write access to
+/// `{meta}/inbox.json`. Addresses the TOCTOU race found by the
+/// S4/S5/S6 code review: without this guard, two concurrent callers
+/// of `append_inbox_pending` can both read the same `max(id)+1`,
+/// producing a pair of entries with identical ids and losing one on
+/// the next save. Same story for two concurrent `resolve_inbox_entry`
+/// calls racing on a single id.
+///
+/// We use a single process-global mutex (rather than per-path) because
+/// desktop-server runs as a single process with exactly one wiki root
+/// per `$CLAWWIKI_HOME`. Workspace-wide serialization of inbox mutations
+/// costs ~microseconds per append and is completely dwarfed by the
+/// subsequent file I/O. If a future ClawWiki daemon ever needs to
+/// manage multiple wiki roots concurrently, we'd switch to a
+/// `DashMap<PathBuf, Mutex<()>>` keyed by the inbox file path.
+///
+/// Poison recovery: any panic inside the critical section leaves the
+/// on-disk file in one of two well-defined states (untouched if the
+/// write failed before `rename`, or committed if the write succeeded),
+/// so `into_inner()` on a poisoned lock is safe.
+static INBOX_WRITE_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn lock_inbox_writes() -> MutexGuard<'static, ()> {
+    INBOX_WRITE_GUARD
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Subdirectory under the wiki root that holds immutable WeChat-ingested
 /// facts. Files here MUST NOT be mutated by any tool.
@@ -672,6 +702,11 @@ fn save_inbox_file(paths: &WikiPaths, entries: &[InboxEntry]) -> Result<()> {
 /// Append a new pending inbox entry and return the stored record.
 /// Assigns the next id (max+1, or 1 if empty), timestamps with
 /// `now_iso8601`, writes atomically to disk.
+///
+/// Thread-safe: serialized through [`INBOX_WRITE_GUARD`] so concurrent
+/// callers from the HTTP `ingest_wiki_raw_handler` side-channel and
+/// the WeChat long-poll monitor cannot produce duplicate ids (see
+/// the TDD test `inbox_append_is_thread_safe`).
 pub fn append_inbox_pending(
     paths: &WikiPaths,
     kind: &str,
@@ -679,6 +714,7 @@ pub fn append_inbox_pending(
     description: &str,
     source_raw_id: Option<u32>,
 ) -> Result<InboxEntry> {
+    let _guard = lock_inbox_writes();
     let mut entries = load_inbox_file(paths)?;
     let next_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
     let entry = InboxEntry {
@@ -704,6 +740,9 @@ pub fn list_inbox_entries(paths: &WikiPaths) -> Result<Vec<InboxEntry>> {
 /// Resolve a pending entry by id. `action` must be `"approve"` or
 /// `"reject"`; any other value fails with `WikiStoreError::Invalid`.
 /// Returns the updated record.
+///
+/// Thread-safe: shares [`INBOX_WRITE_GUARD`] with `append_inbox_pending`
+/// so a resolve can't lose to an append that races the read.
 pub fn resolve_inbox_entry(
     paths: &WikiPaths,
     id: u32,
@@ -718,6 +757,7 @@ pub fn resolve_inbox_entry(
             )))
         }
     };
+    let _guard = lock_inbox_writes();
     let mut entries = load_inbox_file(paths)?;
     let found = entries
         .iter_mut()
@@ -1209,5 +1249,118 @@ mod tests {
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].title, "task-a");
         assert_eq!(listed[1].title, "task-b");
+    }
+
+    #[test]
+    fn inbox_append_is_thread_safe() {
+        // Regression guard for S4/S5/S6 review finding #2 (TOCTOU race).
+        //
+        // Before the `INBOX_WRITE_GUARD` fix, firing two concurrent
+        // `append_inbox_pending` calls could produce duplicate ids:
+        // both would `load_inbox_file` seeing max=N, both compute
+        // next_id=N+1, both write — last one wins, id N+1 shows up
+        // only once despite two distinct appends. This test fires
+        // 20 parallel threads at a single inbox and asserts every
+        // entry survives with a unique id.
+        use std::sync::Arc;
+        use std::thread;
+
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = Arc::new(WikiPaths::resolve(tmp.path()));
+
+        let mut handles = Vec::with_capacity(20);
+        for i in 0..20u32 {
+            let paths = Arc::clone(&paths);
+            handles.push(thread::spawn(move || {
+                append_inbox_pending(
+                    &paths,
+                    "new-raw",
+                    &format!("concurrent-{i}"),
+                    "body",
+                    Some(i),
+                )
+                .expect("append must succeed under contention")
+            }));
+        }
+
+        let results: Vec<InboxEntry> = handles
+            .into_iter()
+            .map(|h| h.join().expect("thread panic"))
+            .collect();
+
+        // Every returned id must be unique.
+        let mut ids: Vec<u32> = results.iter().map(|e| e.id).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            (1..=20).collect::<Vec<_>>(),
+            "concurrent appends produced non-unique or missing ids"
+        );
+
+        // The file on disk must reflect all 20 entries, none lost.
+        let listed = list_inbox_entries(&paths).unwrap();
+        assert_eq!(listed.len(), 20, "inbox.json lost entries under contention");
+
+        // And every source_raw_id must survive — this catches the bug
+        // where two threads write distinct entries to the same id slot
+        // and only one persists.
+        let mut raw_ids: Vec<u32> = listed
+            .iter()
+            .filter_map(|e| e.source_raw_id)
+            .collect();
+        raw_ids.sort_unstable();
+        assert_eq!(raw_ids, (0..20).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn inbox_resolve_under_contention_keeps_all_entries() {
+        // Companion to the append-concurrency test: verify that
+        // parallel resolves don't clobber each other either.
+        use std::sync::Arc;
+        use std::thread;
+
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = Arc::new(WikiPaths::resolve(tmp.path()));
+
+        // Seed 10 pending entries sequentially (guarantees ids 1..=10).
+        for i in 0..10u32 {
+            append_inbox_pending(
+                &paths,
+                "new-raw",
+                &format!("seed-{i}"),
+                "body",
+                Some(i),
+            )
+            .unwrap();
+        }
+
+        // Resolve all 10 in parallel, alternating approve/reject.
+        let mut handles = Vec::new();
+        for id in 1..=10u32 {
+            let paths = Arc::clone(&paths);
+            let action = if id % 2 == 0 { "approve" } else { "reject" };
+            handles.push(thread::spawn(move || {
+                resolve_inbox_entry(&paths, id, action)
+                    .expect("resolve must succeed under contention")
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("resolve thread panic");
+        }
+
+        // Every entry survives, every one reached a terminal state.
+        let listed = list_inbox_entries(&paths).unwrap();
+        assert_eq!(listed.len(), 10, "no entries may be lost to resolves");
+        for entry in &listed {
+            assert!(
+                entry.status == "approved" || entry.status == "rejected",
+                "entry {} still pending after parallel resolve",
+                entry.id
+            );
+        }
+        assert_eq!(count_pending_inbox(&paths).unwrap(), 0);
     }
 }

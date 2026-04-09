@@ -304,66 +304,52 @@ impl MessageHandler for DesktopAgentHandler {
             }
         };
 
-        // S5 ClawWiki ingest (D2 override): if the handler is wired with
-        // a wiki root, persist the raw text message to `~/.clawwiki/raw/`
-        // BEFORE triggering the agentic turn. Failures here are logged
-        // but NEVER block the chat response — the user's WeChat
-        // experience is the contract and the wiki ingest is best-effort.
-        //
-        // This is the one place in the whole codebase where personal
-        // WeChat traffic becomes ClawWiki raw data. S6+ can layer richer
-        // adapters (voice transcription, image captioning) by moving
-        // the text-handling branch above into an adapter dispatch.
-        if let Some(paths) = self.wiki_paths.clone() {
-            let raw_title = format!("WeChat · {}", short_openid(&from_user_id));
-            let frontmatter = wiki_store::RawFrontmatter::for_paste("wechat-text", None);
-            match wiki_store::write_raw_entry(
-                &paths,
-                "wechat-text",
-                &raw_title,
-                &user_text,
-                &frontmatter,
-            ) {
-                Ok(entry) => {
-                    // Enqueue an inbox task so the user sees the
-                    // ingestion event in ClawWiki's Inbox page.
-                    let inbox_desc = format!(
-                        "Raw entry `{}` was ingested from WeChat user `{}`.",
-                        entry.filename,
-                        short_openid(&from_user_id)
-                    );
-                    if let Err(err) = wiki_store::append_inbox_pending(
-                        &paths,
-                        "new-raw",
-                        &format!("WeChat ingest #{:05}", entry.id),
-                        &inbox_desc,
-                        Some(entry.id),
-                    ) {
-                        eprintln!(
-                            "[wechat agent] raw written but inbox append failed: {err}"
-                        );
-                    }
-                    eprintln!(
-                        "[wechat agent] wrote raw entry #{:05} ({})",
-                        entry.id, entry.filename
-                    );
-                }
-                Err(err) => {
-                    eprintln!(
-                        "[wechat agent] wiki_store::write_raw_entry failed: {err} \
-                         (chat reply path still proceeds)"
-                    );
-                }
-            }
-        }
-
         // Spawn the actual work in a background task so the long-poll loop
         // in monitor.rs returns to fetch the next message immediately.
         // This is critical: an agentic turn can take several minutes; the
         // monitor loop must NOT serialize on it.
+        //
+        // S5/S6 review finding #1: both the ClawWiki raw-write and the
+        // agentic-loop turn MUST live inside this spawned task. Running
+        // the `wiki_store::write_raw_entry` + `append_inbox_pending`
+        // synchronously on the caller's await point (which is the
+        // long-poll thread inside `monitor::run_monitor`) would stall
+        // the poll until disk I/O completes. Under a large inbox.json
+        // and a slow FS, that's tens of milliseconds per message —
+        // enough to push the 35 s long-poll window over its budget.
         let handler = self.clone();
         let client = client.clone();
         tokio::spawn(async move {
+            // S5 ClawWiki ingest (D2 override): if the handler is wired
+            // with a wiki root, persist the raw text message to
+            // `~/.clawwiki/raw/` BEFORE triggering the agentic turn.
+            // Failures are logged but never block the chat reply.
+            //
+            // The filesystem calls (`create_dir_all`, `read`, `write`,
+            // `rename`) are synchronous `std::fs`, so we hop them onto
+            // a Tokio blocking pool worker via `spawn_blocking`. This
+            // keeps them off the async executor threads — important
+            // because those threads may be running other WeChat message
+            // handlers in parallel.
+            //
+            // This is the one place in the whole codebase where personal
+            // WeChat traffic becomes ClawWiki raw data. S6+ can layer
+            // richer adapters (voice transcription, image captioning)
+            // by moving the text-handling branch above into an adapter
+            // dispatch.
+            if let Some(paths) = handler.wiki_paths.clone() {
+                let user_text_for_wiki = user_text.clone();
+                let from_user_id_for_wiki = from_user_id.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    ingest_wechat_text_to_wiki(
+                        &paths,
+                        &from_user_id_for_wiki,
+                        &user_text_for_wiki,
+                    );
+                })
+                .await;
+            }
+
             // Find or create a session for this WeChat user.
             let session_id = match handler.get_or_create_session(&from_user_id).await {
                 Ok(id) => id,
@@ -517,6 +503,67 @@ fn latest_assistant_text(session: &DesktopSessionDetail) -> Option<String> {
         }
     }
     None
+}
+
+/// Synchronous filesystem sink for the S5 WeChat raw ingest path.
+///
+/// Extracted as a plain function so `tokio::task::spawn_blocking` can
+/// own it cleanly — the blocking pool requires `FnOnce + Send +
+/// 'static`, which is awkward to express inside an async block without
+/// cloning every captured variable. This also gives tests a synchronous
+/// entry point for the ingest logic if they ever need one.
+///
+/// All errors are logged to stderr and then swallowed. The contract is
+/// best-effort: losing a wiki ingest is acceptable, losing the chat
+/// reply that runs immediately after is not. See review finding #1
+/// for the rationale.
+fn ingest_wechat_text_to_wiki(
+    paths: &wiki_store::WikiPaths,
+    from_user_id: &str,
+    user_text: &str,
+) {
+    // Title slot is slugified by `write_raw_entry` — the value here is
+    // eventually passed through `slugify("WeChat · ab12cd")` and ends
+    // up as `wechat-ab12cd` in the filename. The local name matches
+    // that reality so future readers don't trip over the pre-slug
+    // value carrying punctuation.
+    let raw_slug_seed = format!("WeChat · {}", short_openid(from_user_id));
+    let frontmatter = wiki_store::RawFrontmatter::for_paste("wechat-text", None);
+    let entry = match wiki_store::write_raw_entry(
+        paths,
+        "wechat-text",
+        &raw_slug_seed,
+        user_text,
+        &frontmatter,
+    ) {
+        Ok(entry) => entry,
+        Err(err) => {
+            eprintln!(
+                "[wechat agent] wiki_store::write_raw_entry failed: {err} \
+                 (chat reply path still proceeds)"
+            );
+            return;
+        }
+    };
+
+    let inbox_desc = format!(
+        "Raw entry `{}` was ingested from WeChat user `{}`.",
+        entry.filename,
+        short_openid(from_user_id),
+    );
+    if let Err(err) = wiki_store::append_inbox_pending(
+        paths,
+        "new-raw",
+        &format!("WeChat ingest #{:05}", entry.id),
+        &inbox_desc,
+        Some(entry.id),
+    ) {
+        eprintln!("[wechat agent] raw written but inbox append failed: {err}");
+    }
+    eprintln!(
+        "[wechat agent] wrote raw entry #{:05} ({})",
+        entry.id, entry.filename
+    );
 }
 
 /// Trim a long openid down to a recognizable suffix for use in session titles.
