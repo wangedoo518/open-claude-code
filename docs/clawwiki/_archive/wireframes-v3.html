@@ -1,0 +1,2413 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ClawWiki v3 · Wireframes (Wiki-first + CCD pattern extraction + internal Broker)</title>
+<meta name="viewport" content="width=1440">
+<style>
+  :root {
+    --bg:       #FAF9F6;
+    --bg-2:     #F6F3EE;
+    --card:     #FFFFFF;
+    --muted:    #F0EDE7;
+    --muted-2:  #E8E4DE;
+    --muted-fg: #8B8580;
+    --border:   #E8E4DE;
+    --border-2: #DBD6CD;
+    --fg:       #2D2B28;
+    --fg-dim:   #5A5753;
+    --primary:  #C35A2C;
+    --primary-2:#D4734B;
+    --primary-soft: rgba(195,90,44,0.10);
+    --accent:   #8B5CF6;       /* AI maintainer 标识色 */
+    --accent-soft: rgba(139,92,246,0.10);
+    --ok:       #3F8F5E;
+    --ok-soft:  rgba(63,143,94,0.12);
+    --warn:     #C88B1A;
+    --warn-soft: rgba(200,139,26,0.14);
+    --danger:   #D44A3C;
+    --danger-soft: rgba(212,74,60,0.14);
+    --wechat:   #07C160;
+
+    --sans:  "Plus Jakarta Sans", -apple-system, "PingFang SC", system-ui, sans-serif;
+    --serif: "Lora", Georgia, "Songti SC", serif;
+    --mono:  "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+
+    --shadow-sm: 0 1px 3px rgba(45,43,40,0.04), 0 1px 2px rgba(45,43,40,0.06);
+    --shadow-md: 0 4px 12px -2px rgba(45,43,40,0.10), 0 2px 4px rgba(45,43,40,0.04);
+    --shadow-lg: 0 20px 50px -16px rgba(45,43,40,0.20), 0 4px 12px rgba(45,43,40,0.06);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: #eeeae3;
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  .doc { max-width: 1480px; margin: 0 auto; padding: 36px 28px 140px; }
+  .doc-header { margin-bottom: 28px; }
+  .doc-header h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.02em; }
+  .doc-header p { margin: 0; color: #6c6760; font-size: 12px; line-height: 1.65; }
+  .doc-header code {
+    font-family: var(--mono); font-size: 11px;
+    background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 4px;
+  }
+  .doc-header .badges { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .doc-header .badges span {
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--border);
+    font-size: 11px; font-weight: 500; color: var(--fg-dim);
+  }
+  .doc-header .badges .hot {
+    background: var(--primary-soft); border-color: rgba(195,90,44,0.2); color: var(--primary);
+  }
+
+  .nav {
+    position: sticky; top: 0; z-index: 60;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 12px 16px;
+    background: rgba(248, 245, 240, 0.96);
+    backdrop-filter: saturate(170%) blur(14px);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 28px;
+    box-shadow: var(--shadow-sm);
+  }
+  .nav a {
+    padding: 6px 11px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #6c6760;
+    transition: all 0.15s;
+  }
+  .nav a:hover { background: var(--muted); color: var(--fg); }
+
+  /* ======== Frame (v3 desktop) ======== */
+  .screen { margin-bottom: 64px; scroll-margin-top: 96px; }
+  .screen-title {
+    display: flex; align-items: baseline; gap: 10px;
+    margin: 0 0 12px;
+  }
+  .screen-title .num { font-family: var(--mono); font-size: 11px; color: #a29b93; }
+  .screen-title h2 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+  .screen-title .note { font-size: 11px; color: #8b857d; }
+
+  .frame {
+    width: 1380px;
+    height: 880px;
+    background: var(--bg);
+    border: 1px solid var(--border-2);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    display: flex; flex-direction: column;
+    color: var(--fg);
+  }
+
+  /* Top chrome (tiny, only traffic lights) */
+  .top-chrome {
+    height: 32px;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 14px;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .lights { display: flex; gap: 6px; }
+  .lights span { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .l1 { background: #FF5F57; }
+  .l2 { background: #FEBC2E; }
+  .l3 { background: #28C840; }
+  .top-chrome .title {
+    flex: 1; text-align: center;
+    font-size: 11px; color: var(--muted-fg); font-weight: 500;
+  }
+  .top-chrome .right { display: flex; gap: 8px; font-size: 11px; color: var(--muted-fg); }
+  .top-chrome .right span {
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--border);
+  }
+  .top-chrome .right .pool {
+    color: var(--ok); border-color: rgba(63,143,94,0.25);
+  }
+
+  /* ======== Body = sidebar + main ======== */
+  .body-wrap { flex: 1; display: flex; min-height: 0; }
+
+  /* Sidebar 220px (DeepTutor-style) */
+  .sidebar {
+    width: 220px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 14px 10px 10px;
+    flex-shrink: 0;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 9px;
+    padding: 2px 8px 16px;
+  }
+  .logo .mark {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: var(--primary); color: #fff;
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 14px;
+  }
+  .logo .name { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
+  .logo .badge {
+    font-size: 9px; padding: 2px 5px; border-radius: 4px;
+    background: var(--primary-soft); color: var(--primary);
+    letter-spacing: 0.04em; font-weight: 600;
+    margin-left: auto;
+  }
+
+  .sb-label {
+    padding: 10px 10px 4px;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-fg);
+    font-weight: 600;
+  }
+  .sb-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 10px;
+    margin-bottom: 1px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    transition: all 0.12s;
+    cursor: default;
+  }
+  .sb-item:hover { background: var(--muted); }
+  .sb-item.active {
+    background: var(--card);
+    color: var(--fg);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+  .sb-item .ico {
+    width: 15px; height: 15px; border-radius: 4px;
+    background: var(--muted-2); flex-shrink: 0;
+    display: grid; place-items: center;
+    font-size: 9px;
+  }
+  .sb-item.active .ico { background: var(--primary); color: white; }
+  .sb-item .badge {
+    margin-left: auto;
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: #fff;
+    font-weight: 600;
+  }
+  .sb-item .ai-dot {
+    margin-left: auto;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .sb-divider { height: 1px; background: var(--border); margin: 10px 8px; }
+  .sb-spacer { flex: 1; }
+  .sb-foot {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px;
+    border-top: 1px solid var(--border);
+    margin: 0 -10px -10px;
+  }
+  .sb-foot .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--muted-2);
+    display: grid; place-items: center;
+    font-size: 10px; color: var(--muted-fg); font-weight: 600;
+  }
+  .sb-foot .u { font-size: 11px; font-weight: 600; }
+  .sb-foot .p { font-size: 10px; color: var(--muted-fg); }
+
+  /* Main */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .page-head {
+    padding: 18px 28px 16px;
+    display: flex; justify-content: space-between; align-items: flex-end;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-head h3 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+  .page-head .sub { font-size: 11px; color: var(--muted-fg); margin-top: 4px; }
+  .page-head .actions { display: flex; gap: 8px; }
+
+  .body { flex: 1; overflow: hidden; padding: 20px 28px 16px; }
+
+  /* Status line (extracted from CCD) */
+  .status-line {
+    flex-shrink: 0;
+    padding: 6px 24px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted-fg);
+    display: flex; gap: 14px; flex-wrap: wrap;
+    border-top: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .status-line .ok { color: var(--ok); }
+  .status-line .ai { color: var(--accent); }
+
+  /* ======== primitives ======== */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px;
+  }
+  .card h4 { margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+  .card .num {
+    font-family: var(--mono); font-size: 24px; font-weight: 700;
+    letter-spacing: -0.02em; line-height: 1;
+  }
+  .card .trend { font-size: 10px; color: var(--ok); margin-top: 4px; }
+  .card .trend.down { color: var(--danger); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 13px;
+    border-radius: 8px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 11px; font-weight: 600;
+    border: 1px solid transparent;
+    cursor: default;
+  }
+  .btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
+  .btn.secondary { background: var(--muted); color: var(--fg); border-color: var(--border); }
+  .btn.sm { padding: 4px 10px; font-size: 10px; }
+  .btn.danger { background: var(--danger); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--muted-fg);
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .chip.ok { background: var(--ok-soft); color: var(--ok); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .chip.danger { background: var(--danger-soft); color: var(--danger); }
+  .chip.primary { background: var(--primary-soft); color: var(--primary); }
+  .chip.wechat { background: rgba(7,193,96,0.14); color: var(--wechat); font-weight: 600; }
+  .chip.ai { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+  .row { display: flex; gap: 14px; }
+  .col { display: flex; flex-direction: column; gap: 14px; }
+  .grow { flex: 1; min-width: 0; }
+  .divider { height: 1px; background: var(--border); margin: 12px 0; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; font-size: 12px; }
+  .kv .k { color: var(--muted-fg); font-size: 11px; }
+  .kv .v { font-family: var(--mono); font-size: 11px; }
+  .kv .v.ok { color: var(--ok); }
+  .kv .v.ai { color: var(--accent); }
+
+  /* ======== Dashboard (#01) ======== */
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .quickask {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 16px;
+  }
+  .quickask .label { font-size: 10px; color: var(--muted-fg); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .quickask textarea {
+    width: 100%; border: none; outline: none; resize: none;
+    background: transparent; font-family: var(--sans); font-size: 13px;
+    color: var(--fg); padding: 4px 0 10px;
+  }
+  .quickask .foot {
+    display: flex; justify-content: space-between; align-items: center;
+  }
+
+  .activity .entry {
+    display: flex; gap: 11px; align-items: flex-start;
+    padding: 11px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    margin-bottom: 8px;
+  }
+  .activity .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--primary); margin-top: 5px; flex-shrink: 0;
+  }
+  .activity .dot.ok { background: var(--ok); }
+  .activity .dot.warn { background: var(--warn); }
+  .activity .dot.wechat { background: var(--wechat); }
+  .activity .dot.ai { background: var(--accent); }
+  .activity .entry .t { font-size: 12px; font-weight: 600; }
+  .activity .entry .s { font-size: 11px; color: var(--muted-fg); margin-top: 3px; }
+
+  /* ======== Raw Library (#02) ======== */
+  .src-list {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .src-row {
+    display: grid;
+    grid-template-columns: 32px 1.6fr 1.2fr 130px 80px 140px 40px;
+    gap: 10px; align-items: center;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .src-row:last-child { border-bottom: none; }
+  .src-row.header {
+    background: var(--muted);
+    font-size: 9px;
+    color: var(--muted-fg);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .src-row .name { font-weight: 600; }
+  .src-row .meta { color: var(--muted-fg); font-size: 11px; }
+
+  /* ======== Wiki Explorer (#03) ======== */
+  .wiki-tabs {
+    display: flex; gap: 2px;
+    padding: 0 28px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .wiki-tab {
+    padding: 11px 15px;
+    font-size: 12px;
+    color: var(--muted-fg);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-weight: 500;
+  }
+  .wiki-tab.active {
+    color: var(--fg);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+  }
+  .wiki-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .page-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 15px 17px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .page-card .ttl {
+    font-size: 14px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .page-card .excerpt {
+    font-family: var(--serif);
+    font-size: 12px; color: var(--fg-dim);
+    line-height: 1.6;
+  }
+  .page-card .foot {
+    display: flex; gap: 8px; align-items: center;
+    font-size: 10px; color: var(--muted-fg);
+  }
+
+  /* ======== Page Detail (#04) ======== */
+  .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; }
+  .prose {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 44px;
+    font-family: var(--serif);
+    font-size: 15px;
+    line-height: 1.78;
+    color: #37332f;
+  }
+  .prose h1 {
+    font-family: var(--sans); font-size: 24px;
+    letter-spacing: -0.02em; margin: 0 0 4px;
+    font-weight: 700;
+  }
+  .prose .fm {
+    font-family: var(--sans); font-size: 11px;
+    color: var(--muted-fg);
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 24px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .prose h2 {
+    font-family: var(--sans); font-size: 16px;
+    margin: 24px 0 10px;
+    font-weight: 600;
+  }
+  .prose p { margin: 0 0 14px; }
+  .prose code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--muted); padding: 1px 6px; border-radius: 4px;
+  }
+  .aside-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .aside-card h5 {
+    margin: 0 0 10px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted-fg);
+  }
+  .link-list { display: flex; flex-direction: column; gap: 8px; font-size: 11px; }
+  .link-list a { color: var(--primary); display: flex; align-items: center; gap: 6px; }
+  .link-list .s { color: var(--muted-fg); font-size: 10px; }
+
+  /* ======== Ask (#05) — extracted CCD patterns ======== */
+  .ask-head {
+    padding: 14px 26px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--bg);
+  }
+  .ask-head .title { font-size: 14px; font-weight: 600; }
+  .ask-head .sub { font-size: 10px; color: var(--muted-fg); margin-top: 2px; }
+
+  .ask-layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    min-height: 0;
+  }
+  .ask-side {
+    border-right: 1px solid var(--border);
+    background: var(--bg-2);
+    padding: 12px 10px;
+    overflow: hidden;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .ask-side .slabel {
+    font-size: 9px; color: var(--muted-fg);
+    padding: 8px 10px 4px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .session-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .session-item.active { background: var(--card); box-shadow: var(--shadow-sm); }
+  .session-item .t { font-size: 11px; font-weight: 600; }
+  .session-item .s { font-size: 10px; color: var(--muted-fg); }
+
+  .ask-main {
+    display: flex; flex-direction: column;
+    min-width: 0; overflow: hidden;
+  }
+  .msgs {
+    flex: 1;
+    overflow: hidden;
+    padding: 20px 28px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .msg { display: flex; gap: 12px; }
+  .msg .avatar {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--muted);
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 600; color: var(--muted-fg);
+    flex-shrink: 0;
+  }
+  .msg.user .avatar { background: var(--muted-2); }
+  .msg.assistant .avatar {
+    background: var(--accent);
+    color: white;
+  }
+  .msg .content { flex: 1; min-width: 0; }
+  .msg .who {
+    font-size: 11px; color: var(--muted-fg);
+    margin-bottom: 5px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .msg .who .ai-tag {
+    color: var(--accent); font-weight: 600;
+  }
+  .msg .body {
+    font-size: 13px; line-height: 1.65;
+    color: var(--fg);
+  }
+  .msg .body p { margin: 0 0 10px; }
+  .msg .body code { font-family: var(--mono); font-size: 12px; background: var(--muted); padding: 1px 6px; border-radius: 4px; }
+  .tool-call {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: var(--muted);
+    font-family: var(--mono); font-size: 11px;
+    color: var(--fg-dim);
+    margin-bottom: 8px;
+  }
+  .tool-call .name { color: var(--accent); font-weight: 600; }
+  .tool-call .ok { color: var(--ok); }
+
+  /* PermissionDialog (extracted) */
+  .perm-dialog {
+    margin: 10px 0;
+    border: 1px solid var(--warn);
+    background: var(--warn-soft);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .perm-dialog .title {
+    font-size: 12px; font-weight: 700; color: var(--warn);
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .perm-dialog .title .risk { font-size: 9px; padding: 2px 6px; border-radius: 4px; background: rgba(200,139,26,0.25); }
+  .perm-dialog .detail {
+    font-size: 11px; color: var(--fg-dim);
+    font-family: var(--mono);
+    margin-bottom: 4px;
+    background: rgba(0,0,0,0.04);
+    padding: 8px 10px; border-radius: 6px;
+  }
+  .perm-dialog .explain {
+    font-size: 11px; color: var(--fg-dim);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .perm-dialog .btns { display: flex; gap: 6px; }
+  .perm-dialog .pb {
+    font-size: 10px; padding: 5px 11px; border-radius: 7px;
+    border: 1px solid var(--border); color: var(--fg);
+    font-weight: 600; background: var(--card);
+  }
+  .perm-dialog .pb.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .perm-dialog .pb.danger { color: var(--danger); border-color: var(--danger); }
+
+  .composer {
+    padding: 14px 24px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .composer .inner {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+  }
+  .composer .prompt {
+    color: var(--fg); font-size: 13px;
+    line-height: 1.55; margin-bottom: 12px; min-height: 40px;
+  }
+  .composer .toolbar {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10px; color: var(--muted-fg);
+  }
+  .composer .toolbar .left { display: flex; gap: 6px; align-items: center; }
+  .composer .toolbar .right { display: flex; gap: 8px; align-items: center; }
+
+  /* ======== Inbox (#06) — extracted task tree ======== */
+  .inbox-layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .inbox-list-col {
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    padding: 14px 14px;
+    overflow: hidden;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .inbox-item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 13px;
+    cursor: default;
+  }
+  .inbox-item.active {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-soft);
+  }
+  .inbox-item .top {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 4px;
+  }
+  .inbox-item .ico2 { font-size: 14px; }
+  .inbox-item .t { font-size: 12px; font-weight: 600; flex: 1; }
+  .inbox-item .s { font-size: 10px; color: var(--muted-fg); line-height: 1.5; }
+
+  .inbox-detail {
+    padding: 20px 28px;
+    overflow: hidden;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .inbox-detail .head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+  }
+  .inbox-detail .head h4 {
+    margin: 0; font-size: 15px; font-weight: 600;
+  }
+  .inbox-detail .head .sub {
+    font-size: 11px; color: var(--muted-fg); margin-top: 3px;
+  }
+
+  /* Task tree (extracted SubagentPanel) */
+  .task-tree {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .task-tree h5 {
+    margin: 0 0 12px; font-size: 11px; font-weight: 700;
+    color: var(--muted-fg); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .task-node {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 6px 0;
+    font-size: 11px;
+    position: relative;
+  }
+  .task-node .line {
+    position: absolute; left: 5px; top: 22px; bottom: -6px;
+    width: 1px; background: var(--border);
+  }
+  .task-node:last-child .line { display: none; }
+  .task-node .dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--ok);
+    border: 2px solid var(--card);
+    box-shadow: 0 0 0 1px var(--ok);
+    flex-shrink: 0;
+    margin-top: 3px;
+    z-index: 1;
+  }
+  .task-node .dot.running { background: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+  .task-node .dot.pending { background: var(--card); box-shadow: 0 0 0 1px var(--border); }
+  .task-node .dot.fail { background: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+  .task-node .body { flex: 1; }
+  .task-node .body .name { font-weight: 600; color: var(--fg); }
+  .task-node .body .name .fn { font-family: var(--mono); color: var(--accent); }
+  .task-node .body .meta { font-family: var(--mono); color: var(--muted-fg); font-size: 10px; margin-top: 2px; }
+  .task-node .body .diff {
+    margin-top: 6px;
+    background: var(--muted);
+    border-radius: 6px;
+    padding: 6px 9px;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.55;
+  }
+  .task-node .body .diff .add { color: var(--ok); }
+  .task-node .body .diff .del { color: var(--danger); }
+
+  .inbox-actions {
+    display: flex; gap: 8px;
+    padding: 12px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  /* ======== WeChat Bridge (#07) ======== */
+  .bot-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 20px;
+  }
+  .bot-card .title {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 12px;
+  }
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  .pipe-step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 14px;
+    position: relative;
+  }
+  .pipe-step .n {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted-fg);
+  }
+  .pipe-step .t {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .pipe-step .s {
+    font-size: 10px; color: var(--muted-fg);
+    margin-top: 4px;
+    line-height: 1.5;
+  }
+  .pipe-step .status {
+    position: absolute; top: 13px; right: 13px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ok);
+  }
+  .pipe-step.active .status {
+    background: var(--warn);
+    box-shadow: 0 0 0 4px rgba(200,139,26,0.2);
+  }
+  .pipe-step.pending .status { background: var(--border); }
+
+  .wechat-events {
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .wechat-item {
+    display: grid;
+    grid-template-columns: 38px 1.5fr 110px 140px 80px;
+    gap: 14px; align-items: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+  }
+  .wechat-item .mtype {
+    width: 34px; height: 34px; border-radius: 9px;
+    display: grid; place-items: center;
+    background: rgba(7, 193, 96, 0.1);
+    font-size: 16px;
+  }
+  .wechat-item .t { font-size: 12px; font-weight: 600; }
+  .wechat-item .s { font-size: 10px; color: var(--muted-fg); margin-top: 3px; font-family: var(--mono); }
+
+  /* ======== Graph (#08) ======== */
+  .graph-canvas {
+    position: relative;
+    height: 600px;
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 30% 40%, rgba(195, 90, 44, 0.09) 0, transparent 42%),
+      radial-gradient(circle at 70% 60%, rgba(195, 90, 44, 0.07) 0, transparent 42%),
+      var(--card);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .node {
+    position: absolute;
+    border-radius: 999px;
+    background: var(--card);
+    border: 2px solid var(--primary);
+    padding: 7px 15px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg);
+    box-shadow: 0 4px 16px rgba(195, 90, 44, 0.15);
+  }
+  .node.secondary { border-color: var(--border-2); color: var(--muted-fg); font-weight: 500; background: var(--card); }
+  .node.stale { border-color: var(--warn); }
+  .node.conflict { border-color: var(--danger); background: rgba(212, 74, 60, 0.06); }
+  .edge {
+    position: absolute;
+    background: var(--border-2);
+    height: 1.5px;
+    transform-origin: 0 50%;
+    opacity: 0.7;
+  }
+  .graph-legend {
+    position: absolute; top: 20px; right: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+    box-shadow: var(--shadow-sm);
+  }
+  .legend-dot {
+    display: inline-block; width: 9px; height: 9px;
+    border-radius: 50%; margin-right: 7px; vertical-align: middle;
+  }
+
+  /* ======== Schema (#09) ======== */
+  .schema-grid { display: grid; grid-template-columns: 240px 1fr; gap: 14px; height: 100%; }
+  .schema-tree {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 0;
+    overflow: hidden;
+  }
+  .schema-tree .folder {
+    padding: 10px 14px;
+    font-size: 9px; font-weight: 700;
+    color: var(--muted-fg);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .schema-tree .file {
+    padding: 6px 14px 6px 24px;
+    font-size: 11px;
+    color: var(--fg);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .schema-tree .file.active {
+    background: var(--muted);
+    font-weight: 600;
+  }
+  .schema-tree .file .ic { color: var(--muted-fg); font-family: var(--mono); font-size: 9px; }
+
+  .schema-editor {
+    background: #1a1918;
+    border-radius: 12px;
+    padding: 22px 26px;
+    color: #E8E4DE;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.68;
+    overflow: hidden;
+  }
+  .schema-editor .ln { color: #6b665f; display: inline-block; width: 28px; user-select: none; }
+  .schema-editor .kw { color: var(--primary-2); }
+  .schema-editor .str { color: #9BB167; }
+  .schema-editor .cm { color: #6b665f; font-style: italic; }
+  .schema-editor .add { background: rgba(63, 143, 94, 0.18); display: inline-block; width: 100%; }
+  .schema-editor .del { background: rgba(212, 74, 60, 0.15); display: inline-block; width: 100%; }
+
+  /* ======== Settings (#10) ======== */
+  .settings-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .settings-nav {
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    padding: 14px 10px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .settings-nav .si {
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .settings-nav .si .ico { width: 13px; height: 13px; border-radius: 3px; background: var(--muted-2); }
+  .settings-nav .si.active {
+    background: var(--card);
+    color: var(--fg); font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+  .settings-nav .si.active .ico { background: var(--primary); }
+
+  .settings-body {
+    padding: 22px 28px;
+    overflow: hidden;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .acct-row {
+    display: grid;
+    grid-template-columns: 28px 1.6fr 1.2fr 120px 90px 60px;
+    gap: 12px; align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .acct-row:last-child { border-bottom: none; }
+  .acct-row.header {
+    background: var(--muted);
+    font-size: 9px;
+    color: var(--muted-fg);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .acct-row .alias { font-weight: 600; }
+  .acct-row .uid { font-family: var(--mono); font-size: 10px; color: var(--muted-fg); }
+
+  .sparkline {
+    height: 60px;
+    background:
+      linear-gradient(180deg, rgba(195,90,44,0.15) 0, rgba(195,90,44,0) 100%);
+    border-radius: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  .sparkline svg {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+  }
+</style>
+</head>
+<body>
+
+<div class="doc">
+
+<header class="doc-header">
+  <h1>ClawWiki v3 · Wireframes</h1>
+  <p>
+    10 屏 · 1380×880 frame · <b>Wiki-first 侧栏布局</b>（放弃 CCD 的双行 TabBar） · 全 DeepTutor 暖色 · CCD 的 5 个交互模式（消息流 · InputBar · PermissionDialog · StatusLine · SubagentPanel）被**提取**注入到 Ask 和 Inbox 页里 · Codex Broker 完全内聚（Settings 页只显示状态，不暴露给外部客户端）。
+    <br>
+    配套设计文档：<code>docs/clawwiki/product-design-v3.md</code>
+  </p>
+  <div class="badges">
+    <span class="hot">Wiki-first</span>
+    <span>CCD pattern extraction</span>
+    <span>Internal broker only</span>
+    <span>WeChat main entry</span>
+    <span>DeepTutor palette</span>
+  </div>
+</header>
+
+<nav class="nav">
+  <a href="#s01">01 · Dashboard</a>
+  <a href="#s02">02 · Raw Library</a>
+  <a href="#s03">03 · Wiki Explorer</a>
+  <a href="#s04">04 · Page Detail</a>
+  <a href="#s05">05 · Ask (CCD patterns)</a>
+  <a href="#s06">06 · Inbox · Task Tree</a>
+  <a href="#s07">07 · WeChat Bridge</a>
+  <a href="#s08">08 · Graph</a>
+  <a href="#s09">09 · Schema Editor</a>
+  <a href="#s10">10 · Subscription &amp; Codex Pool</a>
+</nav>
+
+<!-- ================================================================
+     HELPER · shared sidebar markup documented as comment only
+     Every screen includes its own sidebar block with the active
+     item highlighted so the file stays self-contained.
+================================================================ -->
+
+<!-- ============ 01 DASHBOARD ============ -->
+<section id="s01" class="screen">
+  <div class="screen-title">
+    <span class="num">01</span>
+    <h2>Dashboard · 认知资产仪表盘</h2>
+    <span class="note">进入 ClawWiki 的默认屏 · 复利指标 · 微信进账 · 维护活动 · QuickAsk</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">ClawWiki</div>
+      <div class="right">
+        <span class="pool">● Codex pool · 5/5 fresh</span>
+        <span>⌘K</span>
+      </div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo">
+          <div class="mark">C</div>
+          <div class="name">ClawWiki</div>
+          <div class="badge">v3</div>
+        </div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item active"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask <div class="ai-dot"></div></div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-label">BRIDGE</div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot">
+          <div class="avatar">WC</div>
+          <div><div class="u">changpeng</div><div class="p">Pro · 订阅中</div></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>Good afternoon, changpeng</h3>
+            <div class="sub">你的认知系统正在维护 · 今日已自动更新 6 个页面 · 来自微信 14 条</div>
+          </div>
+          <div class="actions">
+            <div class="btn ghost">+ 手动 Ingest</div>
+            <div class="btn">💬 Ask Claude</div>
+          </div>
+        </div>
+
+        <div class="body">
+          <div class="stat-grid" style="margin-bottom:16px;">
+            <div class="card">
+              <h4>Wiki 页面</h4>
+              <div class="num">248</div>
+              <div class="trend">+6 今日 · 2 stale</div>
+            </div>
+            <div class="card">
+              <h4>Raw 源</h4>
+              <div class="num">1,326</div>
+              <div class="trend">+14 今日 · 92% 来自微信</div>
+            </div>
+            <div class="card">
+              <h4>Backlinks</h4>
+              <div class="num">3,108</div>
+              <div class="trend">avg 12.5 / page</div>
+            </div>
+            <div class="card">
+              <h4>待审冲突</h4>
+              <div class="num" style="color:var(--danger);">3</div>
+              <div class="trend down">需审核</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="grow col">
+              <div class="quickask">
+                <div class="label">Quick Ask · 在你自己的 wiki 上提问</div>
+                <textarea rows="2">结合我最近从微信入库的 14 份材料，Karpathy 说的"认知复利"和我原本在 concept/rag 里的判断有哪些冲突？</textarea>
+                <div class="foot">
+                  <div style="display:flex;gap:6px;">
+                    <span class="chip">@concept/llm-wiki</span>
+                    <span class="chip">@compare/rag-vs-llm-wiki</span>
+                    <span class="chip wechat">last 14 wechat</span>
+                  </div>
+                  <div class="btn">Ask →</div>
+                </div>
+              </div>
+
+              <div class="card">
+                <h4>今日维护活动 · by Maintainer AI</h4>
+                <div class="activity">
+                  <div class="entry">
+                    <div class="dot wechat"></div>
+                    <div style="flex:1;">
+                      <div class="t">来自微信：Karpathy 的 LLM Wiki 方法论</div>
+                      <div class="s">defuddle → clipper → raw/00248 · 新建 concept/llm-wiki · 更新 5 个页面 · 14:22</div>
+                    </div>
+                    <span class="chip wechat">wechat · url</span>
+                  </div>
+                  <div class="entry">
+                    <div class="dot ai"></div>
+                    <div style="flex:1;">
+                      <div class="t">Maintainer 更新 compare/rag-vs-llm-wiki</div>
+                      <div class="s">patch_page + 2 backlinks · 标记 1 冲突 → Inbox #1203 · 14:18</div>
+                    </div>
+                    <span class="chip ai">AI</span>
+                  </div>
+                  <div class="entry">
+                    <div class="dot wechat"></div>
+                    <div style="flex:1;">
+                      <div class="t">来自微信：研究员访谈 · 60s 语音</div>
+                      <div class="s">Whisper → raw/00247 · 新建 topic/llm-memory-systems · 10:45</div>
+                    </div>
+                    <span class="chip wechat">wechat · voice</span>
+                  </div>
+                  <div class="entry">
+                    <div class="dot warn"></div>
+                    <div style="flex:1;">
+                      <div class="t">陈旧度告警：concept/agentic-loop-v1</div>
+                      <div class="s">90 天未更新 · 建议 deprecate → concept/agentic-loop-v2 · 13:02</div>
+                    </div>
+                  </div>
+                  <div class="entry">
+                    <div class="dot wechat"></div>
+                    <div style="flex:1;">
+                      <div class="t">来自微信：AI Products Q2 Roadmap.pptx</div>
+                      <div class="s">python-pptx 抽取 32 slides · raw/00246 · 维护中…</div>
+                    </div>
+                    <span class="chip wechat">wechat · pptx</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="width:320px;" class="col">
+              <div class="card">
+                <h4>订阅 · Codex Pool</h4>
+                <div class="kv">
+                  <div class="k">套餐</div><div class="v">Pro · 5 accounts</div>
+                  <div class="k">本月使用</div><div class="v">68,420 / ∞</div>
+                  <div class="k">订阅到期</div><div class="v">2026-05-08</div>
+                  <div class="k">状态</div><div class="v ok">● active</div>
+                </div>
+                <div class="divider"></div>
+                <div style="font-size:10px;color:var(--muted-fg);line-height:1.55;">
+                  Codex 账号池仅供 ClawWiki 自己的 Ask 和 Maintainer 使用 · 不暴露给外部客户端
+                </div>
+              </div>
+
+              <div class="card">
+                <h4>Inbox · 待审阅 (12)</h4>
+                <div class="activity">
+                  <div class="entry" style="padding:9px 11px;">
+                    <div class="dot warn"></div>
+                    <div style="flex:1;">
+                      <div style="font-size:11px;font-weight:600;">合并冲突: Agentic Loop v1 ↔ v2</div>
+                      <div style="font-size:10px;color:var(--muted-fg);">maintainer · 2h 前</div>
+                    </div>
+                  </div>
+                  <div class="entry" style="padding:9px 11px;">
+                    <div class="dot ai"></div>
+                    <div style="flex:1;">
+                      <div style="font-size:11px;font-weight:600;">新增 people/Andrej Karpathy</div>
+                      <div style="font-size:10px;color:var(--muted-fg);">Ask 会话建议 · 4h 前</div>
+                    </div>
+                  </div>
+                  <div class="entry" style="padding:9px 11px;">
+                    <div class="dot warn"></div>
+                    <div style="flex:1;">
+                      <div style="font-size:11px;font-weight:600;">23 页 frontmatter 不符 schema v1</div>
+                      <div style="font-size:10px;color:var(--muted-fg);">一键迁移可用</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="status-line">
+          <span class="ok">● maintainer idle</span>
+          <span class="ai">pool: 5 codex</span>
+          <span>wiki: 248 pages</span>
+          <span>raw: 1326 sources</span>
+          <span>today: ¥0 (subscription)</span>
+          <span style="margin-left:auto;">v0.3.0 · ~/.clawwiki</span>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 RAW LIBRARY ============ -->
+<section id="s02" class="screen">
+  <div class="screen-title">
+    <span class="num">02</span>
+    <h2>Raw Library · 只读事实层</h2>
+    <span class="note">1326 源 · 92% 来自微信 · 每条都会触发 maintainer 更新</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">ClawWiki · Raw</div>
+      <div class="right">
+        <span class="pool">● Codex pool up</span>
+        <span>1,326 sources</span>
+      </div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item active"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-label">BRIDGE</div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>Raw Library</h3>
+            <div class="sub">只读事实层 · 每个源的 ingestion 都会触发 maintainer · Karpathy §1 不可变原则</div>
+          </div>
+          <div class="actions">
+            <input style="border:1px solid var(--border);background:var(--card);border-radius:8px;padding:7px 11px;font-size:11px;width:220px;font-family:var(--sans);" placeholder="Search raw sources..." />
+            <div class="btn ghost">Paste URL</div>
+            <div class="btn">+ Upload</div>
+          </div>
+        </div>
+        <div class="body" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="row">
+            <div class="chip primary">All · 1326</div>
+            <div class="chip wechat">WeChat · 1218 (92%)</div>
+            <div class="chip">URL article · 412</div>
+            <div class="chip">Voice · 186</div>
+            <div class="chip">PPTX · 92</div>
+            <div class="chip">PDF · 74</div>
+            <div class="chip">Video · 28</div>
+            <div class="chip">Image · 121</div>
+            <div class="chip">Upload · 108</div>
+          </div>
+
+          <div class="src-list">
+            <div class="src-row header">
+              <div></div><div>Name</div><div>Source</div><div>Added</div><div>Size</div><div>Status</div><div></div>
+            </div>
+            <div class="src-row">
+              <div>📄</div>
+              <div>
+                <div class="name">Karpathy LLM Wiki 方法论</div>
+                <div class="meta">sha256:a3f…8b2 · raw/00248 · defuddle + wechat extractor · 触发 5 maintenance actions</div>
+              </div>
+              <div><span class="chip wechat">wechat · url</span></div>
+              <div class="meta">14:22 今日</div>
+              <div class="meta">42 KB</div>
+              <div><span class="chip ok">maintained</span></div>
+              <div>⋯</div>
+            </div>
+            <div class="src-row">
+              <div>🎙</div>
+              <div>
+                <div class="name">研究员访谈 · 60s</div>
+                <div class="meta">sha256:9c1…ff0 · raw/00247 · Whisper v3 · 转写 420 字</div>
+              </div>
+              <div><span class="chip wechat">wechat · voice</span></div>
+              <div class="meta">10:45 今日</div>
+              <div class="meta">312 KB</div>
+              <div><span class="chip ok">maintained</span></div>
+              <div>⋯</div>
+            </div>
+            <div class="src-row">
+              <div>📊</div>
+              <div>
+                <div class="name">AI Products 2026 Q2 Roadmap.pptx</div>
+                <div class="meta">sha256:71d…102 · raw/00246 · python-pptx · 32 slides + notes</div>
+              </div>
+              <div><span class="chip wechat">wechat · pptx</span></div>
+              <div class="meta">昨 22:04</div>
+              <div class="meta">4.2 MB</div>
+              <div><span class="chip warn">maintaining…</span></div>
+              <div>⋯</div>
+            </div>
+            <div class="src-row">
+              <div>🎬</div>
+              <div>
+                <div class="name">产品演示视频 · 8 分钟</div>
+                <div class="meta">sha256:45e…9af · raw/00245 · ffmpeg + Whisper + Vision caption · 48 keyframes</div>
+              </div>
+              <div><span class="chip wechat">wechat · video</span></div>
+              <div class="meta">4/7 18:30</div>
+              <div class="meta">32 MB</div>
+              <div><span class="chip ok">maintained</span></div>
+              <div>⋯</div>
+            </div>
+            <div class="src-row">
+              <div>🖼</div>
+              <div>
+                <div class="name">论文截图 · algorithm fig 3</div>
+                <div class="meta">sha256:f01…a4b · raw/00244 · GPT-5.4 vision caption + OCR</div>
+              </div>
+              <div><span class="chip wechat">wechat · image</span></div>
+              <div class="meta">4/7 09:12</div>
+              <div class="meta">820 KB</div>
+              <div><span class="chip ok">maintained</span></div>
+              <div>⋯</div>
+            </div>
+            <div class="src-row">
+              <div>💬</div>
+              <div>
+                <div class="name">群聊记录片段 · AI 讨论</div>
+                <div class="meta">sha256:b02…13e · raw/00243 · 按发言人聚合 · 12 条消息</div>
+              </div>
+              <div><span class="chip wechat">wechat · chat</span></div>
+              <div class="meta">4/6 23:41</div>
+              <div class="meta">18 KB</div>
+              <div><span class="chip ok">maintained</span></div>
+              <div>⋯</div>
+            </div>
+            <div class="src-row">
+              <div>📄</div>
+              <div>
+                <div class="name">Memex: As we may think</div>
+                <div class="meta">sha256:1fa…602 · raw/00242 · canonical source · 被 14 个 wiki 页引用</div>
+              </div>
+              <div><span class="chip wechat">wechat · url</span></div>
+              <div class="meta">3/21 15:10</div>
+              <div class="meta">96 KB</div>
+              <div><span class="chip ok">maintained</span></div>
+              <div>⋯</div>
+            </div>
+          </div>
+        </div>
+        <div class="status-line">
+          <span class="ok">● maintainer idle</span>
+          <span>1326 sources · 1.82 GB</span>
+          <span>git: clean · last commit 14:23</span>
+          <span style="margin-left:auto;">~/.clawwiki/raw/</span>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 03 WIKI EXPLORER ============ -->
+<section id="s03" class="screen">
+  <div class="screen-title">
+    <span class="num">03</span>
+    <h2>Wiki Pages · Explorer</h2>
+    <span class="note">第二层 · LLM 主笔 · 按 Concepts/People/Topics/Compare/Changelog 分类</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">ClawWiki · Wiki Pages</div>
+      <div class="right">
+        <span class="pool">● Codex pool up</span>
+        <span>248 pages</span>
+      </div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item active"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-label">BRIDGE</div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>Wiki Pages</h3>
+            <div class="sub">248 pages · 由 Maintainer AI 持续更新 · schema v1 frontmatter</div>
+          </div>
+          <div class="actions">
+            <input style="border:1px solid var(--border);background:var(--card);border-radius:8px;padding:7px 11px;font-size:11px;width:220px;font-family:var(--sans);" placeholder="Search pages · frontmatter · backlinks" />
+            <div class="btn">+ New page</div>
+          </div>
+        </div>
+        <div class="wiki-tabs">
+          <div class="wiki-tab">All · 248</div>
+          <div class="wiki-tab active">Concepts · 112</div>
+          <div class="wiki-tab">People · 38</div>
+          <div class="wiki-tab">Topics · 44</div>
+          <div class="wiki-tab">Compare · 22</div>
+          <div class="wiki-tab">Changelog · 32</div>
+        </div>
+        <div class="body">
+          <div class="wiki-grid">
+            <div class="page-card">
+              <div style="display:flex;justify-content:space-between;">
+                <div class="ttl">LLM Wiki</div>
+                <span class="chip primary">concept</span>
+              </div>
+              <div class="excerpt">Karpathy 提出的三层知识架构：Raw / Wiki / Schema。AI 从回答问题的工具变成维护认知系统的基础设施，解决认知复利而非查询效率。</div>
+              <div class="foot"><span>🔗 12 backlinks</span><span>·</span><span>🕘 2h</span><span>·</span><span class="chip ok">fresh</span></div>
+            </div>
+            <div class="page-card">
+              <div style="display:flex;justify-content:space-between;">
+                <div class="ttl">RAG</div>
+                <span class="chip primary">concept</span>
+              </div>
+              <div class="excerpt">Retrieval-Augmented Generation：临时检索 + LLM 合成。高效但不累积。与 LLM Wiki 的对比在 <code style="font-family:var(--mono);font-size:11px;">compare/rag-vs-llm-wiki</code>。</div>
+              <div class="foot"><span>🔗 18 backlinks</span><span>·</span><span>🕘 4h</span><span>·</span><span class="chip warn">has conflict</span></div>
+            </div>
+            <div class="page-card">
+              <div style="display:flex;justify-content:space-between;">
+                <div class="ttl">Zettelkasten</div>
+                <span class="chip primary">concept</span>
+              </div>
+              <div class="excerpt">卢曼式卡片盒笔记法。与 LLM Wiki 都追求让知识被连接，但要求人来维护——LLM Wiki 把维护成本降为边际零。</div>
+              <div class="foot"><span>🔗 9 backlinks</span><span>·</span><span>🕘 1d</span><span>·</span><span class="chip ok">fresh</span></div>
+            </div>
+            <div class="page-card">
+              <div style="display:flex;justify-content:space-between;">
+                <div class="ttl">Memex</div>
+                <span class="chip primary">concept</span>
+              </div>
+              <div class="excerpt">Vannevar Bush 1945 年提出的思想实验，关联跳跃的知识机器，是所有后续认知工具的祖父。</div>
+              <div class="foot"><span>🔗 6 backlinks</span><span>·</span><span>🕘 5d</span><span>·</span><span class="chip">canonical</span></div>
+            </div>
+            <div class="page-card">
+              <div style="display:flex;justify-content:space-between;">
+                <div class="ttl">认知复利</div>
+                <span class="chip primary">concept</span>
+              </div>
+              <div class="excerpt">越用越值钱的系统属性。相对于仓库逻辑（存），强调系统逻辑（长）。ClawWiki 的核心价值主张。</div>
+              <div class="foot"><span>🔗 22 backlinks</span><span>·</span><span>🕘 2h</span><span>·</span><span class="chip ok">fresh</span></div>
+            </div>
+            <div class="page-card">
+              <div style="display:flex;justify-content:space-between;">
+                <div class="ttl">Schema-driven agents</div>
+                <span class="chip primary">concept</span>
+              </div>
+              <div class="excerpt">让自由发挥的 LLM 变成有纪律的维护者。核心是规则层：目录结构、命名、页面模板、冲突政策。</div>
+              <div class="foot"><span>🔗 14 backlinks</span><span>·</span><span>🕘 6h</span><span>·</span><span class="chip ok">fresh</span></div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 04 PAGE DETAIL ============ -->
+<section id="s04" class="screen">
+  <div class="screen-title">
+    <span class="num">04</span>
+    <h2>Wiki Page Detail</h2>
+    <span class="note">Lora 衬线正文 · 右栏 backlinks / sources / maintenance · 来源追溯到微信那篇文章</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">concept / llm-wiki</div>
+      <div class="right"><span>/wiki/concept/llm-wiki</span></div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item active"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-label">PAGE TREE</div>
+        <div class="sb-item" style="padding-left:14px;"><div class="ico">📁</div>concept</div>
+        <div class="sb-item" style="padding-left:26px;font-weight:600;background:var(--muted);"><div class="ico">📄</div>llm-wiki</div>
+        <div class="sb-item" style="padding-left:26px;"><div class="ico">📄</div>rag</div>
+        <div class="sb-item" style="padding-left:26px;"><div class="ico">📄</div>zettelkasten</div>
+        <div class="sb-item" style="padding-left:14px;"><div class="ico">📁</div>people</div>
+        <div class="sb-item" style="padding-left:14px;"><div class="ico">📁</div>compare</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>concept / LLM Wiki</h3>
+            <div class="sub">Maintainer AI 持续更新 · last edit: <span style="color:var(--accent);font-weight:600;">Codex GPT-5.4</span> · 2h ago</div>
+          </div>
+          <div class="actions">
+            <div class="btn ghost">🔗 Backlinks (12)</div>
+            <div class="btn ghost">🕘 History</div>
+            <div class="btn ghost">💬 Ask this page</div>
+            <div class="btn">Edit</div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="detail-grid">
+            <div class="prose">
+              <h1>LLM Wiki</h1>
+              <div class="fm">
+                <span>type: concept</span>
+                <span>status: canonical</span>
+                <span>owner: maintainer</span>
+                <span>schema: v1</span>
+                <span>last_verified: 2026-04-09</span>
+              </div>
+              <p>LLM Wiki 是 Karpathy 在 2026 年 4 月开源的一份个人知识管理方法论。它的真正主张不是又一个笔记工具，而是提出了一种新的认知分工：<strong>人负责策展、判断和提问，LLM 负责维护、连接、更新和巡检</strong>。</p>
+
+              <h2>三层结构</h2>
+              <p>系统分成 <code>raw/</code>、<code>wiki/</code>、<code>schema/</code> 三层。Raw 层是只读的事实来源；Wiki 层是由 LLM 持续更新的摘要、概念、人物与对比页；Schema 层包含 <code>CLAUDE.md</code> 与 <code>AGENTS.md</code>，定义目录结构、命名规范和更新流程。</p>
+
+              <h2>与 RAG 的区别</h2>
+              <p>传统 RAG 更像一个临时资料员——问一次查一次，不积累。LLM Wiki 则是一个会不断自我整理、自我补全、自我演化的知识网络。前者解决查找效率，后者解决认知复利。详细对比见 <code>compare/rag-vs-llm-wiki</code>。</p>
+
+              <h2>为什么是现在</h2>
+              <p>过去知识管理总是卡在"谁来维护"这一关。LLM 第一次让低成本维护复杂知识网络有了解法：它不嫌烦、不偷懒、不会忘记加链接。当维护成本不再随知识规模爆炸，知识库才真正开始产生复利。</p>
+            </div>
+
+            <div>
+              <div class="aside-card">
+                <h5>BACKLINKS (12)</h5>
+                <div class="link-list">
+                  <a>concept/认知复利 <span class="s">· 5 refs</span></a>
+                  <a>concept/rag <span class="s">· compare</span></a>
+                  <a>concept/zettelkasten</a>
+                  <a>concept/memex</a>
+                  <a>topic/cognitive-os</a>
+                  <a>people/Andrej Karpathy</a>
+                  <a>compare/rag-vs-llm-wiki</a>
+                  <a>changelog/2026-04-09</a>
+                </div>
+              </div>
+              <div class="aside-card">
+                <h5>SOURCES (3)</h5>
+                <div class="link-list">
+                  <a><span class="chip wechat" style="font-size:9px;">wechat</span> raw/00248 · Karpathy LLM Wiki</a>
+                  <a><span class="chip" style="font-size:9px;">upload</span> raw/00244 · Engineering KB</a>
+                  <a><span class="chip wechat" style="font-size:9px;">wechat</span> raw/00243 · Memex</a>
+                </div>
+              </div>
+              <div class="aside-card">
+                <h5>MAINTENANCE TIMELINE</h5>
+                <div class="link-list" style="font-size:10px;">
+                  <div>✓ 自动摘要 · Codex · 2h</div>
+                  <div>✓ 冲突扫描 · Codex · 2h</div>
+                  <div>✓ Backlink 重建 · 2h</div>
+                  <div>✓ 追加 changelog · 2h</div>
+                  <div>⚠︎ 陈旧度检查 · 3 天后到期</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 05 ASK · extracted CCD patterns ============ -->
+<section id="s05" class="screen">
+  <div class="screen-title">
+    <span class="num">05</span>
+    <h2>Ask · Wiki 会话（提取 CCD 模式）</h2>
+    <span class="note">流式消息流 + PermissionDialog + Composer + StatusLine · 全部是从 SessionWorkbench 提取的交互语法，重新上暖色皮肤</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">Ask · Karpathy LLM Wiki 复盘</div>
+      <div class="right">
+        <span class="pool">● Codex GPT-5.4</span>
+        <span>running</span>
+      </div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item active"><div class="ico">💬</div>Ask <div class="ai-dot"></div></div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="ask-layout">
+          <div class="ask-side">
+            <div class="slabel">今天</div>
+            <div class="session-item active">
+              <div class="t">Karpathy LLM Wiki 复盘</div>
+              <div class="s">10 msgs · running</div>
+            </div>
+            <div class="session-item">
+              <div class="t">对比 RAG vs Wiki</div>
+              <div class="s">7 msgs · idle</div>
+            </div>
+            <div class="slabel">昨天</div>
+            <div class="session-item">
+              <div class="t">Schema v2 草稿</div>
+              <div class="s">22 msgs · idle</div>
+            </div>
+            <div class="session-item">
+              <div class="t">人物页 · Karpathy</div>
+              <div class="s">4 msgs · idle</div>
+            </div>
+            <div class="slabel">本周</div>
+            <div class="session-item">
+              <div class="t">Memex 整理</div>
+              <div class="s">15 msgs · idle</div>
+            </div>
+          </div>
+
+          <div class="ask-main">
+            <div class="ask-head">
+              <div>
+                <div class="title">Karpathy LLM Wiki 复盘</div>
+                <div class="sub">wiki-maintainer tools · 10 enabled · raw/00248 loaded as context</div>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <div class="chip ai">● running</div>
+                <div class="chip">Codex GPT-5.4</div>
+              </div>
+            </div>
+
+            <div class="msgs">
+              <div class="msg user">
+                <div class="avatar">WC</div>
+                <div class="content">
+                  <div class="who">You · 14:22</div>
+                  <div class="body">
+                    <p>读完 Karpathy 的 LLM Wiki 方法论，帮我在 wiki/ 里把三层结构落下来：新建或更新 <code>concept/llm-wiki</code>、更新 <code>compare/rag-vs-llm-wiki</code>，并把我昨天写的 Schema v2 草稿和这份文章里的规则对齐。</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="msg assistant">
+                <div class="avatar">C</div>
+                <div class="content">
+                  <div class="who">Claude <span class="ai-tag">· via Codex broker</span> · 14:22 · using 5 tools</div>
+                  <div class="body">
+                    <p>我先读你刚从微信入库的原文和现有相关页面，再决定怎么合并。</p>
+                    <div class="tool-call"><span class="name">read_source</span>(id="raw/00248") → 42 KB, 279 lines <span class="ok">✓</span></div>
+                    <div class="tool-call"><span class="name">read_page</span>(slug="concept/llm-wiki") → not found</div>
+                    <div class="tool-call"><span class="name">read_page</span>(slug="compare/rag-vs-llm-wiki") → 8 KB <span class="ok">✓</span></div>
+                    <div class="tool-call"><span class="name">search_wiki</span>(query="Schema v2") → 3 hits in wiki/, 2 in schema/</div>
+                    <div class="tool-call"><span class="name">read_page</span>(slug="concept/rag") → 12 KB <span class="ok">✓</span></div>
+                    <p>原文三层清晰。我准备：</p>
+                    <p>1) 新建 <code>concept/llm-wiki.md</code> · 2) 给 <code>compare/rag-vs-llm-wiki.md</code> 补一段"认知复利"论据 · 3) 让 <code>schema/policies/maintenance.md</code> 对齐原文要求的 5 件维护动作。</p>
+                  </div>
+
+                  <!-- PermissionDialog · extracted -->
+                  <div class="perm-dialog">
+                    <div class="title">
+                      ⚠ Permission required
+                      <span class="risk">MEDIUM</span>
+                    </div>
+                    <div class="detail">write_page(slug="concept/llm-wiki", frontmatter={type,status,schema…}, body=…)</div>
+                    <div class="explain">
+                      Maintainer 要在 <b>~/.clawwiki/wiki/concept/llm-wiki.md</b> 新建一个 canonical 页面。该操作将写入新文件、更新 <code>wiki/index.md</code>、追加一条 changelog。
+                    </div>
+                    <div class="btns">
+                      <div class="pb primary">Allow once</div>
+                      <div class="pb">Always allow in Wiki</div>
+                      <div class="pb danger">Deny</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <div class="inner">
+                <div class="prompt">准许 write_page，但先给我看 concept/llm-wiki.md 的 frontmatter 草稿。完成后顺便把 people/Andrej Karpathy 的页面也建了…</div>
+                <div class="toolbar">
+                  <div class="left">
+                    <span class="chip">@raw/00248</span>
+                    <span class="chip">@compare/rag-vs-llm-wiki</span>
+                    <span>⇧⏎ new line</span>
+                  </div>
+                  <div class="right">
+                    <span>⏎ send</span>
+                    <div class="btn sm">↑</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-line">
+          <span class="ok">● running</span>
+          <span class="ai">codex gpt-5.4 · via broker</span>
+          <span>tools: 10</span>
+          <span>ctx: 42.1k / 1M</span>
+          <span>today cost: ¥0 (subscription)</span>
+          <span style="margin-left:auto;">session: ask_2f8c…</span>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 06 INBOX · task tree ============ -->
+<section id="s06" class="screen">
+  <div class="screen-title">
+    <span class="num">06</span>
+    <h2>Inbox · Maintainer 任务审阅</h2>
+    <span class="note">左列待审任务 · 右列选中任务的完整 MaintainerTaskTree（提取自 CCD SubagentPanel）· 每步工具调用 + diff + approve/deny</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">Inbox · 12 open · 3 conflicts</div>
+      <div class="right">
+        <span class="pool">● maintainer idle</span>
+      </div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item active"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>Maintenance Inbox</h3>
+            <div class="sub">Maintainer AI 提的待审阅任务 · 选中后右栏显示完整思考过程与涉及的改动</div>
+          </div>
+          <div class="actions">
+            <div class="btn ghost">Filter: all · 12</div>
+            <div class="btn ghost">Only conflicts (3)</div>
+            <div class="btn">Apply all safe</div>
+          </div>
+        </div>
+
+        <div class="inbox-layout">
+          <!-- Left: list -->
+          <div class="inbox-list-col">
+            <div class="inbox-item">
+              <div class="top">
+                <div class="ico2">⚠︎</div>
+                <div class="t">合并冲突: Agentic Loop v1 ↔ v2</div>
+                <span class="chip danger">conflict</span>
+              </div>
+              <div class="s">v1 说 loop 无限迭代，v2 设 max=100 · 需要选一个 canonical · maintainer · 2h 前</div>
+            </div>
+            <div class="inbox-item active">
+              <div class="top">
+                <div class="ico2">💬</div>
+                <div class="t">来自 wechat: Karpathy LLM Wiki 方法论</div>
+                <span class="chip wechat">wechat</span>
+              </div>
+              <div class="s">maintainer 完成了 5 个 action · 待你 approve · 14:22 今日</div>
+            </div>
+            <div class="inbox-item">
+              <div class="top">
+                <div class="ico2">＋</div>
+                <div class="t">新增 people/Andrej Karpathy</div>
+                <span class="chip primary">new page</span>
+              </div>
+              <div class="s">Ask 会话中被引用 7 次 · 建议用 templates/people.md · 4h 前</div>
+            </div>
+            <div class="inbox-item">
+              <div class="top">
+                <div class="ico2">🕘</div>
+                <div class="t">concept/Vector DB · 90 天未 verified</div>
+                <span class="chip warn">stale</span>
+              </div>
+              <div class="s">5 个 backlink 源已变更 · 需要重新核对 last_verified · 今日 04:00</div>
+            </div>
+            <div class="inbox-item">
+              <div class="top">
+                <div class="ico2">↻</div>
+                <div class="t">23 页 frontmatter 不符 schema v1</div>
+                <span class="chip">drift</span>
+              </div>
+              <div class="s">缺 last_verified 字段 · 可一键迁移 · 今日 08:10</div>
+            </div>
+          </div>
+
+          <!-- Right: detail with MaintainerTaskTree -->
+          <div class="inbox-detail">
+            <div class="head">
+              <div>
+                <h4>来自 wechat: Karpathy LLM Wiki 方法论</h4>
+                <div class="sub">trigger: raw/00248 ingested · duration: 3.2s · 5 actions · cost: ¥0 (subscription)</div>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <div class="chip wechat">wechat</div>
+                <div class="chip ai">Codex GPT-5.4</div>
+              </div>
+            </div>
+
+            <div class="task-tree">
+              <h5>MAINTAINER TASK TREE · 5 actions</h5>
+              <div class="task-node">
+                <div class="line"></div>
+                <div class="dot"></div>
+                <div class="body">
+                  <div class="name">① <span class="fn">read_source</span>("raw/00248")</div>
+                  <div class="meta">42 KB, 279 lines · 240ms</div>
+                </div>
+              </div>
+              <div class="task-node">
+                <div class="line"></div>
+                <div class="dot"></div>
+                <div class="body">
+                  <div class="name">② <span class="fn">write_page</span>("concept/llm-wiki")</div>
+                  <div class="meta">new file · frontmatter 9 keys · body 1.2KB · 680ms</div>
+                  <div class="diff">---
+<span class="add">+type: concept</span>
+<span class="add">+status: canonical</span>
+<span class="add">+owner: maintainer</span>
+<span class="add">+schema: v1</span>
+<span class="add">+source: wechat</span>
+<span class="add">+source_url: mp.weixin.qq.com/s/orG5…</span>
+---
+<span class="add">+# LLM Wiki</span>
+<span class="add">+</span>
+<span class="add">+LLM Wiki 是 Karpathy 在 2026 年 4 月开源的…</span></div>
+                </div>
+              </div>
+              <div class="task-node">
+                <div class="line"></div>
+                <div class="dot"></div>
+                <div class="body">
+                  <div class="name">③ <span class="fn">patch_page</span>("compare/rag-vs-llm-wiki")</div>
+                  <div class="meta">2 sections added · 820ms</div>
+                  <div class="diff"><span class="add">+## 认知复利论据</span>
+<span class="add">+</span>
+<span class="add">+根据 raw/00248，RAG 每次解决查找效率而 LLM Wiki 解决…</span></div>
+                </div>
+              </div>
+              <div class="task-node">
+                <div class="line"></div>
+                <div class="dot"></div>
+                <div class="body">
+                  <div class="name">④ <span class="fn">link_pages</span> × 4</div>
+                  <div class="meta">concept/llm-wiki ↔ concept/rag · concept/认知复利 · people/karpathy · changelog/2026-04-09 · 120ms</div>
+                </div>
+              </div>
+              <div class="task-node">
+                <div class="line"></div>
+                <div class="dot running"></div>
+                <div class="body">
+                  <div class="name">⑤ <span class="fn">touch_changelog</span> + <span class="fn">rebuild_index</span></div>
+                  <div class="meta">in progress · 60ms so far</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="inbox-actions">
+              <div class="btn">✓ Approve all (5)</div>
+              <div class="btn ghost">Review each</div>
+              <div class="btn ghost">Rollback</div>
+              <div style="flex:1;"></div>
+              <div class="btn danger">Reject</div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 07 WECHAT BRIDGE ============ -->
+<section id="s07" class="screen">
+  <div class="screen-title">
+    <span class="num">07</span>
+    <h2>WeChat Bridge · 主入口</h2>
+    <span class="note">企微外联机器人绑定 · 5 步 pipeline 状态灯 · 今日收件箱 · v3 没有外部 broker，只有微信这一条通路</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">WeChat Bridge · bound to 企微外联</div>
+      <div class="right"><span class="pool">● listening</span></div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-label">BRIDGE</div>
+        <div class="sb-item active"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>WeChat Bridge</h3>
+            <div class="sub">微信 → 云中继（只中继不入库） → 本机 pipeline → ~/.clawwiki/raw/ → Maintainer AI</div>
+          </div>
+          <div class="actions">
+            <div class="btn ghost">Test webhook</div>
+            <div class="btn ghost">View logs</div>
+            <div class="btn">Bind another bot</div>
+          </div>
+        </div>
+        <div class="body" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="bot-card">
+            <div class="title">
+              <div>
+                <div style="font-size:14px;font-weight:700;margin-bottom:3px;">企业微信外部联系人机器人 <span class="chip ok" style="margin-left:8px;">● bound</span></div>
+                <div style="font-size:11px;color:var(--muted-fg);">corpid: ww01f… · agentid: 1000002 · 完全合规通道（主推方案）</div>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <span class="chip wechat">今日 14 条</span>
+                <span class="chip">30 天留存</span>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="kv" style="grid-template-columns:150px 1fr 150px 1fr;">
+              <div class="k">Webhook URL</div>
+              <div class="v">https://api.clawwiki.dev/api/v1/wechat/webhook</div>
+              <div class="k">WebSocket URL</div>
+              <div class="v">wss://api.clawwiki.dev/ws/wechat-inbox</div>
+              <div class="k">签名校验</div>
+              <div class="v ok">● 企微 SDK v3</div>
+              <div class="k">加密</div>
+              <div class="v">AES-GCM blob</div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size:11px;font-weight:600;margin-bottom:10px;">最近一条消息 · pipeline 实时状态</div>
+            <div class="pipeline">
+              <div class="pipe-step">
+                <div class="status"></div>
+                <div class="n">STEP 01</div>
+                <div class="t">webhook</div>
+                <div class="s">企微 POST · 签名校验 · 收到 mp.weixin URL · 14:22:18</div>
+              </div>
+              <div class="pipe-step">
+                <div class="status"></div>
+                <div class="n">STEP 02</div>
+                <div class="t">cloud relay</div>
+                <div class="s">只中继不入库 · 推到本机 WS · 420ms</div>
+              </div>
+              <div class="pipe-step">
+                <div class="status"></div>
+                <div class="n">STEP 03</div>
+                <div class="t">defuddle</div>
+                <div class="s">fork + wechat extractor · 28 imgs data-src → src · 180ms</div>
+              </div>
+              <div class="pipe-step active">
+                <div class="status"></div>
+                <div class="n">STEP 04</div>
+                <div class="t">clipper/api</div>
+                <div class="s">template=wechat-clip · md + frontmatter · running…</div>
+              </div>
+              <div class="pipe-step pending">
+                <div class="status"></div>
+                <div class="n">STEP 05</div>
+                <div class="t">maintainer</div>
+                <div class="s">wiki-mode session · Codex · 5 actions</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size:11px;font-weight:600;margin-bottom:10px;">今日收件箱 · 14 条</div>
+            <div class="wechat-events">
+              <div class="wechat-item">
+                <div class="mtype">🔗</div>
+                <div>
+                  <div class="t">Karpathy 的 LLM Wiki 方法论</div>
+                  <div class="s">mp.weixin.qq.com/s/orG5IWkR… · from 联系人 wu*h*i</div>
+                </div>
+                <div><span class="chip wechat">mp article</span></div>
+                <div><span class="chip ok">maintained</span> · 5 actions</div>
+                <div><div class="btn secondary sm">查看</div></div>
+              </div>
+              <div class="wechat-item">
+                <div class="mtype">🎙</div>
+                <div>
+                  <div class="t">研究员访谈 · 60s</div>
+                  <div class="s">voice.silk → mp3 → Whisper · from 联系人 li*n</div>
+                </div>
+                <div><span class="chip wechat">voice</span></div>
+                <div><span class="chip ok">maintained</span> · 3 actions</div>
+                <div><div class="btn secondary sm">查看</div></div>
+              </div>
+              <div class="wechat-item">
+                <div class="mtype">📊</div>
+                <div>
+                  <div class="t">AI Products 2026 Q2 Roadmap.pptx</div>
+                  <div class="s">4.2 MB · 32 slides · python-pptx 抽取中…</div>
+                </div>
+                <div><span class="chip wechat">pptx</span></div>
+                <div><span class="chip warn">extracting</span></div>
+                <div><div class="btn secondary sm">查看</div></div>
+              </div>
+              <div class="wechat-item">
+                <div class="mtype">🎬</div>
+                <div>
+                  <div class="t">产品演示视频 · 8 分钟</div>
+                  <div class="s">32 MB · ffmpeg 抽帧 + Whisper 转写中…</div>
+                </div>
+                <div><span class="chip wechat">video</span></div>
+                <div><span class="chip warn">transcribing</span></div>
+                <div><div class="btn secondary sm">查看</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 08 GRAPH ============ -->
+<section id="s08" class="screen">
+  <div class="screen-title">
+    <span class="num">08</span>
+    <h2>Knowledge Graph</h2>
+    <span class="note">节点=页面 · 颜色=fresh/stale/conflict · 点击跳 Page Detail</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">Graph · 248 nodes · 3,108 edges</div>
+      <div class="right"><span class="pool">● up</span></div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item active"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>Knowledge Graph</h3>
+            <div class="sub">Force-directed · weighted by backlinks · 点击节点跳 Page Detail</div>
+          </div>
+          <div class="actions">
+            <div class="btn ghost">Filter: concept</div>
+            <div class="btn ghost">Only stale</div>
+            <div class="btn">Focus: llm-wiki</div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="graph-canvas">
+            <div class="edge" style="left:29%;top:44%;width:170px;transform:rotate(-18deg);"></div>
+            <div class="edge" style="left:29%;top:47%;width:200px;transform:rotate(22deg);"></div>
+            <div class="edge" style="left:29%;top:47%;width:240px;transform:rotate(-55deg);"></div>
+            <div class="edge" style="left:29%;top:49%;width:280px;transform:rotate(80deg);"></div>
+            <div class="edge" style="left:50%;top:30%;width:180px;transform:rotate(15deg);"></div>
+            <div class="edge" style="left:50%;top:30%;width:220px;transform:rotate(-40deg);"></div>
+            <div class="edge" style="left:56%;top:65%;width:160px;transform:rotate(10deg);"></div>
+            <div class="edge" style="left:64%;top:70%;width:140px;transform:rotate(-30deg);"></div>
+            <div class="edge" style="left:14%;top:62%;width:140px;transform:rotate(-15deg);"></div>
+            <div class="edge" style="left:14%;top:62%;width:160px;transform:rotate(45deg);"></div>
+            <div class="edge" style="left:40%;top:30%;width:160px;transform:rotate(-65deg);"></div>
+
+            <div class="node" style="left:27%;top:42%;">llm-wiki</div>
+            <div class="node secondary" style="left:9%;top:26%;">memex</div>
+            <div class="node secondary" style="left:11%;top:60%;">zettelkasten</div>
+            <div class="node" style="left:46%;top:26%;">rag</div>
+            <div class="node" style="left:50%;top:58%;">认知复利</div>
+            <div class="node secondary" style="left:70%;top:33%;">karpathy</div>
+            <div class="node secondary" style="left:66%;top:54%;">schema-driven agents</div>
+            <div class="node stale" style="left:78%;top:72%;">agentic-loop v1</div>
+            <div class="node conflict" style="left:56%;top:76%;">agentic-loop v2</div>
+            <div class="node secondary" style="left:15%;top:80%;">obsidian</div>
+            <div class="node secondary" style="left:80%;top:18%;">cognitive-os</div>
+            <div class="node secondary" style="left:38%;top:70%;">defuddle</div>
+            <div class="node secondary" style="left:44%;top:10%;">maintainer</div>
+
+            <div class="graph-legend">
+              <div><span class="legend-dot" style="background:var(--primary);"></span>high-degree</div>
+              <div><span class="legend-dot" style="background:var(--border-2);"></span>leaf</div>
+              <div><span class="legend-dot" style="background:var(--warn);"></span>stale (&gt;90d)</div>
+              <div><span class="legend-dot" style="background:var(--danger);"></span>conflict</div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 09 SCHEMA EDITOR ============ -->
+<section id="s09" class="screen">
+  <div class="screen-title">
+    <span class="num">09</span>
+    <h2>Schema Editor · CLAUDE.md + Maintainer proposal</h2>
+    <span class="note">决定 Maintainer AI 纪律的规则层 · 右侧 Monaco-style 深色 · 演示 AI 提出的 proposal diff</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">Schema · CLAUDE.md</div>
+      <div class="right"><span>dirty · ⌘S save</span></div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item active"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <div>
+            <h3>Schema</h3>
+            <div class="sub">这一层决定 Maintainer AI 是"会聊天的 LLM"还是"有纪律的维护者"</div>
+          </div>
+          <div class="actions">
+            <div class="btn ghost">Dry run</div>
+            <div class="btn ghost">History</div>
+            <div class="btn">Save &amp; reload</div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="schema-grid">
+            <div class="schema-tree">
+              <div class="folder">~/.clawwiki/schema/</div>
+              <div class="file active"><span class="ic">md</span>CLAUDE.md</div>
+              <div class="file"><span class="ic">md</span>AGENTS.md</div>
+              <div class="folder">templates/</div>
+              <div class="file"><span class="ic">md</span>concept.md</div>
+              <div class="file"><span class="ic">md</span>people.md</div>
+              <div class="file"><span class="ic">md</span>topic.md</div>
+              <div class="file"><span class="ic">md</span>compare.md</div>
+              <div class="file"><span class="ic">json</span>wechat-clip.clipper.json</div>
+              <div class="folder">policies/</div>
+              <div class="file"><span class="ic">md</span>maintenance.md</div>
+              <div class="file"><span class="ic">md</span>conflict.md</div>
+              <div class="file"><span class="ic">md</span>deprecation.md</div>
+              <div class="file"><span class="ic">md</span>naming.md</div>
+            </div>
+            <div class="schema-editor">
+<span class="ln">  1 </span><span class="cm"># CLAUDE.md · wiki-maintainer agent rules</span>
+<span class="ln">  2 </span>
+<span class="ln">  3 </span><span class="cm">## Role</span>
+<span class="ln">  4 </span>You are the <span class="kw">wiki-maintainer</span> for ClawWiki.
+<span class="ln">  5 </span>Human curates sources (mostly from <span class="str">WeChat</span>);
+<span class="ln">  6 </span>you maintain pages. Never invert this.
+<span class="ln">  7 </span>
+<span class="ln">  8 </span><span class="cm">## Triggers</span>
+<span class="ln">  9 </span>Every <span class="str">raw_ingested(source_id)</span> MUST fire
+<span class="ln"> 10 </span>the <span class="kw">5 maintenance actions</span>:
+<span class="ln"> 11 </span>  <span class="str">1.</span> summarise ≤ 200 words, quote ≤ 15 words
+<span class="ln"> 12 </span>  <span class="str">2.</span> update affected concept/people/topic pages
+<span class="ln"> 13 </span>  <span class="str">3.</span> add/update backlinks (bidirectional)
+<span class="ln"> 14 </span>  <span class="str">4.</span> detect conflicts → mark_conflict → Inbox
+<span class="ln"> 15 </span>  <span class="str">5.</span> append to changelog/YYYY-MM-DD.md
+<span class="ln"> 16 </span>
+<span class="ln"> 17 </span><span class="add"><span class="cm">## ⚠ MAINTAINER PROPOSAL · 4h ago</span></span>
+<span class="ln"> 18 </span><span class="add"><span class="cm">## Triggers (v2 upgrade proposal)</span></span>
+<span class="ln"> 19 </span><span class="add">+  <span class="str">6.</span> emit knowledge_graph_delta event</span>
+<span class="ln"> 20 </span><span class="add">+  <span class="str">7.</span> re-rank related pages by RRF</span>
+<span class="ln"> 21 </span>
+<span class="ln"> 22 </span><span class="cm">## Tool permissions (PermissionDialog enforces)</span>
+<span class="ln"> 23 </span><span class="kw">low</span>    : read_source · read_page · search_wiki
+<span class="ln"> 24 </span><span class="kw">medium</span> : write_page · patch_page · link_pages
+<span class="ln"> 25 </span><span class="kw">high</span>   : ingest_source · deprecate_page · mark_conflict
+<span class="ln"> 26 </span>
+<span class="ln"> 27 </span><span class="cm">## Never do</span>
+<span class="ln"> 28 </span>- Never rewrite <span class="str">raw/</span> files
+<span class="ln"> 29 </span>- Never silently merge conflicting pages
+<span class="ln"> 30 </span>- Never quote > 15 consecutive words (copyright)
+<span class="ln"> 31 </span>- Never touch <span class="str">schema/</span> — propose via Inbox
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 10 SETTINGS · SUBSCRIPTION & POOL ============ -->
+<section id="s10" class="screen">
+  <div class="screen-title">
+    <span class="num">10</span>
+    <h2>Settings · Subscription &amp; Codex Pool</h2>
+    <span class="note">原 "Token Broker" 改名为 "Subscription &amp; Codex Pool" · v3 砍掉所有外部客户端相关内容 · 只展示内部状态</span>
+  </div>
+  <div class="frame">
+    <div class="top-chrome">
+      <div class="lights"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      <div class="title">Settings</div>
+      <div class="right"><span class="pool">● pool healthy</span></div>
+    </div>
+    <div class="body-wrap">
+      <aside class="sidebar">
+        <div class="logo"><div class="mark">C</div><div class="name">ClawWiki</div><div class="badge">v3</div></div>
+        <div class="sb-label">PRIMARY</div>
+        <div class="sb-item"><div class="ico">📊</div>Dashboard</div>
+        <div class="sb-item"><div class="ico">📥</div>Raw Library</div>
+        <div class="sb-item"><div class="ico">📖</div>Wiki Pages</div>
+        <div class="sb-item"><div class="ico">💬</div>Ask</div>
+        <div class="sb-item"><div class="ico">🕸</div>Graph</div>
+        <div class="sb-item"><div class="ico">📐</div>Schema</div>
+        <div class="sb-item"><div class="ico">📨</div>Inbox <span class="badge">12</span></div>
+        <div class="sb-divider"></div>
+        <div class="sb-item"><div class="ico">🔗</div>WeChat Bridge</div>
+        <div class="sb-spacer"></div>
+        <div class="sb-item active"><div class="ico">⚙</div>Settings</div>
+        <div class="sb-foot"><div class="avatar">WC</div><div><div class="u">changpeng</div><div class="p">Pro</div></div></div>
+      </aside>
+
+      <main class="main">
+        <div class="settings-grid">
+          <aside class="settings-nav">
+            <div class="si"><div class="ico"></div>Account</div>
+            <div class="si active"><div class="ico"></div>Subscription &amp; Codex Pool</div>
+            <div class="si"><div class="ico"></div>WeChat Bridge</div>
+            <div class="si"><div class="ico"></div>Wiki Storage</div>
+            <div class="si"><div class="ico"></div>Permissions</div>
+            <div class="si"><div class="ico"></div>Providers</div>
+            <div class="si"><div class="ico"></div>Shortcuts</div>
+            <div class="si"><div class="ico"></div>About</div>
+          </aside>
+
+          <div class="settings-body">
+            <div class="card">
+              <h4>当前订阅</h4>
+              <div class="row" style="align-items:flex-start;">
+                <div style="flex:1;">
+                  <div class="kv">
+                    <div class="k">套餐</div><div class="v">Pro · 5 Codex accounts</div>
+                    <div class="k">价格</div><div class="v">¥ 199 / 月</div>
+                    <div class="k">下次续费</div><div class="v">2026-05-08</div>
+                    <div class="k">状态</div><div class="v ok">● active</div>
+                    <div class="k">本月用量</div><div class="v">68,420 requests · ∞ cap</div>
+                    <div class="k">本月成本</div><div class="v ok">已包含在套餐内</div>
+                  </div>
+                </div>
+                <div style="flex:1;">
+                  <div style="font-size:10px;color:var(--muted-fg);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;">本周使用曲线</div>
+                  <div class="sparkline">
+                    <svg viewBox="0 0 200 60" preserveAspectRatio="none">
+                      <path d="M 0 50 L 20 40 L 40 42 L 60 30 L 80 25 L 100 20 L 120 15 L 140 22 L 160 10 L 180 12 L 200 8" stroke="#C35A2C" stroke-width="2" fill="none" stroke-linecap="round"/>
+                      <path d="M 0 50 L 20 40 L 40 42 L 60 30 L 80 25 L 100 20 L 120 15 L 140 22 L 160 10 L 180 12 L 200 8 L 200 60 L 0 60 Z" fill="url(#sg)"/>
+                      <defs>
+                        <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stop-color="#C35A2C" stop-opacity="0.3"/>
+                          <stop offset="100%" stop-color="#C35A2C" stop-opacity="0"/>
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                  </div>
+                  <div class="row" style="gap:6px;margin-top:8px;font-size:10px;color:var(--muted-fg);justify-content:space-between;">
+                    <span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>今天</span>
+                  </div>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div style="display:flex;gap:8px;">
+                <div class="btn ghost">升级套餐</div>
+                <div class="btn ghost">账单历史</div>
+                <div style="flex:1;"></div>
+                <div class="btn" style="background:transparent;color:var(--danger);border-color:var(--danger);">取消订阅</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h4>Codex Pool · 内聚 Broker</h4>
+              <div style="font-size:10px;color:var(--muted-fg);margin-bottom:10px;line-height:1.55;">
+                此账号池 <b>仅供 ClawWiki 自己的 Ask 和 Maintainer 使用</b>，不通过 HTTP 暴露给任何外部客户端（Claude Code Desktop / Cursor / claw-cli 等）。token 只存在 Rust 层 OS keychain，前端拿不到。<br>
+                这是 v3 相对 v2 的主要收窄点：减小攻击面 · 简化产品叙事。
+              </div>
+              <div style="margin:0 -18px -16px;">
+                <div class="acct-row header">
+                  <div></div><div>Alias · codex_user_id</div><div>Source</div><div>Expires</div><div>Status</div><div></div>
+                </div>
+                <div class="acct-row">
+                  <div>🟢</div>
+                  <div><div class="alias">cloud-01</div><div class="uid">codex_8f2b4a…</div></div>
+                  <div><span class="chip primary">cloud-managed</span></div>
+                  <div class="uid">2026-05-08</div>
+                  <div><span class="chip ok">fresh</span></div>
+                  <div style="font-size:10px;color:var(--muted-fg);text-align:right;">read-only</div>
+                </div>
+                <div class="acct-row">
+                  <div>🟢</div>
+                  <div><div class="alias">cloud-02</div><div class="uid">codex_1c04dd…</div></div>
+                  <div><span class="chip primary">cloud-managed</span></div>
+                  <div class="uid">2026-05-08</div>
+                  <div><span class="chip ok">fresh</span></div>
+                  <div style="font-size:10px;color:var(--muted-fg);text-align:right;">read-only</div>
+                </div>
+                <div class="acct-row">
+                  <div>🟡</div>
+                  <div><div class="alias">cloud-03</div><div class="uid">codex_be519e…</div></div>
+                  <div><span class="chip primary">cloud-managed</span></div>
+                  <div class="uid">2026-05-08</div>
+                  <div><span class="chip warn">refreshing</span></div>
+                  <div style="font-size:10px;color:var(--muted-fg);text-align:right;">read-only</div>
+                </div>
+                <div class="acct-row">
+                  <div>🟢</div>
+                  <div><div class="alias">cloud-04</div><div class="uid">codex_3400aa…</div></div>
+                  <div><span class="chip primary">cloud-managed</span></div>
+                  <div class="uid">2026-05-08</div>
+                  <div><span class="chip ok">fresh</span></div>
+                  <div style="font-size:10px;color:var(--muted-fg);text-align:right;">read-only</div>
+                </div>
+                <div class="acct-row">
+                  <div>🟢</div>
+                  <div><div class="alias">cloud-05</div><div class="uid">codex_f91c07…</div></div>
+                  <div><span class="chip primary">cloud-managed</span></div>
+                  <div class="uid">2026-05-08</div>
+                  <div><span class="chip ok">fresh</span></div>
+                  <div style="font-size:10px;color:var(--muted-fg);text-align:right;">read-only</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h4>用量分布 · 今日</h4>
+              <div class="row" style="gap:16px;">
+                <div style="flex:1;">
+                  <div class="kv">
+                    <div class="k">Ingest (maintainer)</div><div class="v">2,180 req (88%)</div>
+                    <div class="k">Ask 会话</div><div class="v">230 req (9%)</div>
+                    <div class="k">Lint &amp; health</div><div class="v">68 req (3%)</div>
+                  </div>
+                </div>
+                <div style="flex:1;">
+                  <div class="kv">
+                    <div class="k">总请求</div><div class="v">2,478</div>
+                    <div class="k">失败率</div><div class="v ok">0.3%</div>
+                    <div class="k">p95 延迟</div><div class="v">1.8s</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>

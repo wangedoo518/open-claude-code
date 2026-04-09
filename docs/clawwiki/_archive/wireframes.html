@@ -1,0 +1,1601 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>ClaudeWiki Wireframes</title>
+  <meta name="viewport" content="width=1440">
+  <style>
+    :root {
+      --bg: #faf9f6;
+      --fg: #2d2b28;
+      --card: #ffffff;
+      --muted: #f0ede7;
+      --muted-2: #f6f3ee;
+      --muted-fg: #8b8580;
+      --border: #e8e4de;
+      --primary: #c35a2c;
+      --primary-fg: #ffffff;
+      --ok: #3f8f5e;
+      --warn: #c88b1a;
+      --danger: #d44a3c;
+      --shadow: 0 16px 44px -16px rgba(45, 43, 40, 0.18), 0 2px 8px rgba(45, 43, 40, 0.05);
+      --sans: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: "Lora", Georgia, serif;
+      --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--muted);
+      color: var(--fg);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .doc {
+      width: 1440px;
+      margin: 0 auto;
+      padding: 28px 24px 80px;
+    }
+
+    .hero {
+      margin-bottom: 18px;
+    }
+
+    .hero h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted-fg);
+      font-size: 13px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 1fr;
+      gap: 12px;
+      margin: 16px 0 22px;
+    }
+
+    .summary .card {
+      min-height: 92px;
+    }
+
+    .sticky-nav {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px;
+      margin-bottom: 24px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(250, 249, 246, 0.92);
+      backdrop-filter: blur(14px);
+    }
+
+    .sticky-nav a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border-radius: 9px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--muted-fg);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .sticky-nav a:hover {
+      color: var(--fg);
+      border-color: #d7d1c8;
+    }
+
+    .screen {
+      margin: 0 0 52px;
+      scroll-margin-top: 82px;
+    }
+
+    .screen-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin: 0 0 10px;
+    }
+
+    .screen-head .num {
+      color: var(--muted-fg);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .screen-head h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .screen-head .note {
+      color: var(--muted-fg);
+      font-size: 12px;
+    }
+
+    .frame {
+      width: 1392px;
+      height: 860px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--bg);
+      box-shadow: var(--shadow);
+    }
+
+    .chrome {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 38px;
+      padding: 0 14px;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .lights {
+      display: flex;
+      gap: 6px;
+    }
+
+    .lights span {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: block;
+    }
+
+    .lights .r { background: #ff5f57; }
+    .lights .y { background: #febc2e; }
+    .lights .g { background: #28c840; }
+
+    .chrome .title {
+      flex: 1;
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted-fg);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .chrome .tagline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted-fg);
+    }
+
+    .window {
+      display: flex;
+      height: calc(100% - 38px);
+      min-height: 0;
+    }
+
+    .sidebar {
+      width: 224px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--muted);
+      border-right: 1px solid var(--border);
+      padding: 10px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mark {
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-family: var(--serif);
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .brand .name {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand .sub {
+      font-size: 11px;
+      color: var(--muted-fg);
+    }
+
+    .group {
+      margin-bottom: 10px;
+    }
+
+    .group-label {
+      padding: 8px 10px 5px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted-fg);
+    }
+
+    .item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      color: #5c5853;
+    }
+
+    .item.active {
+      background: var(--card);
+      color: var(--fg);
+      font-weight: 700;
+    }
+
+    .item .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      background: #d8d2ca;
+      flex-shrink: 0;
+    }
+
+    .item.active .dot { background: var(--primary); }
+
+    .sidebar .spacer { flex: 1; }
+
+    .sidebar .account {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid var(--border);
+      margin-top: 8px;
+    }
+
+    .avatar {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #d9d2ca;
+      color: var(--muted-fg);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .account .meta {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .account .meta .main {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .account .meta .sub {
+      font-size: 10px;
+      color: var(--muted-fg);
+    }
+
+    .main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.28);
+    }
+
+    .topbar h3 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+
+    .topbar p {
+      margin: 3px 0 0;
+      font-size: 12px;
+      color: var(--muted-fg);
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 32px;
+      padding: 0 12px;
+      border-radius: 9px;
+      border: 1px solid transparent;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--primary);
+      color: var(--primary-fg);
+    }
+
+    .btn.secondary {
+      background: var(--card);
+      border-color: var(--border);
+      color: var(--fg);
+    }
+
+    .btn.ghost {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--muted-fg);
+    }
+
+    .body {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      padding: 18px 22px 22px;
+    }
+
+    .grid-2, .grid-3, .grid-4 {
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 16px;
+    }
+
+    .card h4 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      letter-spacing: 0.01em;
+    }
+
+    .metric {
+      font-family: var(--mono);
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+
+    .muted {
+      color: var(--muted-fg);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--muted);
+      color: var(--muted-fg);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .chip.ok { background: rgba(63,143,94,0.13); color: var(--ok); }
+    .chip.warn { background: rgba(200,139,26,0.13); color: var(--warn); }
+    .chip.danger { background: rgba(212,74,60,0.12); color: var(--danger); }
+    .chip.primary { background: rgba(195,90,44,0.1); color: var(--primary); }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 12px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .row:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .row .icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: var(--muted-2);
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .row .content {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .row .title {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      letter-spacing: -0.01em;
+    }
+
+    .row .meta {
+      color: var(--muted-fg);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 12px;
+      height: 100%;
+    }
+
+    .triple {
+      display: grid;
+      grid-template-columns: 0.86fr 1.24fr 0.9fr;
+      gap: 12px;
+      height: 100%;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .table th,
+    .table td {
+      border-top: 1px solid var(--border);
+      padding: 10px 0;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .table tr:first-child th,
+    .table tr:first-child td { border-top: 0; }
+
+    .table th {
+      font-size: 11px;
+      color: var(--muted-fg);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .search {
+      display: flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--card);
+      color: var(--muted-fg);
+      font-size: 12px;
+    }
+
+    .message-thread {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+    }
+
+    .message {
+      max-width: 84%;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .message.user {
+      margin-left: auto;
+      background: #f3f0eb;
+    }
+
+    .message.assistant {
+      background: #fffdfb;
+    }
+
+    .tool {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: var(--muted-2);
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: #605952;
+      white-space: pre-line;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: auto;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .textarea {
+      min-height: 72px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted-fg);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .mini-block {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--muted-2);
+      font-size: 11px;
+      line-height: 1.6;
+      color: #625d58;
+    }
+
+    .graph {
+      position: relative;
+      height: 100%;
+      border-radius: 18px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 18%, rgba(195,90,44,0.08), transparent 18%),
+        radial-gradient(circle at 80% 24%, rgba(63,143,94,0.08), transparent 16%),
+        radial-gradient(circle at 50% 80%, rgba(200,139,26,0.08), transparent 18%),
+        linear-gradient(180deg, #fffefc 0%, #fbf8f4 100%);
+      border: 1px solid var(--border);
+    }
+
+    .node {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      border: 1px solid rgba(45,43,40,0.08);
+      background: rgba(255,255,255,0.92);
+      color: #514c47;
+      font-size: 10px;
+      font-weight: 700;
+      box-shadow: 0 6px 14px rgba(45,43,40,0.06);
+      text-align: center;
+      padding: 0 6px;
+    }
+
+    .line {
+      position: absolute;
+      height: 1px;
+      background: rgba(139,133,128,0.4);
+      transform-origin: 0 0;
+    }
+
+    .big {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .code {
+      background: #25211d;
+      color: #ece6df;
+      border-radius: 14px;
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+      overflow: hidden;
+    }
+
+    .columns-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      height: 100%;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div class="doc">
+    <div class="hero">
+      <h1>ClaudeWiki 产品线框图</h1>
+      <p>设计策略：保留 Claude Code Desktop 的工作台交互骨架，重做为以 WeChat Raw 入口、Wiki 编译、Obsidian 协同、Token Broker 为核心的知识桌面。</p>
+    </div>
+
+    <div class="summary">
+      <div class="card">
+        <h4>核心决策</h4>
+        <div class="big">不是严格复刻页面，而是保留交互骨架</div>
+        <div class="muted">保留 Ask / 权限 / 状态 / 本地 runtime，替换 Apps / Code / 双层 TabBar 信息架构。</div>
+      </div>
+      <div class="card">
+        <h4>主入口</h4>
+        <div class="big">微信投喂是 Raw 层，桌面是控制台</div>
+        <div class="muted">公众号、语音、PPT、视频都先入 Raw，再进入标准化与 Wiki 编译。</div>
+      </div>
+      <div class="card">
+        <h4>协同关系</h4>
+        <div class="big">Obsidian 是 IDE，ClaudeWiki 是编译器</div>
+        <div class="muted">Vault Overlay 优先，Markdown 文件即资产，Broker 则服务外部 Claude Code Desktop。</div>
+      </div>
+    </div>
+
+    <nav class="sticky-nav">
+      <a href="#s01">01 登录</a>
+      <a href="#s02">02 Dashboard</a>
+      <a href="#s03">03 WeChat Intake</a>
+      <a href="#s04">04 Raw Detail</a>
+      <a href="#s05">05 Wiki Explorer</a>
+      <a href="#s06">06 Wiki Page</a>
+      <a href="#s07">07 Ask</a>
+      <a href="#s08">08 Graph</a>
+      <a href="#s09">09 Schema</a>
+      <a href="#s10">10 Inbox</a>
+      <a href="#s11">11 Token Broker</a>
+      <a href="#s12">12 Obsidian</a>
+    </nav>
+
+    <section class="screen" id="s01">
+      <div class="screen-head">
+        <div class="num">01</div>
+        <h2>登录与初始化</h2>
+        <div class="note">说明产品不是“代码工具壳”，而是“知识资产控制台 + Broker”</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Welcome</div>
+          <div class="tagline"><span class="chip primary">Warm shell</span><span class="chip">GPT-5.4 orchestrated</span></div>
+        </div>
+        <div class="window" style="display:block;padding:48px 54px 54px;">
+          <div class="split">
+            <div class="stack">
+              <div>
+                <div class="chip primary">Knowledge OS</div>
+                <h2 style="margin:14px 0 8px;font-size:42px;letter-spacing:-0.04em;">让知识自己生长</h2>
+                <div class="muted" style="font-size:14px;max-width:520px;">
+                  使用 Google 账号继续。登录后同步订阅、Codex Broker 账号、微信接入配置与当前 Wiki 工作区。ClaudeWiki 保留 Claude Code Desktop 的工作台交互，但把产品中心切换到 Raw → Wiki → Schema。
+                </div>
+              </div>
+              <div class="card">
+                <h4>首次设置</h4>
+                <div class="list">
+                  <div class="row"><div class="icon"></div><div class="content"><div class="title">连接账户</div><div class="meta">Google 登录，拉取平台订阅与 cloud-managed codex accounts。</div></div><div class="chip ok">required</div></div>
+                  <div class="row"><div class="icon"></div><div class="content"><div class="title">选择 Workspace 形态</div><div class="meta">创建独立 ClaudeWiki 工作区，或覆盖到已有 Obsidian vault。</div></div><div class="chip warn">pick one</div></div>
+                  <div class="row"><div class="icon"></div><div class="content"><div class="title">配置微信入口</div><div class="meta">把分享链接、语音、文件都收进 Raw Inbox。</div></div><div class="chip">optional now</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card" style="padding:22px;">
+                <h4>继续使用 Google</h4>
+                <div class="mini-block" style="margin-bottom:12px;">打开浏览器完成 OAuth，返回后自动导入用户资料、套餐状态、Broker 账户池。</div>
+                <div class="btn" style="width:100%;margin-bottom:10px;">使用 Google 账号继续</div>
+                <div class="btn secondary" style="width:100%;">已有本地 Workspace，直接绑定</div>
+              </div>
+              <div class="grid-2">
+                <div class="card">
+                  <h4>登录后可用</h4>
+                  <div class="muted">Dashboard / Raw / Wiki / Ask / Broker / Obsidian</div>
+                </div>
+                <div class="card">
+                  <h4>不是首页重点</h4>
+                  <div class="muted">Apps Gallery、内嵌 CLI、严格 CCD 页面复刻</div>
+                </div>
+              </div>
+              <div class="card">
+                <h4>产品定位提示</h4>
+                <div class="code">“微信是投喂入口，Obsidian 是阅读 IDE，ClaudeWiki 是知识编译器和桌面控制台。”</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s02">
+      <div class="screen-head">
+        <div class="num">02</div>
+        <h2>Dashboard</h2>
+        <div class="note">首页从“会话中心”改成“认知资产总览”</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Dashboard</div>
+          <div class="tagline"><span class="chip ok">Broker online</span><span class="chip">Vault overlay</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group">
+              <div class="group-label">Workspace</div>
+              <div class="item active"><div class="dot"></div>Dashboard</div>
+              <div class="item"><div class="dot"></div>WeChat / Intake</div>
+              <div class="item"><div class="dot"></div>Raw Library</div>
+              <div class="item"><div class="dot"></div>Wiki</div>
+              <div class="item"><div class="dot"></div>Ask</div>
+              <div class="item"><div class="dot"></div>Graph</div>
+              <div class="item"><div class="dot"></div>Schema</div>
+              <div class="item"><div class="dot"></div>Inbox</div>
+            </div>
+            <div class="group">
+              <div class="group-label">Integrations</div>
+              <div class="item"><div class="dot"></div>Obsidian</div>
+              <div class="item"><div class="dot"></div>Settings</div>
+            </div>
+            <div class="spacer"></div>
+            <div class="account"><div class="avatar">WC</div><div class="meta"><div class="main">wang changpeng</div><div class="sub">Pro · 5 Codex 账号</div></div><div class="chip primary">CN</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>今天你的 Wiki 长了什么</h3>
+                <p>Raw 增长、编译结果、冲突与待审阅项，一眼看到知识系统是否健康。</p>
+              </div>
+              <div class="actions">
+                <div class="search">Ask anything about your wiki...</div>
+                <div class="btn">打开 Ask</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="grid-4" style="margin-bottom:12px;">
+                <div class="card"><h4>今日 Raw 进账</h4><div class="metric">18</div><div class="muted">微信文章 7 · 语音 4 · PPT/PDF 3 · 视频 2 · 网页 2</div></div>
+                <div class="card"><h4>新增/更新页面</h4><div class="metric">26</div><div class="muted">概念 9 · 人物 3 · 主题 8 · 对比 2 · 输出 4</div></div>
+                <div class="card"><h4>待审阅项</h4><div class="metric">11</div><div class="muted">冲突 3 · stale 2 · 失败转换 1 · 高价值问答回写 5</div></div>
+                <div class="card"><h4>Broker 状态</h4><div class="metric">5/5</div><div class="muted">cloud accounts ready · `127.0.0.1:4357/v1`</div></div>
+              </div>
+              <div class="split">
+                <div class="stack">
+                  <div class="card">
+                    <h4>刚从微信进来的材料</h4>
+                    <div class="list">
+                      <div class="row"><div class="icon"></div><div class="content"><div class="title">公众号：Karpathy 的 LLM Wiki</div><div class="meta">已 defuddle → 已入 raw/articles → 待合并进「认知工程」专题页</div></div><div class="chip ok">ready</div></div>
+                      <div class="row"><div class="icon"></div><div class="content"><div class="title">语音：产品 brainstorm 14m</div><div class="meta">已转写，提取出 6 个决定与 2 个冲突点</div></div><div class="chip warn">review</div></div>
+                      <div class="row"><div class="icon"></div><div class="content"><div class="title">PPT：行业分析 deck</div><div class="meta">已抽 slides + OCR，建议更新「竞品地图」和「市场趋势」</div></div><div class="chip primary">compile</div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>冲突与陈旧页</h4>
+                    <table class="table">
+                      <tr><th>Page</th><th>Reason</th><th>Status</th></tr>
+                      <tr><td>wechat-distribution.md</td><td>旧判断与本周用户访谈相反</td><td><span class="chip danger">conflict</span></td></tr>
+                      <tr><td>model-broker-architecture.md</td><td>引用的路由仍是 `/code` 方案</td><td><span class="chip warn">stale</span></td></tr>
+                      <tr><td>karpathy-llm-wiki.md</td><td>新增了 sage-wiki / engram 对比角度</td><td><span class="chip primary">update</span></td></tr>
+                    </table>
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>今日生成的知识资产</h4>
+                    <div class="grid-2">
+                      <div class="mini-block"><strong>专题页</strong><br>ClaudeWiki 产品定义<br>链接到 12 个概念与 7 个来源</div>
+                      <div class="mini-block"><strong>对比页</strong><br>sage-wiki vs engram vs ClaudeWiki<br>用于后续架构决策</div>
+                      <div class="mini-block"><strong>人物/来源页</strong><br>Karpathy / Farza / kepano / xoai</div>
+                      <div class="mini-block"><strong>输出页</strong><br>《微信接入后如何编译成 Wiki》答疑稿</div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>快速动作</h4>
+                    <div class="list">
+                      <div class="row"><div class="icon"></div><div class="content"><div class="title">继续处理微信入口</div><div class="meta">查看最近 24 小时 Intake 队列，重跑失败的 3 条任务。</div></div></div>
+                      <div class="row"><div class="icon"></div><div class="content"><div class="title">打开 Ask，追问“哪些结论应该回写成专题页？”</div><div class="meta">会将高质量答案自动进入 Inbox 供确认。</div></div></div>
+                      <div class="row"><div class="icon"></div><div class="content"><div class="title">在 Obsidian 中浏览今日新页</div><div class="meta">用于人工校对与编辑语气。</div></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s03">
+      <div class="screen-head">
+        <div class="num">03</div>
+        <h2>WeChat / Intake</h2>
+        <div class="note">把微信当 Raw 入口，而不是聊天页</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Intake Queue</div>
+          <div class="tagline"><span class="chip">微信公众号</span><span class="chip">语音</span><span class="chip">PPT / 视频</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item active"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+            <div class="spacer"></div>
+            <div class="account"><div class="avatar">WX</div><div class="meta"><div class="main">WeChat connected</div><div class="sub">1 inbound channel · 24h sync</div></div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>最近投喂进来的材料</h3>
+                <p>每条先落原件，再标准化，再决定是否进入编译队列。</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">仅收为 Raw</div>
+                <div class="btn">批量送去编译</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="triple">
+                <div class="card">
+                  <h4>来源过滤</h4>
+                  <div class="list">
+                    <div class="row"><div class="content"><div class="title">全部来源</div><div class="meta">今日 18 条</div></div></div>
+                    <div class="row"><div class="content"><div class="title">公众号文章</div><div class="meta">7 条 URL / 5 条已 defuddle</div></div></div>
+                    <div class="row"><div class="content"><div class="title">语音/视频</div><div class="meta">6 条待转写 / 2 条完成</div></div></div>
+                    <div class="row"><div class="content"><div class="title">PPT / PDF</div><div class="meta">3 条已解析 slides</div></div></div>
+                    <div class="row"><div class="content"><div class="title">聊天片段</div><div class="meta">2 条聚合完成</div></div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h4>队列列表</h4>
+                  <table class="table">
+                    <tr><th>Item</th><th>Normalization</th><th>Compile</th></tr>
+                    <tr><td>Karpathy 文章分享</td><td><span class="chip ok">defuddle → markdown</span></td><td><span class="chip primary">suggested</span></td></tr>
+                    <tr><td>产品讨论语音 14m</td><td><span class="chip warn">ASR done, topic clustering</span></td><td><span class="chip warn">needs review</span></td></tr>
+                    <tr><td>行业 PPT deck</td><td><span class="chip ok">slides.md + assets</span></td><td><span class="chip ok">queued</span></td></tr>
+                    <tr><td>竞品会议录屏</td><td><span class="chip warn">keyframe OCR running</span></td><td><span class="chip">blocked</span></td></tr>
+                    <tr><td>微信聊天摘录</td><td><span class="chip ok">conversation-note.md</span></td><td><span class="chip primary">merge</span></td></tr>
+                  </table>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>处理策略</h4>
+                    <div class="mini-block"><strong>文章</strong><br>URL → HTML → defuddle → markdown → raw/articles</div>
+                    <div class="mini-block" style="margin-top:8px;"><strong>语音</strong><br>audio → ASR → transcript → decisions / contradictions</div>
+                    <div class="mini-block" style="margin-top:8px;"><strong>PPT / 视频</strong><br>extract text + OCR + assets → normalized note</div>
+                  </div>
+                  <div class="card">
+                    <h4>这页的关键按钮</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">只收 Raw</div><div class="meta">存档但不触发写 Wiki，适合低确定性材料。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">送去编译</div><div class="meta">进入 LLM 维护队列，预计改动 3-15 个页面。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">打回重试</div><div class="meta">对 OCR、ASR、HTML 提取失败的任务重跑。</div></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s04">
+      <div class="screen-head">
+        <div class="num">04</div>
+        <h2>Raw Detail</h2>
+        <div class="note">原件、标准化结果、建议编译动作同屏</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Raw Item Detail</div>
+          <div class="tagline"><span class="chip ok">Immutable raw</span><span class="chip primary">Compile preview</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item active"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+            <div class="spacer"></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>Karpathy 文章分享</h3>
+                <p>Raw 原件不可修改，所有结构化与写 Wiki 都发生在派生层。</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">仅保存 Raw</div>
+                <div class="btn">确认编译</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="triple">
+                <div class="card">
+                  <h4>原件信息</h4>
+                  <div class="list">
+                    <div class="row"><div class="content"><div class="title">来源</div><div class="meta">WeChat share / mp.weixin.qq.com</div></div></div>
+                    <div class="row"><div class="content"><div class="title">对象</div><div class="meta">raw/inbox/wechat/2026-04-09-karpathy.html</div></div></div>
+                    <div class="row"><div class="content"><div class="title">附件</div><div class="meta">4 images downloaded to raw/assets/</div></div></div>
+                    <div class="row"><div class="content"><div class="title">安全</div><div class="meta">URL validated · local-only fetcher · no mutation on raw</div></div></div>
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>标准化结果</h4>
+                    <div class="mini-block"><strong>title:</strong> 当知识开始自己生长：Karpathy开源个人LLM Wiki</div>
+                    <div class="mini-block" style="margin-top:8px;"><strong>converter:</strong> defuddle → markdown</div>
+                    <div class="mini-block" style="margin-top:8px;"><strong>content preview:</strong><br>Karpathy 的核心不是 RAG，而是 Raw / Wiki / Schema 三层中的持续维护...</div>
+                  </div>
+                  <div class="card">
+                    <h4>建议改动的 Wiki 页面</h4>
+                    <table class="table">
+                      <tr><th>Page</th><th>Action</th><th>Reason</th></tr>
+                      <tr><td>karpathy-llm-wiki.md</td><td>rewrite</td><td>新增产品化视角</td></tr>
+                      <tr><td>knowledge-os.md</td><td>patch</td><td>补“维护成本归零”论点</td></tr>
+                      <tr><td>clawwiki-product.md</td><td>link</td><td>更新方法论来源</td></tr>
+                      <tr><td>farza-case.md</td><td>compare</td><td>补个人知识产品案例</td></tr>
+                    </table>
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>编译任务预估</h4>
+                    <div class="metric">6</div>
+                    <div class="muted">预计创建/更新 6 个页面，新增 12 条链接，1 条潜在冲突。</div>
+                  </div>
+                  <div class="card">
+                    <h4>用户可以做的判断</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">强调方法论</div><div class="meta">适合写入“认知操作系统”专题。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">仅做来源页</div><div class="meta">如果你不想立即扩散影响面。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">延后编译</div><div class="meta">保留到 Raw，晚点在 Inbox 统一处理。</div></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s05">
+      <div class="screen-head">
+        <div class="num">05</div>
+        <h2>Wiki Explorer</h2>
+        <div class="note">不是文件夹浏览器，而是知识页面网络入口</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Wiki Explorer</div>
+          <div class="tagline"><span class="chip">Concepts</span><span class="chip">Topics</span><span class="chip">Compare</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item active"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>Wiki Explorer</h3>
+                <p>按主题、人物、概念、对比和输出视图查看，而不是只看文件树。</p>
+              </div>
+              <div class="actions">
+                <div class="search">Search wiki pages, raw sources, and outputs...</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="triple">
+                <div class="card">
+                  <h4>目录</h4>
+                  <div class="list">
+                    <div class="row"><div class="content"><div class="title">Topics</div><div class="meta">产品、市场、学习、创业、认知工程</div></div></div>
+                    <div class="row"><div class="content"><div class="title">People</div><div class="meta">Karpathy, Farza, kepano, xoai...</div></div></div>
+                    <div class="row"><div class="content"><div class="title">Concepts</div><div class="meta">Raw layer, schema, compiled wiki, broker...</div></div></div>
+                    <div class="row"><div class="content"><div class="title">Compare</div><div class="meta">sage-wiki vs engram vs ClaudeWiki</div></div></div>
+                    <div class="row"><div class="content"><div class="title">Outputs</div><div class="meta">问答、幻灯、方案稿、表格</div></div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h4>页面列表</h4>
+                  <table class="table">
+                    <tr><th>Page</th><th>Last update</th><th>Status</th></tr>
+                    <tr><td>clawwiki-product.md</td><td>2h ago</td><td><span class="chip primary">hot</span></td></tr>
+                    <tr><td>karpathy-llm-wiki.md</td><td>5h ago</td><td><span class="chip ok">healthy</span></td></tr>
+                    <tr><td>farza-case.md</td><td>1d ago</td><td><span class="chip warn">needs source</span></td></tr>
+                    <tr><td>knowledge-os.md</td><td>3d ago</td><td><span class="chip warn">stale</span></td></tr>
+                    <tr><td>wechat-ingestion.md</td><td>today</td><td><span class="chip ok">new</span></td></tr>
+                  </table>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>右侧预览</h4>
+                    <div class="mini-block"><strong>clawwiki-product.md</strong><br>定义 ClaudeWiki 不是严格复刻 Claude Code Desktop，而是保留交互骨架并切换到 Wiki IA...</div>
+                  </div>
+                  <div class="card">
+                    <h4>一眼可见的状态</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">Hot</div><div class="meta">最近高频更新，适合继续追问。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">Stale</div><div class="meta">来源太旧，可能和新材料冲突。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">Needs source</div><div class="meta">Ask 过程中产生，但支撑来源不足。</div></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s06">
+      <div class="screen-head">
+        <div class="num">06</div>
+        <h2>Wiki Page Detail</h2>
+        <div class="note">正文、来源、变更、冲突、追问入口一体化</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Page Detail</div>
+          <div class="tagline"><span class="chip ok">Backlinks</span><span class="chip primary">Ask this page</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item active"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>clawwiki-product.md</h3>
+                <p>专题页 · 关联 17 个来源 · 最近一次由 Ask 重写于 2 小时前</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">在 Obsidian 中打开</div>
+                <div class="btn">Ask this page</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="triple">
+                <div class="card">
+                  <h4>页面元信息</h4>
+                  <div class="list">
+                    <div class="row"><div class="content"><div class="title">类型</div><div class="meta">Topic / Product strategy</div></div></div>
+                    <div class="row"><div class="content"><div class="title">来源</div><div class="meta">Karpathy gist, DeepTutor, sage-wiki, engram, repo code</div></div></div>
+                    <div class="row"><div class="content"><div class="title">状态</div><div class="meta"><span class="chip ok">healthy</span> <span class="chip primary">hot</span></div></div></div>
+                    <div class="row"><div class="content"><div class="title">待处理</div><div class="meta">1 个来源待补证，2 处和旧 IA 冲突</div></div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h4>正文预览</h4>
+                  <div class="mini-block" style="min-height:580px;font-family:var(--serif);font-size:14px;line-height:1.9;">
+                    <strong>ClaudeWiki 不是另一个 Claude Code Desktop。</strong><br><br>
+                    它保留桌面工作台的熟悉交互，但把产品中心移向 Raw → Wiki → Schema 三层。
+                    微信只负责把材料投喂进系统；Obsidian 负责阅读与人工编辑；ClaudeWiki 负责标准化、编译、冲突检测、回写与 Token Broker。<br><br>
+                    对用户来说，ClaudeWiki 的价值不在于“再开一个会话窗口”，而在于把海量碎片材料变成可维护、可搜索、可追问、可版本化的长期认知资产。
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>Backlinks / Related</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">karpathy-llm-wiki.md</div><div class="meta">方法论来源</div></div></div>
+                      <div class="row"><div class="content"><div class="title">wechat-ingestion.md</div><div class="meta">入口系统设计</div></div></div>
+                      <div class="row"><div class="content"><div class="title">sage-wiki-vs-engram.md</div><div class="meta">能力对比页</div></div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>Recent changes</h4>
+                    <div class="mini-block">09:42 Ask 重写了“是否严格复刻 CCD”的结论<br>08:15 新增 `Farza` 案例段落<br>昨晚 合并 `DeepTutor` 视觉系统建议</div>
+                  </div>
+                  <div class="card">
+                    <h4>Conflicts</h4>
+                    <div class="mini-block">旧草稿仍建议保留 `/code` 一级页，与当前方案冲突。点击可进入 Inbox 审阅差异。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s07">
+      <div class="screen-head">
+        <div class="num">07</div>
+        <h2>Ask Workspace</h2>
+        <div class="note">这一页保留 Claude Code Desktop 的核心工作区手感</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Ask</div>
+          <div class="tagline"><span class="chip primary">Streaming</span><span class="chip">Permissioned tools</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item active"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>Ask your wiki</h3>
+                <p>保留流式会话、权限确认、状态线；工具集从编程改成知识维护。</p>
+              </div>
+              <div class="actions">
+                <div class="chip ok">Tools ready: read_raw / write_page / link_pages / mark_conflict</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="split">
+                <div class="card" style="display:flex;flex-direction:column;min-height:0;">
+                  <h4>会话流</h4>
+                  <div class="message-thread" style="overflow:hidden;">
+                    <div class="message user">
+                      把《当知识开始自己生长》这篇文章的核心观点并入 ClaudeWiki 产品专题，同时检查它和现有 `/code` 方案有没有冲突。
+                    </div>
+                    <div class="message assistant">
+                      我会先读取来源页与现有产品页，再给出需要改动的页面列表与冲突说明。
+                      <div class="tool">read_raw("wechat/karpathy-article")
+read_page("clawwiki-product")
+read_page("broker-design")</div>
+                    </div>
+                    <div class="message assistant">
+                      发现两个冲突：
+                      1. 旧方案保留 `/code` 一级页
+                      2. 旧方案默认把 CCD 当主产品而不是外部客户端
+                      <div class="tool">mark_conflict("clawwiki-product", "old-code-route", "产品中心从 code tools 切到 wiki")
+patch_page("clawwiki-product", "...")</div>
+                    </div>
+                    <div class="message assistant">
+                      我已经生成一版补丁，并把差异送入 Inbox，是否要同时补一页 `sage-wiki-vs-engram.md` 对比文？
+                    </div>
+                    <div class="composer">
+                      <div class="textarea">继续。顺便把 defuddle/obsidian 的接入决策也补进去，并产出可给 PM 审的简版摘要。</div>
+                      <div class="stack" style="height:auto;">
+                        <div class="btn">发送</div>
+                        <div class="btn secondary">权限</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>运行状态</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">当前工具</div><div class="meta">read_raw, read_page, patch_page, link_pages</div></div></div>
+                      <div class="row"><div class="content"><div class="title">权限模式</div><div class="meta">Medium · 写页面需弹窗确认</div></div></div>
+                      <div class="row"><div class="content"><div class="title">输出策略</div><div class="meta">优先写入 wiki 草稿，再进入 Inbox 审阅</div></div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>建议工具集</h4>
+                    <div class="mini-block">Low: read_raw / read_page / search_wiki<br>Medium: write_page / patch_page / link_pages / touch_changelog<br>High: deprecate_page / queue_compile / bulk_ingest</div>
+                  </div>
+                  <div class="card">
+                    <h4>为什么保留这页</h4>
+                    <div class="mini-block">这就是 Claude Code Desktop 复刻交互最值钱的部分。用户熟悉这种“问一句，系统去读/写/回报”的节奏，不需要重新学习。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s08">
+      <div class="screen-head">
+        <div class="num">08</div>
+        <h2>Graph</h2>
+        <div class="note">让用户看到知识网络如何自己长出来</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Graph</div>
+          <div class="tagline"><span class="chip primary">Hot clusters</span><span class="chip warn">Conflicts</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item active"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>知识图谱</h3>
+                <p>显示页面、来源、冲突、陈旧度与高活跃主题 cluster。</p>
+              </div>
+              <div class="actions">
+                <div class="chip ok">People</div>
+                <div class="chip primary">Topics</div>
+                <div class="chip warn">Stale</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="split">
+                <div class="graph">
+                  <div class="line" style="left:152px;top:228px;width:220px;transform:rotate(16deg);"></div>
+                  <div class="line" style="left:356px;top:258px;width:162px;transform:rotate(-8deg);"></div>
+                  <div class="line" style="left:326px;top:356px;width:184px;transform:rotate(29deg);"></div>
+                  <div class="line" style="left:514px;top:428px;width:178px;transform:rotate(-12deg);"></div>
+                  <div class="line" style="left:708px;top:210px;width:136px;transform:rotate(24deg);"></div>
+                  <div class="line" style="left:790px;top:330px;width:152px;transform:rotate(-28deg);"></div>
+                  <div class="line" style="left:624px;top:545px;width:148px;transform:rotate(20deg);"></div>
+                  <div class="node" style="left:106px;top:184px;width:104px;height:104px;">Karpathy<br>LLM Wiki</div>
+                  <div class="node" style="left:300px;top:236px;width:132px;height:132px;background:rgba(195,90,44,0.11);">ClaudeWiki<br>Product</div>
+                  <div class="node" style="left:476px;top:210px;width:96px;height:96px;">Schema</div>
+                  <div class="node" style="left:514px;top:390px;width:120px;height:120px;background:rgba(63,143,94,0.11);">WeChat<br>Ingestion</div>
+                  <div class="node" style="left:702px;top:170px;width:108px;height:108px;">sage-wiki</div>
+                  <div class="node" style="left:880px;top:260px;width:88px;height:88px;">Engram</div>
+                  <div class="node" style="left:774px;top:486px;width:114px;height:114px;background:rgba(200,139,26,0.14);">Token<br>Broker</div>
+                  <div class="node" style="left:612px;top:572px;width:96px;height:96px;">Obsidian</div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>Graph legend</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">橙色大节点</div><div class="meta">高活跃专题，最近持续被 Ask / compile 更新。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">绿色节点</div><div class="meta">新近完成的 ingestion cluster。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">黄色节点</div><div class="meta">基础设施页，和 wiki 内容关联但不属于知识正文。</div></div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>为什么这页重要</h4>
+                    <div class="mini-block">Karpathy 强调 Obsidian graph view 的原因不是“酷”，而是能直观看到 Wiki 是否真的在形成复利网络。ClaudeWiki 这页要把 raw 节点也纳入，展示“材料如何长成页面”。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s09">
+      <div class="screen-head">
+        <div class="num">09</div>
+        <h2>Schema Editor</h2>
+        <div class="note">把 `CLAUDE.md` / `AGENTS.md` / 模板显性化</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Schema</div>
+          <div class="tagline"><span class="chip primary">Discipline layer</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item active"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>Schema Editor</h3>
+                <p>真正决定 Wiki 是否稳定可长的，不是聊天，而是规则系统。</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">Diff</div>
+                <div class="btn">保存并重新 lint</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="triple">
+                <div class="card">
+                  <h4>Schema files</h4>
+                  <div class="list">
+                    <div class="row"><div class="content"><div class="title">CLAUDE.md</div><div class="meta">高层产品意图、Agent 行为与写作要求</div></div></div>
+                    <div class="row"><div class="content"><div class="title">AGENTS.md</div><div class="meta">目录规则、修改回填位置、验证入口</div></div></div>
+                    <div class="row"><div class="content"><div class="title">templates/topic.md</div><div class="meta">专题页结构</div></div></div>
+                    <div class="row"><div class="content"><div class="title">policies/ingest.md</div><div class="meta">不同来源的标准化规则</div></div></div>
+                    <div class="row"><div class="content"><div class="title">policies/review.md</div><div class="meta">冲突、stale、回写的审阅标准</div></div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h4>当前编辑：ingest policy</h4>
+                  <div class="code"># ingest policy
+
+- WeChat shares are raw inputs, not final notes.
+- For article URLs, fetch HTML and normalize with defuddle.
+- For voice/video, create transcript.md before any wiki write.
+- Never mutate raw objects.
+- Any compile that touches 5+ pages must enter Inbox review.
+- Answers generated in Ask are not final assets until promoted.</div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>Schema change effects</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">影响的页面模板</div><div class="meta">topic, compare, output</div></div></div>
+                      <div class="row"><div class="content"><div class="title">影响的 intake 类型</div><div class="meta">公众号文章、语音、视频</div></div></div>
+                      <div class="row"><div class="content"><div class="title">需重跑 lint</div><div class="meta">24 pages may become policy-violating</div></div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>为什么要显性化</h4>
+                    <div class="mini-block">Karpathy 方案里最容易被低估的是 schema。没有这层，LLM 只是“会聊”；有了这层，它才是“有纪律的知识维护者”。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s10">
+      <div class="screen-head">
+        <div class="num">10</div>
+        <h2>Inbox / Review</h2>
+        <div class="note">所有重要写入最终都归到一个审阅队列</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Inbox</div>
+          <div class="tagline"><span class="chip warn">Review gate</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item active"><div class="dot"></div>Inbox</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>待审阅队列</h3>
+                <p>高影响写入、冲突、失败任务、高价值问答都在这里做最后判断。</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">批量接受安全项</div>
+                <div class="btn">仅看冲突</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="triple">
+                <div class="card">
+                  <h4>队列分类</h4>
+                  <div class="list">
+                    <div class="row"><div class="content"><div class="title">Conflicts</div><div class="meta">3 items</div></div></div>
+                    <div class="row"><div class="content"><div class="title">Large compile patches</div><div class="meta">4 items</div></div></div>
+                    <div class="row"><div class="content"><div class="title">Promote Ask answers</div><div class="meta">5 items</div></div></div>
+                    <div class="row"><div class="content"><div class="title">Failed intake</div><div class="meta">1 item</div></div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h4>审阅详情</h4>
+                  <div class="mini-block"><strong>Task:</strong> Promote answer to `sage-wiki-vs-engram.md`<br><br>
+                    Ask 给出了结构化对比稿，并引用了本地源码与官方 README。建议创建 Compare 页面并链接到 `clawwiki-product.md`。<br><br>
+                    <strong>影响：</strong>新建 1 页，新增 6 个 backlinks。<br>
+                    <strong>风险：</strong>Farza 案例仍缺一手资料，建议保留 “public evidence limited” 注记。
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>操作</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">接受</div><div class="meta">直接回写并更新 changelog</div></div></div>
+                      <div class="row"><div class="content"><div class="title">修改后接受</div><div class="meta">先进草稿，打开 Ask 继续打磨</div></div></div>
+                      <div class="row"><div class="content"><div class="title">拒绝</div><div class="meta">只保留原始问答，不进入 wiki</div></div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>设计目的</h4>
+                    <div class="mini-block">这页是“人策展、AI 维护”里的人类判断门槛。否则系统会越写越多，却不一定越写越准。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s11">
+      <div class="screen-head">
+        <div class="num">11</div>
+        <h2>Settings / Token Broker</h2>
+        <div class="note">把 Codex 供给能力做成本机基础设施，而不是内嵌 CLI 页面</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Token Broker</div>
+          <div class="tagline"><span class="chip ok">127.0.0.1 only</span><span class="chip primary">Cloud managed</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group">
+              <div class="group-label">Settings</div>
+              <div class="item"><div class="dot"></div>Account</div>
+              <div class="item"><div class="dot"></div>Billing</div>
+              <div class="item active"><div class="dot"></div>Token Broker</div>
+              <div class="item"><div class="dot"></div>Providers</div>
+              <div class="item"><div class="dot"></div>MCP</div>
+              <div class="item"><div class="dot"></div>Permissions</div>
+              <div class="item"><div class="dot"></div>Data</div>
+              <div class="item"><div class="dot"></div>About</div>
+            </div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>Token Broker</h3>
+                <p>把平台下发的 Codex 账号转成本机 OpenAI / Anthropic 兼容端点，供外部 Claude Code Desktop 与其他客户端使用。</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">复制 Endpoint</div>
+                <div class="btn">Launch Claude Code Desktop</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="split">
+                <div class="stack">
+                  <div class="card">
+                    <h4>Broker status</h4>
+                    <table class="table">
+                      <tr><th>Key</th><th>Value</th></tr>
+                      <tr><td>Endpoint</td><td>`http://127.0.0.1:4357/v1`</td></tr>
+                      <tr><td>Accounts</td><td>5 cloud-managed · 1 local oauth</td></tr>
+                      <tr><td>Mode</td><td>localhost only · short-lived session token</td></tr>
+                      <tr><td>Health</td><td><span class="chip ok">all green</span></td></tr>
+                    </table>
+                  </div>
+                  <div class="card">
+                    <h4>Client snippets</h4>
+                    <div class="code">export ANTHROPIC_BASE_URL=http://127.0.0.1:4357/v1
+export ANTHROPIC_AUTH_TOKEN=&lt;broker-session-token&gt;
+
+export OPENAI_BASE_URL=http://127.0.0.1:4357/v1
+export OPENAI_API_KEY=&lt;broker-session-token&gt;</div>
+                  </div>
+                </div>
+                <div class="card">
+                  <h4>Account pool</h4>
+                  <table class="table">
+                    <tr><th>Account</th><th>Source</th><th>Status</th></tr>
+                    <tr><td>cloud-01 / codex_8f2b4a…</td><td><span class="chip primary">cloud-managed</span></td><td><span class="chip ok">ready</span></td></tr>
+                    <tr><td>cloud-02 / codex_1c04dd…</td><td><span class="chip primary">cloud-managed</span></td><td><span class="chip ok">ready</span></td></tr>
+                    <tr><td>cloud-03 / codex_be519e…</td><td><span class="chip primary">cloud-managed</span></td><td><span class="chip ok">ready</span></td></tr>
+                    <tr><td>cloud-04 / codex_3400aa…</td><td><span class="chip primary">cloud-managed</span></td><td><span class="chip ok">ready</span></td></tr>
+                    <tr><td>cloud-05 / codex_f91c07…</td><td><span class="chip primary">cloud-managed</span></td><td><span class="chip warn">expiring soon</span></td></tr>
+                    <tr><td>local-openai-profile</td><td><span class="chip">local oauth</span></td><td><span class="chip">fallback</span></td></tr>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="s12">
+      <div class="screen-head">
+        <div class="num">12</div>
+        <h2>Obsidian Companion</h2>
+        <div class="note">明确两者是协同关系，不是替代关系</div>
+      </div>
+      <div class="frame">
+        <div class="chrome">
+          <div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="title">ClaudeWiki · Obsidian</div>
+          <div class="tagline"><span class="chip">Vault overlay</span><span class="chip ok">Markdown first</span></div>
+        </div>
+        <div class="window">
+          <aside class="sidebar">
+            <div class="brand"><div class="mark">C</div><div><div class="name">ClaudeWiki</div><div class="sub">Knowledge desktop</div></div></div>
+            <div class="group"><div class="group-label">Workspace</div><div class="item"><div class="dot"></div>Dashboard</div><div class="item"><div class="dot"></div>WeChat / Intake</div><div class="item"><div class="dot"></div>Raw Library</div><div class="item"><div class="dot"></div>Wiki</div><div class="item"><div class="dot"></div>Ask</div><div class="item"><div class="dot"></div>Graph</div><div class="item"><div class="dot"></div>Schema</div><div class="item"><div class="dot"></div>Inbox</div><div class="item active"><div class="dot"></div>Obsidian</div></div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div>
+                <h3>Obsidian 协同</h3>
+                <p>Obsidian 用于阅读、graph、手工改文；ClaudeWiki 负责 intake、compile、review、broker。</p>
+              </div>
+              <div class="actions">
+                <div class="btn secondary">Open in Obsidian</div>
+                <div class="btn">Switch to vault overlay</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="split">
+                <div class="stack">
+                  <div class="card">
+                    <h4>当前模式</h4>
+                    <div class="mini-block"><strong>Vault Overlay</strong><br>Wiki、schema、log 直接写到 `/Users/champion/Documents/Knowledge/ClaudeWikiVault`，Raw 和 broker 仍由 ClaudeWiki 管理。</div>
+                  </div>
+                  <div class="card">
+                    <h4>同步状态</h4>
+                    <table class="table">
+                      <tr><th>Path</th><th>Status</th></tr>
+                      <tr><td>wiki/</td><td><span class="chip ok">synced</span></td></tr>
+                      <tr><td>schema/</td><td><span class="chip ok">synced</span></td></tr>
+                      <tr><td>raw/assets/</td><td><span class="chip">reference only</span></td></tr>
+                      <tr><td>log.md</td><td><span class="chip ok">synced</span></td></tr>
+                    </table>
+                  </div>
+                </div>
+                <div class="stack">
+                  <div class="card">
+                    <h4>协同原则</h4>
+                    <div class="list">
+                      <div class="row"><div class="content"><div class="title">Obsidian 是 IDE</div><div class="meta">用于阅读、Graph View、Dataview、手工改文。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">ClaudeWiki 是编译器</div><div class="meta">负责 intake、标准化、回写、lint、review gate。</div></div></div>
+                      <div class="row"><div class="content"><div class="title">Markdown first</div><div class="meta">任何页都能被用户直接读、改、版本化。</div></div></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <h4>兼容生态</h4>
+                    <div class="mini-block">可进一步接 Obsidian Web Clipper 作为浏览器入口，也可用 Importer 做一次性迁移，但运行时主链路仍由 ClaudeWiki 控制。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
