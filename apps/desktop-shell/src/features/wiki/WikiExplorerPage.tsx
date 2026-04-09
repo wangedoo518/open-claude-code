@@ -54,11 +54,34 @@ import {
   Loader2,
   RefreshCw,
   FileText,
-  Library,
   Inbox,
+  ListTree,
+  ScrollText,
 } from "lucide-react";
-import { getWikiPage, listWikiPages } from "@/features/ingest/persist";
+import {
+  getWikiIndex,
+  getWikiLog,
+  getWikiPage,
+  listWikiPages,
+} from "@/features/ingest/persist";
 import type { WikiPageSummary } from "@/features/ingest/types";
+
+/**
+ * Selection state for the left pane. Concept pages are identified
+ * by their slug; the two special top-level files (`wiki/index.md`
+ * and `wiki/log.md`) get dedicated tags so the right pane can fetch
+ * them via their dedicated routes instead of treating them like
+ * concepts.
+ */
+type Selection =
+  | { kind: "concept"; slug: string }
+  | { kind: "index" }
+  | { kind: "log" };
+
+function selectionKey(sel: Selection): string {
+  if (sel.kind === "concept") return `concept:${sel.slug}`;
+  return sel.kind;
+}
 
 const CATEGORIES = [
   {
@@ -107,11 +130,13 @@ const CATEGORIES = [
 const wikiKeys = {
   list: () => ["wiki", "pages", "list"] as const,
   detail: (slug: string) => ["wiki", "pages", "detail", slug] as const,
+  index: () => ["wiki", "index"] as const,
+  log: () => ["wiki", "log"] as const,
 };
 
 export function WikiExplorerPage() {
   const queryClient = useQueryClient();
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
 
   const listQuery = useQuery({
     queryKey: wikiKeys.list(),
@@ -125,25 +150,25 @@ export function WikiExplorerPage() {
     [listQuery.data],
   );
 
-  // Auto-select the first page after the initial load so the detail
-  // pane is never empty when pages exist. Respects manual deselection
-  // (only fires when `selectedSlug` is null).
+  // Auto-select the index file on first load so the right pane is
+  // never empty — the index is the canonical entry point per Karpathy.
   useEffect(() => {
-    if (selectedSlug !== null) return;
-    if (pages.length === 0) return;
-    setSelectedSlug(pages[0].slug);
-  }, [pages, selectedSlug]);
+    if (selected !== null) return;
+    setSelected({ kind: "index" });
+  }, [selected]);
 
-  // Clear a stale selection when the underlying page gets removed
-  // (e.g. user hand-deleted the file, or a future sprint adds an
-  // Inbox "deprecate-with-delete" action).
+  // Clear a stale concept selection when the underlying page gets
+  // removed (e.g. user hand-deleted the file, or a future sprint
+  // adds an Inbox "deprecate-with-delete" action). Special files
+  // (index / log) are always present after F2 lands, so we never
+  // clear those.
   useEffect(() => {
-    if (selectedSlug === null) return;
+    if (selected === null || selected.kind !== "concept") return;
     if (listQuery.isLoading) return;
-    if (!pages.some((p) => p.slug === selectedSlug)) {
-      setSelectedSlug(null);
+    if (!pages.some((p) => p.slug === selected.slug)) {
+      setSelected({ kind: "index" });
     }
-  }, [pages, selectedSlug, listQuery.isLoading]);
+  }, [pages, selected, listQuery.isLoading]);
 
   const totalCount = listQuery.data?.total_count ?? pages.length;
 
@@ -187,29 +212,36 @@ export function WikiExplorerPage() {
         </div>
       </div>
 
-      {/* Body: split pane OR empty hero */}
+      {/* Body: split pane. Pinned index/log are always visible even
+          when there are no concept pages yet, because they give the
+          user a way to see "nothing has been maintained" explicitly
+          rather than staring at a generic empty state. */}
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-r border-border/50">
+          <PageList
+            pages={pages}
+            isLoading={listQuery.isLoading}
+            error={listQuery.error}
+            selected={selected}
+            onSelect={setSelected}
+          />
+        </aside>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {selected === null ? (
+            <PagePlaceholder />
+          ) : selected.kind === "concept" ? (
+            <PageDetail slug={selected.slug} />
+          ) : selected.kind === "index" ? (
+            <SpecialFilePanel kind="index" />
+          ) : (
+            <SpecialFilePanel kind="log" />
+          )}
+        </main>
+      </div>
+
       {pages.length === 0 && !listQuery.isLoading ? (
-        <EmptyHero />
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-r border-border/50">
-            <PageList
-              pages={pages}
-              isLoading={listQuery.isLoading}
-              error={listQuery.error}
-              selectedSlug={selectedSlug}
-              onSelect={setSelectedSlug}
-            />
-          </aside>
-          <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            {selectedSlug ? (
-              <PageDetail slug={selectedSlug} />
-            ) : (
-              <PagePlaceholder />
-            )}
-          </main>
-        </div>
-      )}
+        <EmptyHeroStrip />
+      ) : null}
 
       {/* Planned layers strip (always visible as signposting) */}
       <section className="shrink-0 border-t border-border/50 px-6 py-4">
@@ -254,111 +286,56 @@ export function WikiExplorerPage() {
   );
 }
 
-/* ─── Empty hero (no pages yet) ──────────────────────────────────── */
+/* ─── Empty hero strip (shown under the split pane when 0 concepts) ── */
 
-function EmptyHero() {
+function EmptyHeroStrip() {
   return (
-    <div className="flex flex-1 items-center justify-center overflow-auto px-6 py-10">
-      <div className="max-w-md rounded-md border border-border bg-muted/10 px-6 py-8 text-center">
+    <div className="shrink-0 border-t border-border/50 bg-muted/5 px-6 py-3">
+      <div className="flex items-center gap-3 text-caption text-muted-foreground">
         <BookOpen
-          className="mx-auto mb-3 size-8"
+          className="size-4 shrink-0"
           style={{ color: "var(--claude-orange)" }}
         />
-        <h2 className="mb-1 text-subhead font-semibold text-foreground">
-          No wiki pages yet
-        </h2>
-        <p className="mb-4 text-caption text-muted-foreground">
-          Wiki pages are grown by the maintainer agent from your raw
-          entries. The flow is:
-        </p>
-        <ol className="mb-5 flex flex-col gap-1.5 text-caption text-foreground/80">
-          <li className="flex items-center gap-2">
-            <span className="inline-flex size-5 items-center justify-center rounded-full bg-muted font-mono text-caption">
-              1
-            </span>
-            Paste a URL or text in{" "}
-            <Link to="/raw" className="text-primary hover:underline">
-              Raw Library
-            </Link>
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="inline-flex size-5 items-center justify-center rounded-full bg-muted font-mono text-caption">
-              2
-            </span>
-            Open the auto-queued task in{" "}
-            <Link to="/inbox" className="text-primary hover:underline">
-              Inbox
-            </Link>{" "}
-            &amp; click <em>Maintain this</em>
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="inline-flex size-5 items-center justify-center rounded-full bg-muted font-mono text-caption">
-              3
-            </span>
-            Review the proposal &amp; click <em>Approve &amp; Write</em>
-          </li>
-        </ol>
-        <div className="flex items-center justify-center gap-3 text-caption">
-          <Link
-            to="/raw"
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground transition-colors hover:bg-muted/40"
-          >
-            <Library className="size-3" />
+        <span className="flex-1">
+          No concept pages yet — paste a URL in{" "}
+          <Link to="/raw" className="text-primary hover:underline">
             Raw Library
           </Link>
-          <Link
-            to="/inbox"
-            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            <Inbox className="size-3" />
-            Open Inbox
-            <ArrowRight className="size-3" />
-          </Link>
-        </div>
+          , then click <em>Maintain this</em> in{" "}
+          <Link to="/inbox" className="text-primary hover:underline">
+            Inbox
+          </Link>{" "}
+          to grow your first page.
+        </span>
+        <Link
+          to="/inbox"
+          className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-caption font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          <Inbox className="size-3" />
+          Inbox
+          <ArrowRight className="size-3" />
+        </Link>
       </div>
     </div>
   );
 }
 
-/* ─── Left list ──────────────────────────────────────────────────── */
+/* ─── Left list (pinned index/log + alphabetical concept list) ─── */
 
 function PageList({
   pages,
   isLoading,
   error,
-  selectedSlug,
+  selected,
   onSelect,
 }: {
   pages: WikiPageSummary[];
   isLoading: boolean;
   error: Error | null;
-  selectedSlug: string | null;
-  onSelect: (slug: string) => void;
+  selected: Selection | null;
+  onSelect: (sel: Selection) => void;
 }) {
-  if (isLoading) {
-    return (
-      <div className="flex-1 px-3 py-6 text-center text-caption text-muted-foreground">
-        <Loader2 className="mx-auto mb-1.5 size-4 animate-spin" />
-        Loading wiki pages…
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div
-        className="m-3 rounded-md border px-3 py-2 text-caption"
-        style={{
-          borderColor:
-            "color-mix(in srgb, var(--color-error) 30%, transparent)",
-          backgroundColor:
-            "color-mix(in srgb, var(--color-error) 5%, transparent)",
-          color: "var(--color-error)",
-        }}
-      >
-        Failed to list wiki pages: {error.message}
-      </div>
-    );
-  }
+  const selectedKey = selected ? selectionKey(selected) : null;
 
   // Sorted alphabetically by slug (backend already sorts, but we
   // re-sort defensively so the display order is deterministic even
@@ -369,52 +346,145 @@ function PageList({
   );
 
   return (
-    <ul className="flex-1 divide-y divide-border/40 overflow-y-auto">
-      {sorted.map((page) => {
-        const isActive = page.slug === selectedSlug;
-        return (
-          <li key={page.slug}>
-            <button
-              type="button"
-              onClick={() => onSelect(page.slug)}
-              className={
-                "w-full px-4 py-2.5 text-left transition-colors " +
-                (isActive ? "bg-primary/10" : "hover:bg-accent/40")
-              }
-            >
-              <div className="flex items-center justify-between gap-2">
-                <Brain
-                  className="size-3 shrink-0"
-                  style={{ color: "var(--claude-orange)" }}
-                />
-                <span
-                  className="flex-1 truncate text-body-sm font-medium text-foreground"
-                  style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+    <div className="flex-1 overflow-y-auto">
+      {/* Pinned section: the two special files from Karpathy's
+          "Indexing and logging" — always present, always at the top. */}
+      <div className="border-b border-border/40 bg-muted/10 pb-1 pt-2">
+        <div className="px-4 py-1 text-caption font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Pinned
+        </div>
+        <PinnedItem
+          icon={ListTree}
+          label="Index"
+          hint="content catalog · auto-rebuilt"
+          active={selectedKey === "index"}
+          onClick={() => onSelect({ kind: "index" })}
+        />
+        <PinnedItem
+          icon={ScrollText}
+          label="Log"
+          hint="append-only audit trail"
+          active={selectedKey === "log"}
+          onClick={() => onSelect({ kind: "log" })}
+        />
+      </div>
+
+      {/* Concept pages */}
+      <div className="px-4 pb-1 pt-2 text-caption font-semibold uppercase tracking-wide text-muted-foreground/70">
+        Concepts {pages.length > 0 ? `(${pages.length})` : ""}
+      </div>
+      {isLoading ? (
+        <div className="px-3 py-6 text-center text-caption text-muted-foreground">
+          <Loader2 className="mx-auto mb-1.5 size-4 animate-spin" />
+          Loading…
+        </div>
+      ) : error ? (
+        <div
+          className="m-3 rounded-md border px-3 py-2 text-caption"
+          style={{
+            borderColor:
+              "color-mix(in srgb, var(--color-error) 30%, transparent)",
+            backgroundColor:
+              "color-mix(in srgb, var(--color-error) 5%, transparent)",
+            color: "var(--color-error)",
+          }}
+        >
+          Failed to list wiki pages: {error.message}
+        </div>
+      ) : sorted.length === 0 ? (
+        <div className="px-4 py-3 text-caption text-muted-foreground/70">
+          No concept pages yet.
+        </div>
+      ) : (
+        <ul className="divide-y divide-border/40">
+          {sorted.map((page) => {
+            const isActive = selectedKey === `concept:${page.slug}`;
+            return (
+              <li key={page.slug}>
+                <button
+                  type="button"
+                  onClick={() => onSelect({ kind: "concept", slug: page.slug })}
+                  className={
+                    "w-full px-4 py-2.5 text-left transition-colors " +
+                    (isActive ? "bg-primary/10" : "hover:bg-accent/40")
+                  }
                 >
-                  {page.title || page.slug}
-                </span>
-              </div>
-              <div className="mt-0.5 truncate pl-5 font-mono text-caption text-muted-foreground/70">
-                {page.slug}
-              </div>
-              {page.summary ? (
-                <div className="mt-0.5 line-clamp-2 pl-5 text-caption text-muted-foreground/80">
-                  {page.summary}
-                </div>
-              ) : null}
-              <div className="mt-0.5 flex items-center gap-2 pl-5 text-caption text-muted-foreground/60">
-                {page.source_raw_id != null && (
-                  <span className="font-mono">
-                    raw #{String(page.source_raw_id).padStart(5, "0")}
-                  </span>
-                )}
-                <span>{formatRelative(page.created_at)}</span>
-              </div>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+                  <div className="flex items-center justify-between gap-2">
+                    <Brain
+                      className="size-3 shrink-0"
+                      style={{ color: "var(--claude-orange)" }}
+                    />
+                    <span
+                      className="flex-1 truncate text-body-sm font-medium text-foreground"
+                      style={{
+                        fontFamily: "var(--font-serif, Lora, serif)",
+                      }}
+                    >
+                      {page.title || page.slug}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 truncate pl-5 font-mono text-caption text-muted-foreground/70">
+                    {page.slug}
+                  </div>
+                  {page.summary ? (
+                    <div className="mt-0.5 line-clamp-2 pl-5 text-caption text-muted-foreground/80">
+                      {page.summary}
+                    </div>
+                  ) : null}
+                  <div className="mt-0.5 flex items-center gap-2 pl-5 text-caption text-muted-foreground/60">
+                    {page.source_raw_id != null && (
+                      <span className="font-mono">
+                        raw #{String(page.source_raw_id).padStart(5, "0")}
+                      </span>
+                    )}
+                    <span>{formatRelative(page.created_at)}</span>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PinnedItem({
+  icon: Icon,
+  label,
+  hint,
+  active,
+  onClick,
+}: {
+  icon: typeof ListTree;
+  label: string;
+  hint: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "flex w-full items-center gap-2 px-4 py-1.5 text-left transition-colors " +
+        (active ? "bg-primary/10" : "hover:bg-accent/40")
+      }
+    >
+      <Icon
+        className="size-3 shrink-0"
+        style={{ color: "var(--claude-orange)" }}
+      />
+      <span
+        className="text-body-sm font-semibold text-foreground"
+        style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+      >
+        {label}
+      </span>
+      <span className="ml-auto truncate text-caption text-muted-foreground/70">
+        {hint}
+      </span>
+    </button>
   );
 }
 
@@ -606,6 +676,224 @@ function PagePlaceholder() {
         <p className="text-body text-muted-foreground">
           Select a page on the left to read it.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only viewer for the two special top-level files:
+ * `wiki/index.md` (content catalog) and `wiki/log.md` (audit trail).
+ * Both are auto-maintained by the desktop-server's
+ * `approve-with-write` handler — the user never writes them directly.
+ *
+ * Both files are plain markdown, so we reuse the same `ReactMarkdown`
+ * component stack as `PageDetail`. The one difference is the head
+ * strip: special files don't have frontmatter-derived fields
+ * (title/summary/source_raw_id), just a short hint + refresh button.
+ */
+function SpecialFilePanel({ kind }: { kind: "index" | "log" }) {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: kind === "index" ? wikiKeys.index() : wikiKeys.log(),
+    queryFn: kind === "index" ? getWikiIndex : getWikiLog,
+    staleTime: 5_000,
+  });
+
+  const meta =
+    kind === "index"
+      ? {
+          icon: ListTree,
+          label: "Index",
+          description:
+            "Content catalog auto-rebuilt after every maintainer write. Canonical §10 + Karpathy llm-wiki §Indexing.",
+        }
+      : {
+          icon: ScrollText,
+          label: "Log",
+          description:
+            "Append-only timeline of maintainer and ingest actions. Canonical §8 Triggers.",
+        };
+
+  if (query.isLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-caption text-muted-foreground">
+        <Loader2 className="mr-1.5 size-3 animate-spin" />
+        Loading {meta.label.toLowerCase()}…
+      </div>
+    );
+  }
+
+  if (query.error) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+        <div
+          className="rounded-md border px-4 py-3 text-body-sm"
+          style={{
+            borderColor:
+              "color-mix(in srgb, var(--color-error) 30%, transparent)",
+            backgroundColor:
+              "color-mix(in srgb, var(--color-error) 5%, transparent)",
+            color: "var(--color-error)",
+          }}
+        >
+          Failed to load {meta.label.toLowerCase()}: {(query.error as Error).message}
+        </div>
+      </div>
+    );
+  }
+
+  const data = query.data;
+  if (!data) return null;
+  const Icon = meta.icon;
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Head */}
+      <div className="shrink-0 border-b border-border/50 bg-muted/10 px-6 py-4">
+        <div className="flex items-center gap-2">
+          <Icon
+            className="size-4"
+            style={{ color: "var(--claude-orange)" }}
+          />
+          <h2
+            className="text-subhead font-semibold text-foreground"
+            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+          >
+            {meta.label}
+          </h2>
+          <span className="ml-auto font-mono text-caption text-muted-foreground">
+            {data.byte_size} B
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              void queryClient.invalidateQueries({
+                queryKey: kind === "index" ? wikiKeys.index() : wikiKeys.log(),
+              })
+            }
+            className="flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-caption text-muted-foreground transition-colors hover:bg-muted/30"
+            title="Refresh"
+          >
+            <RefreshCw
+              className={
+                "size-3 " + (query.isFetching ? "animate-spin" : "")
+              }
+            />
+          </button>
+        </div>
+        <p className="mt-1 text-caption text-muted-foreground">
+          {meta.description}
+        </p>
+        <div className="mt-1 font-mono text-caption text-muted-foreground/60">
+          {data.path}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-auto px-6 py-5">
+        {!data.exists || data.content.length === 0 ? (
+          <div className="rounded-md border border-border/40 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
+            <BookOpen
+              className="mx-auto mb-1.5 size-6 opacity-40"
+              style={{ color: "var(--claude-orange)" }}
+            />
+            <div className="text-body-sm text-foreground/90">
+              This {meta.label.toLowerCase()} is empty.
+            </div>
+            <div className="mt-1 text-caption text-muted-foreground/70">
+              {kind === "index"
+                ? "Approve a maintainer proposal in Inbox and the catalog will rebuild here automatically."
+                : "Approve a maintainer proposal in Inbox and the first log entry will land here."}
+            </div>
+          </div>
+        ) : (
+          <article
+            className="prose prose-sm max-w-none text-foreground/90"
+            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+          >
+            <ReactMarkdown
+              components={{
+                h1: (props) => (
+                  <h1
+                    className="mb-3 mt-0 text-head font-semibold text-foreground"
+                    style={{
+                      fontFamily: "var(--font-serif, Lora, serif)",
+                    }}
+                    {...props}
+                  />
+                ),
+                h2: (props) => (
+                  <h2
+                    className="mb-2 mt-5 text-subhead font-semibold text-foreground"
+                    style={{
+                      fontFamily: "var(--font-serif, Lora, serif)",
+                    }}
+                    {...props}
+                  />
+                ),
+                p: (props) => (
+                  <p
+                    className="my-2 text-body leading-relaxed text-foreground/90"
+                    {...props}
+                  />
+                ),
+                ul: (props) => (
+                  <ul
+                    className="my-2 list-disc pl-6 text-body text-foreground/90"
+                    {...props}
+                  />
+                ),
+                li: (props) => (
+                  <li
+                    className="my-0.5 text-body text-foreground/90"
+                    {...props}
+                  />
+                ),
+                code: ({ className, children, ...props }) => {
+                  const isBlock = /language-/.test(className ?? "");
+                  if (isBlock) {
+                    return (
+                      <code
+                        className="block overflow-auto rounded-md bg-muted/40 p-3 font-mono text-caption"
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    );
+                  }
+                  return (
+                    <code
+                      className="rounded bg-muted/40 px-1 py-0.5 font-mono text-caption"
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  );
+                },
+                a: ({ href, children, ...props }) => (
+                  <a
+                    href={href}
+                    className="text-primary underline hover:no-underline"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    {...props}
+                  >
+                    {children}
+                  </a>
+                ),
+                em: (props) => (
+                  <em
+                    className="italic text-muted-foreground"
+                    {...props}
+                  />
+                ),
+              }}
+            >
+              {data.content}
+            </ReactMarkdown>
+          </article>
+        )}
       </div>
     </div>
   );

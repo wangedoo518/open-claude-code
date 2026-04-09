@@ -21,6 +21,7 @@ import type {
   WikiPageProposal,
   WikiPagesListResponse,
   WikiProposalResponse,
+  WikiSpecialFileResponse,
 } from "./types";
 
 /**
@@ -138,4 +139,22 @@ export async function getWikiPage(slug: string): Promise<WikiPageDetailResponse>
   return fetchJson<WikiPageDetailResponse>(
     `/api/wiki/pages/${encodeURIComponent(slug)}`,
   );
+}
+
+/**
+ * GET `/api/wiki/index` — read the auto-maintained content catalog.
+ * Returns `exists: false` when the wiki has never been written to
+ * (fresh install). Karpathy llm-wiki.md §"Indexing and logging".
+ */
+export async function getWikiIndex(): Promise<WikiSpecialFileResponse> {
+  return fetchJson<WikiSpecialFileResponse>("/api/wiki/index");
+}
+
+/**
+ * GET `/api/wiki/log` — read the chronological append-only audit
+ * trail. Returns `exists: false` when the wiki has never been
+ * written to.
+ */
+export async function getWikiLog(): Promise<WikiSpecialFileResponse> {
+  return fetchJson<WikiSpecialFileResponse>("/api/wiki/log");
 }

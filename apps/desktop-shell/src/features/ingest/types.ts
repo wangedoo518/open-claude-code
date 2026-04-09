@@ -149,3 +149,20 @@ export interface WikiPageDetailResponse {
   summary: WikiPageSummary;
   body: string;
 }
+
+/**
+ * Shape returned by `GET /api/wiki/index` and `GET /api/wiki/log`.
+ * Both special files (`wiki/index.md`, `wiki/log.md`) are plain
+ * markdown with no frontmatter — the backend hands them back
+ * verbatim along with a simple byte size and existence flag.
+ *
+ * `exists: false` means the file has never been written yet (a
+ * fresh wiki). The frontend can use this to show an "empty state"
+ * hint instead of an error.
+ */
+export interface WikiSpecialFileResponse {
+  path: string;
+  content: string;
+  byte_size: number;
+  exists: boolean;
+}

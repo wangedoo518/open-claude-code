@@ -452,6 +452,13 @@ pub fn app(state: AppState) -> Router {
         // seed — that's a follow-up sprint).
         .route("/api/wiki/pages", get(list_wiki_pages_handler))
         .route("/api/wiki/pages/{slug}", get(get_wiki_page_handler))
+        // ── ClawWiki F: index + log special files (Karpathy §Indexing and logging) ─
+        // These two live at the top of `wiki/`, not under
+        // `wiki/concepts/`, so they need dedicated routes — the
+        // generic `read_wiki_page(slug)` path would look for
+        // `wiki/concepts/{slug}.md` and miss them.
+        .route("/api/wiki/index", get(get_wiki_index_handler))
+        .route("/api/wiki/log", get(get_wiki_log_handler))
         // ── ClawWiki S6 schema layer (read-only) ───────────────────
         // Returns the text of `schema/CLAUDE.md` so the SchemaEditorPage
         // can render the maintainer agent's rule book. Per canonical
@@ -2157,6 +2164,25 @@ async fn approve_wiki_inbox_with_write_handler(
         ),
     })?;
 
+    // Step 1.5: Karpathy llm-wiki.md §"Indexing and logging" + canonical
+    // §8 Triggers — after every wiki write, append to log.md and
+    // rebuild index.md so the two special files stay current. Both
+    // are soft-fail: the concept page is already persisted and the
+    // user's approve succeeded; a missing log entry or stale index is
+    // a maintenance problem the next write will fix on its own, NOT
+    // a reason to fail the user's action.
+    let log_title = if p.title.is_empty() { p.slug.clone() } else { p.title.clone() };
+    if let Err(e) = wiki_store::append_wiki_log(&paths, "write-concept", &log_title) {
+        eprintln!(
+            "approve-with-write: wiki page written but log append failed: {e}"
+        );
+    }
+    if let Err(e) = wiki_store::rebuild_wiki_index(&paths) {
+        eprintln!(
+            "approve-with-write: wiki page written but index rebuild failed: {e}"
+        );
+    }
+
     // Step 2: flip the inbox entry to approved. Soft-fail: we log
     // and keep going even if resolve fails, because the wiki page
     // is already persisted and re-running the approve from the
@@ -2235,6 +2261,65 @@ fn wiki_page_proposal_to_json(p: &wiki_maintainer::WikiPageProposal) -> serde_js
         "body": p.body,
         "source_raw_id": p.source_raw_id,
     })
+}
+
+/// `GET /api/wiki/index`
+///
+/// Read `wiki/index.md`. Canonical §10 + Karpathy llm-wiki.md: this
+/// is the content-oriented catalog auto-maintained by the
+/// `approve-with-write` handler. Returns 200 with empty content when
+/// the file doesn't exist yet (a fresh wiki has never been written to).
+async fn get_wiki_index_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let path = wiki_store::wiki_index_path(&paths);
+    let content = if path.is_file() {
+        tokio::fs::read_to_string(&path).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("read wiki index failed: {e}"),
+                }),
+            )
+        })?
+    } else {
+        String::new()
+    };
+    let byte_size = content.len();
+    Ok(Json(serde_json::json!({
+        "path": path.display().to_string(),
+        "content": content,
+        "byte_size": byte_size,
+        "exists": path.is_file(),
+    })))
+}
+
+/// `GET /api/wiki/log`
+///
+/// Read `wiki/log.md`. Append-only audit trail of maintainer writes
+/// and inbox resolutions. Returns 200 with empty content for a fresh
+/// wiki that has never been written to.
+async fn get_wiki_log_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let path = wiki_store::wiki_log_path(&paths);
+    let content = if path.is_file() {
+        tokio::fs::read_to_string(&path).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("read wiki log failed: {e}"),
+                }),
+            )
+        })?
+    } else {
+        String::new()
+    };
+    let byte_size = content.len();
+    Ok(Json(serde_json::json!({
+        "path": path.display().to_string(),
+        "content": content,
+        "byte_size": byte_size,
+        "exists": path.is_file(),
+    })))
 }
 
 // ── ClawWiki S2: Codex broker HTTP handlers ───────────────────────
