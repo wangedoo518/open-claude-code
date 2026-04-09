@@ -546,18 +546,10 @@ fn ingest_wechat_text_to_wiki(
         }
     };
 
-    let inbox_desc = format!(
-        "Raw entry `{}` was ingested from WeChat user `{}`.",
-        entry.filename,
-        short_openid(from_user_id),
-    );
-    if let Err(err) = wiki_store::append_inbox_pending(
-        paths,
-        "new-raw",
-        &format!("WeChat ingest #{:05}", entry.id),
-        &inbox_desc,
-        Some(entry.id),
-    ) {
+    // Formatting lives in `wiki_store::append_new_raw_task` so the
+    // HTTP path and this WeChat path stay consistent. Review nit #15.
+    let origin = format!("WeChat user `{}`", short_openid(from_user_id));
+    if let Err(err) = wiki_store::append_new_raw_task(paths, &entry, &origin) {
         eprintln!("[wechat agent] raw written but inbox append failed: {err}");
     }
     eprintln!(

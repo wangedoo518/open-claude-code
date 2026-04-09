@@ -31,6 +31,21 @@ import { Loader2, Network } from "lucide-react";
 import { listRawEntries } from "@/features/ingest/persist";
 import type { RawEntry } from "@/features/ingest/types";
 
+// SVG layout constants — all coordinates are relative to the
+// `viewBox="0 0 1000 600"` on the <svg> element. Changing GRAPH_CENTER
+// or RING_* will NOT automatically update that viewBox, so keep them
+// in sync if you ever want a bigger canvas.
+const GRAPH_CENTER = { x: 500, y: 300 } as const;
+const HUB_RADIUS = 32;
+const RING_MIN_RADIUS = 80;
+const RING_STEP = 90;
+const NODE_RADIUS = 18;
+
+// Width used by padStart when rendering numeric ids. Matches the
+// 5-digit zero-padded convention in the Raw Library + Inbox pages
+// so users see consistent `#00001` labels across surfaces.
+const ID_PAD_WIDTH = 5;
+
 const SOURCE_COLORS: Record<string, string> = {
   paste: "var(--claude-orange)",
   url: "var(--claude-blue)",
@@ -131,21 +146,17 @@ function computeLayout(entries: RawEntry[]): LayoutNode[] {
   );
 
   const nodes: LayoutNode[] = [];
-  const cx = 500;
-  const cy = 300;
-  const minRadius = 80;
-  const radiusStep = 90;
 
   sorted.forEach(([source, list], ringIdx) => {
-    const r = minRadius + ringIdx * radiusStep;
+    const r = RING_MIN_RADIUS + ringIdx * RING_STEP;
     const count = list.length;
     const color = SOURCE_COLORS[source] ?? DEFAULT_COLOR;
     list.forEach((entry, i) => {
       const angle = (i / Math.max(count, 1)) * Math.PI * 2 - Math.PI / 2;
       nodes.push({
         entry,
-        x: cx + r * Math.cos(angle),
-        y: cy + r * Math.sin(angle),
+        x: GRAPH_CENTER.x + r * Math.cos(angle),
+        y: GRAPH_CENTER.y + r * Math.sin(angle),
         color,
       });
     });
@@ -183,10 +194,15 @@ function GraphCanvas({
       >
         {/* Central label */}
         <g>
-          <circle cx={500} cy={300} r={32} fill="var(--color-muted)" />
+          <circle
+            cx={GRAPH_CENTER.x}
+            cy={GRAPH_CENTER.y}
+            r={HUB_RADIUS}
+            fill="var(--color-muted)"
+          />
           <text
-            x={500}
-            y={298}
+            x={GRAPH_CENTER.x}
+            y={GRAPH_CENTER.y - 2}
             textAnchor="middle"
             fontSize="13"
             fontWeight="600"
@@ -195,8 +211,8 @@ function GraphCanvas({
             raw
           </text>
           <text
-            x={500}
-            y={313}
+            x={GRAPH_CENTER.x}
+            y={GRAPH_CENTER.y + 13}
             textAnchor="middle"
             fontSize="10"
             fill="var(--muted-foreground)"
@@ -210,8 +226,8 @@ function GraphCanvas({
         {layout.map((n) => (
           <line
             key={`spoke-${n.entry.id}`}
-            x1={500}
-            y1={300}
+            x1={GRAPH_CENTER.x}
+            y1={GRAPH_CENTER.y}
             x2={n.x}
             y2={n.y}
             stroke="var(--color-border)"
@@ -221,29 +237,43 @@ function GraphCanvas({
         ))}
 
         {/* Nodes */}
-        {layout.map((n) => (
-          <g
-            key={n.entry.id}
-            className="cursor-pointer"
-            onClick={() => onNodeClick(n.entry)}
-          >
-            <circle cx={n.x} cy={n.y} r={18} fill={n.color} opacity={0.85} />
-            <text
-              x={n.x}
-              y={n.y + 4}
-              textAnchor="middle"
-              fontSize="10"
-              fontFamily="monospace"
-              fill="white"
-              pointerEvents="none"
+        {layout.map((n) => {
+          // Use the full 5-digit id pad for the node label so the
+          // visible text stays consistent with the <title> tooltip
+          // and with Raw Library / Inbox (review nit #12). 5 digits
+          // is cramped inside an 18 px circle; we compensate with
+          // a smaller font for the node text.
+          const label = `#${String(n.entry.id).padStart(ID_PAD_WIDTH, "0")}`;
+          return (
+            <g
+              key={n.entry.id}
+              className="cursor-pointer"
+              onClick={() => onNodeClick(n.entry)}
             >
-              #{String(n.entry.id).padStart(2, "0")}
-            </text>
-            <title>
-              {`#${String(n.entry.id).padStart(5, "0")} ${n.entry.source} / ${n.entry.slug}`}
-            </title>
-          </g>
-        ))}
+              <circle
+                cx={n.x}
+                cy={n.y}
+                r={NODE_RADIUS}
+                fill={n.color}
+                opacity={0.85}
+              />
+              <text
+                x={n.x}
+                y={n.y + 3}
+                textAnchor="middle"
+                fontSize="8"
+                fontFamily="monospace"
+                fill="white"
+                pointerEvents="none"
+              >
+                {label}
+              </text>
+              <title>
+                {`${label} ${n.entry.source} / ${n.entry.slug}`}
+              </title>
+            </g>
+          );
+        })}
       </svg>
 
       {/* Legend */}

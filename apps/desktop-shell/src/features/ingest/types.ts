@@ -48,11 +48,19 @@ export interface RawDetailResponse {
 }
 
 // ── S4 Inbox layer ────────────────────────────────────────────────
+//
+// Wire types mirror the Rust enums in `wiki_store::InboxKind` /
+// `InboxStatus`. Kept as string unions so we get exhaustive switches
+// on the frontend. Adding a variant here and forgetting to handle it
+// in the InboxPage switch triggers a TS error immediately.
+
+export type InboxKind = "new-raw" | "conflict" | "stale" | "deprecate";
+export type InboxStatus = "pending" | "approved" | "rejected";
 
 export interface InboxEntry {
   id: number;
-  kind: string;
-  status: "pending" | "approved" | "rejected";
+  kind: InboxKind;
+  status: InboxStatus;
   title: string;
   description: string;
   source_raw_id?: number | null;
@@ -73,6 +81,11 @@ export type InboxResolveAction = "approve" | "reject";
 export interface SchemaResponse {
   path: string;
   content: string;
-  source: "disk" | "canonical-template";
+  /**
+   * Always `"disk"` now that `init_wiki` seeds the file on every
+   * handler call. The historical `"canonical-template"` variant
+   * was removed in the nit-polish pass (review finding #4).
+   */
+  source: "disk";
   byte_size: number;
 }

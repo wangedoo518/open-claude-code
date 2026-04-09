@@ -643,6 +643,53 @@ fn strip_frontmatter(content: &str) -> &str {
 // Plaintext lets the user open the file directly if they want to
 // audit or migrate.
 
+/// Kind of maintainer task. Strongly-typed so TypeScript's union type
+/// and the Rust variants stay in lockstep: if we add a variant here,
+/// the `match` statements below force the TS client to handle it too
+/// via a compile-time `unimplemented!` tripwire elsewhere.
+///
+/// S4 only emits `NewRaw`; the other variants land once
+/// `wiki_maintainer` starts producing proposals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InboxKind {
+    /// A new raw file landed and needs a concept/page proposal.
+    NewRaw,
+    /// An existing page conflicts with incoming info.
+    Conflict,
+    /// An existing page hasn't been verified in the canonical window.
+    Stale,
+    /// Proposed deprecation of an existing page.
+    Deprecate,
+}
+
+/// Resolution status of an inbox task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InboxStatus {
+    /// Waiting for a user decision.
+    Pending,
+    /// User approved the proposed action.
+    Approved,
+    /// User rejected the proposed action.
+    Rejected,
+}
+
+impl InboxStatus {
+    /// Wire tag used by the resolve HTTP handler. Kept as a method
+    /// rather than `rename_all` so the `action` query parameter
+    /// accepts the two historical strings and the serde tag stays
+    /// intact regardless of future variant additions.
+    #[must_use]
+    pub fn from_action(action: &str) -> Option<Self> {
+        match action {
+            "approve" => Some(Self::Approved),
+            "reject" => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+}
+
 /// One line item in the Inbox. Discriminated by `kind`; `source_raw_id`
 /// points at the raw layer entry that caused this task (e.g. the
 /// `NNNNN_paste_hello_2026-04-09.md` file that just landed).
@@ -651,11 +698,11 @@ pub struct InboxEntry {
     /// Monotonically-increasing id, scoped to the inbox file. Never
     /// reused even after resolve — we just append.
     pub id: u32,
-    /// What kind of maintainer task this is. For S4 always `"new-raw"`.
-    pub kind: String,
-    /// Current status. Starts as `"pending"`, moves to `"approved"`
-    /// or `"rejected"` after the user resolves it.
-    pub status: String,
+    /// What kind of maintainer task this is. For S4 always `NewRaw`.
+    pub kind: InboxKind,
+    /// Current status. Starts as `Pending`, moves to `Approved`
+    /// or `Rejected` after the user resolves it.
+    pub status: InboxStatus,
     /// Short human-readable title shown in the Inbox list.
     pub title: String,
     /// Longer description shown in the detail pane.
@@ -709,7 +756,7 @@ fn save_inbox_file(paths: &WikiPaths, entries: &[InboxEntry]) -> Result<()> {
 /// the TDD test `inbox_append_is_thread_safe`).
 pub fn append_inbox_pending(
     paths: &WikiPaths,
-    kind: &str,
+    kind: InboxKind,
     title: &str,
     description: &str,
     source_raw_id: Option<u32>,
@@ -719,8 +766,8 @@ pub fn append_inbox_pending(
     let next_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
     let entry = InboxEntry {
         id: next_id,
-        kind: kind.to_string(),
-        status: "pending".to_string(),
+        kind,
+        status: InboxStatus::Pending,
         title: title.to_string(),
         description: description.to_string(),
         source_raw_id,
@@ -748,22 +795,16 @@ pub fn resolve_inbox_entry(
     id: u32,
     action: &str,
 ) -> Result<InboxEntry> {
-    let new_status = match action {
-        "approve" => "approved",
-        "reject" => "rejected",
-        other => {
-            return Err(WikiStoreError::Invalid(format!(
-                "unknown inbox action: {other}"
-            )))
-        }
-    };
+    let new_status = InboxStatus::from_action(action).ok_or_else(|| {
+        WikiStoreError::Invalid(format!("unknown inbox action: {action}"))
+    })?;
     let _guard = lock_inbox_writes();
     let mut entries = load_inbox_file(paths)?;
     let found = entries
         .iter_mut()
         .find(|e| e.id == id)
         .ok_or(WikiStoreError::NotFound(id))?;
-    found.status = new_status.to_string();
+    found.status = new_status;
     found.resolved_at = Some(now_iso8601());
     let updated = found.clone();
     save_inbox_file(paths, &entries)?;
@@ -776,8 +817,37 @@ pub fn resolve_inbox_entry(
 pub fn count_pending_inbox(paths: &WikiPaths) -> Result<usize> {
     Ok(load_inbox_file(paths)?
         .iter()
-        .filter(|e| e.status == "pending")
+        .filter(|e| e.status == InboxStatus::Pending)
         .count())
+}
+
+/// Convenience wrapper for the two callers that currently append a
+/// `NewRaw` inbox task after a raw entry lands (desktop-server's
+/// HTTP ingest handler and wechat_ilink's on_message hook). Review
+/// nit #15: consolidates the title/description formatting so schema
+/// changes (e.g. adding an origin tag) don't need to be made in two
+/// call sites in lockstep.
+///
+/// `origin` is a short, human-readable tag such as `"paste"` or
+/// `"WeChat user abcd1234"` that lands inside the description.
+pub fn append_new_raw_task(
+    paths: &WikiPaths,
+    entry: &RawEntry,
+    origin: &str,
+) -> Result<InboxEntry> {
+    let title = format!("New raw entry #{:05}", entry.id);
+    let description = format!(
+        "Raw entry `{}` was ingested from {origin}. \
+         Proposed action: summarise into a concept page.",
+        entry.filename
+    );
+    append_inbox_pending(
+        paths,
+        InboxKind::NewRaw,
+        &title,
+        &description,
+        Some(entry.id),
+    )
 }
 
 /// Hand-rolled UTC ISO-8601 timestamp formatter, second precision.
@@ -1160,16 +1230,16 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         let e1 =
-            append_inbox_pending(&paths, "new-raw", "first", "desc", Some(1)).unwrap();
+            append_inbox_pending(&paths, InboxKind::NewRaw, "first", "desc", Some(1)).unwrap();
         let e2 =
-            append_inbox_pending(&paths, "new-raw", "second", "desc", Some(2)).unwrap();
+            append_inbox_pending(&paths, InboxKind::NewRaw, "second", "desc", Some(2)).unwrap();
         let e3 =
-            append_inbox_pending(&paths, "new-raw", "third", "desc", None).unwrap();
+            append_inbox_pending(&paths, InboxKind::NewRaw, "third", "desc", None).unwrap();
 
         assert_eq!(e1.id, 1);
         assert_eq!(e2.id, 2);
         assert_eq!(e3.id, 3);
-        assert_eq!(e1.status, "pending");
+        assert_eq!(e1.status, InboxStatus::Pending);
         assert_eq!(e1.source_raw_id, Some(1));
         assert_eq!(e3.source_raw_id, None);
 
@@ -1185,16 +1255,16 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         let entry =
-            append_inbox_pending(&paths, "new-raw", "test", "desc", Some(1)).unwrap();
+            append_inbox_pending(&paths, InboxKind::NewRaw, "test", "desc", Some(1)).unwrap();
         let resolved = resolve_inbox_entry(&paths, entry.id, "approve").unwrap();
 
         assert_eq!(resolved.id, entry.id);
-        assert_eq!(resolved.status, "approved");
+        assert_eq!(resolved.status, InboxStatus::Approved);
         assert!(resolved.resolved_at.is_some());
 
         // Re-reading from disk must reflect the change.
         let listed = list_inbox_entries(&paths).unwrap();
-        assert_eq!(listed[0].status, "approved");
+        assert_eq!(listed[0].status, InboxStatus::Approved);
         assert_eq!(count_pending_inbox(&paths).unwrap(), 0);
     }
 
@@ -1204,14 +1274,14 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
 
-        append_inbox_pending(&paths, "new-raw", "keep", "", Some(1)).unwrap();
-        let bad = append_inbox_pending(&paths, "new-raw", "drop", "", Some(2)).unwrap();
+        append_inbox_pending(&paths, InboxKind::NewRaw, "keep", "", Some(1)).unwrap();
+        let bad = append_inbox_pending(&paths, InboxKind::NewRaw, "drop", "", Some(2)).unwrap();
 
         resolve_inbox_entry(&paths, bad.id, "reject").unwrap();
 
         let entries = list_inbox_entries(&paths).unwrap();
-        assert_eq!(entries[0].status, "pending");
-        assert_eq!(entries[1].status, "rejected");
+        assert_eq!(entries[0].status, InboxStatus::Pending);
+        assert_eq!(entries[1].status, InboxStatus::Rejected);
         assert_eq!(count_pending_inbox(&paths).unwrap(), 1);
     }
 
@@ -1229,7 +1299,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
-        let e = append_inbox_pending(&paths, "new-raw", "t", "", None).unwrap();
+        let e = append_inbox_pending(&paths, InboxKind::NewRaw, "t", "", None).unwrap();
         let err = resolve_inbox_entry(&paths, e.id, "banana").unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
     }
@@ -1240,8 +1310,8 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
 
-        append_inbox_pending(&paths, "new-raw", "task-a", "", Some(1)).unwrap();
-        append_inbox_pending(&paths, "new-raw", "task-b", "", Some(2)).unwrap();
+        append_inbox_pending(&paths, InboxKind::NewRaw, "task-a", "", Some(1)).unwrap();
+        append_inbox_pending(&paths, InboxKind::NewRaw, "task-b", "", Some(2)).unwrap();
 
         // Simulate process restart by re-resolving paths and reading.
         let paths_fresh = WikiPaths::resolve(tmp.path());
@@ -1275,7 +1345,7 @@ mod tests {
             handles.push(thread::spawn(move || {
                 append_inbox_pending(
                     &paths,
-                    "new-raw",
+                    InboxKind::NewRaw,
                     &format!("concurrent-{i}"),
                     "body",
                     Some(i),
@@ -1328,7 +1398,7 @@ mod tests {
         for i in 0..10u32 {
             append_inbox_pending(
                 &paths,
-                "new-raw",
+                InboxKind::NewRaw,
                 &format!("seed-{i}"),
                 "body",
                 Some(i),
@@ -1356,7 +1426,7 @@ mod tests {
         assert_eq!(listed.len(), 10, "no entries may be lost to resolves");
         for entry in &listed {
             assert!(
-                entry.status == "approved" || entry.status == "rejected",
+                entry.status == InboxStatus::Approved || entry.status == InboxStatus::Rejected,
                 "entry {} still pending after parallel resolve",
                 entry.id
             );

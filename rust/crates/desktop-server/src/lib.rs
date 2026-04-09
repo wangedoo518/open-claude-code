@@ -1760,22 +1760,13 @@ async fn ingest_wiki_raw_handler(
 
     // S4 side-channel: every successful raw write appends a pending
     // `new-raw` task to the inbox so the maintainer Inbox page has
-    // something to display. We swallow errors from append_inbox_pending
-    // because inbox bookkeeping should NEVER block a successful ingest —
-    // losing one inbox task is recoverable, losing a raw entry is not.
-    let inbox_title = format!("New raw entry #{:05}", entry.id);
-    let inbox_desc = format!(
-        "Raw entry `{}` was ingested from source `{}`. \
-         Proposed action: summarise into a concept page.",
-        entry.filename, entry.source
-    );
-    if let Err(err) = wiki_store::append_inbox_pending(
-        &paths,
-        "new-raw",
-        &inbox_title,
-        &inbox_desc,
-        Some(entry.id),
-    ) {
+    // something to display. We swallow errors from the inbox append
+    // because inbox bookkeeping should NEVER block a successful
+    // ingest — losing one inbox task is recoverable, losing a raw
+    // entry is not. Formatting lives inside `append_new_raw_task`
+    // (review nit #15) so the wechat path stays in lockstep.
+    let origin = format!("source `{}`", body.source);
+    if let Err(err) = wiki_store::append_new_raw_task(&paths, &entry, &origin) {
         eprintln!(
             "[warn] raw entry {} written but inbox append failed: {err}",
             entry.id
@@ -1850,7 +1841,10 @@ async fn list_wiki_inbox_handler() -> Result<Json<serde_json::Value>, ApiError> 
             }),
         )
     })?;
-    let pending = entries.iter().filter(|e| e.status == "pending").count();
+    let pending = entries
+        .iter()
+        .filter(|e| e.status == wiki_store::InboxStatus::Pending)
+        .count();
     Ok(Json(serde_json::json!({
         "entries": entries,
         "pending_count": pending,
@@ -1860,34 +1854,35 @@ async fn list_wiki_inbox_handler() -> Result<Json<serde_json::Value>, ApiError> 
 
 /// `GET /api/wiki/schema`
 ///
-/// Return the current `schema/CLAUDE.md` content plus its filesystem
-/// metadata (path, byte size, mtime). Used by `SchemaEditorPage` to
-/// render the maintainer rule book as read-only markdown. Falls back
-/// to the canonical template bytes when the file is missing (e.g.
-/// fresh install before `init_wiki` has run at least once).
+/// Return the current `schema/CLAUDE.md` content. The handler uses
+/// `tokio::fs::read_to_string` (review nit #3) rather than blocking
+/// `std::fs` to avoid stalling the axum executor thread on a
+/// particularly slow disk.
+///
+/// `resolve_wiki_root_for_handler` already calls `init_wiki`, which
+/// seeds `schema/CLAUDE.md` from the canonical template on fresh
+/// installs — so the "file missing" branch that the S6 commit
+/// originally carried was unreachable (review nit #4) and has been
+/// removed. If a user deliberately `rm`s the file between `init_wiki`
+/// and the handler run, the read fails and the caller sees a 500
+/// with a clear "read CLAUDE.md failed" message, which is the
+/// correct behavior.
 async fn get_wiki_schema_handler() -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
     let claude_md = paths.schema_claude_md.clone();
-    let (content, source, byte_size) = if claude_md.is_file() {
-        let bytes = std::fs::read_to_string(&claude_md).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("read CLAUDE.md failed: {e}"),
-                }),
-            )
-        })?;
-        let size = bytes.len();
-        (bytes, "disk", size)
-    } else {
-        let template = wiki_store::canonical_claude_md_template().to_string();
-        let size = template.len();
-        (template, "canonical-template", size)
-    };
+    let content = tokio::fs::read_to_string(&claude_md).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read CLAUDE.md failed: {e}"),
+            }),
+        )
+    })?;
+    let byte_size = content.len();
     Ok(Json(serde_json::json!({
         "path": claude_md.display().to_string(),
         "content": content,
-        "source": source,
+        "source": "disk",
         "byte_size": byte_size,
     })))
 }

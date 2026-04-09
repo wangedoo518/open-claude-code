@@ -88,7 +88,7 @@ function SchemaBody({
 }: {
   content: string;
   path: string;
-  source: "disk" | "canonical-template";
+  source: "disk";
   byteSize: number;
 }) {
   return (
@@ -104,7 +104,7 @@ function SchemaBody({
             {path}
           </code>
           <div className="shrink-0 text-caption text-muted-foreground">
-            {byteSize} bytes · {source === "disk" ? "on disk" : "canonical template (fresh install)"}
+            {byteSize} bytes · {source === "disk" ? "on disk" : source}
           </div>
         </div>
       </div>

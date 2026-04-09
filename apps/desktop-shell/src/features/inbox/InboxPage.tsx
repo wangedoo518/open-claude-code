@@ -25,7 +25,7 @@
  * touching the page container.
  */
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
@@ -59,8 +59,27 @@ export function InboxPage() {
   });
 
   const entries = listQuery.data?.entries ?? [];
-  const selectedEntry =
-    selectedId !== null ? entries.find((e) => e.id === selectedId) : null;
+  const selectedEntry = useMemo(
+    () =>
+      selectedId !== null
+        ? (entries.find((e) => e.id === selectedId) ?? null)
+        : null,
+    [entries, selectedId],
+  );
+
+  // Review nit #5: clear the selection when a previously-selected
+  // entry drops off the list (e.g. after a reject-then-archive flow,
+  // or if the backing file got pruned out from under us). Without
+  // this effect the right pane would get stuck on a stale id and the
+  // EntryPlaceholder wouldn't re-appear.
+  useEffect(() => {
+    if (selectedId === null) return;
+    if (listQuery.isLoading) return;
+    const stillExists = entries.some((e) => e.id === selectedId);
+    if (!stillExists) {
+      setSelectedId(null);
+    }
+  }, [entries, selectedId, listQuery.isLoading]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -170,12 +189,19 @@ function EntryList({
     );
   }
 
-  // Sort: pending first, then newest first.
-  const sorted = [...entries].sort((a, b) => {
-    if (a.status === "pending" && b.status !== "pending") return -1;
-    if (b.status === "pending" && a.status !== "pending") return 1;
-    return b.id - a.id;
-  });
+  // Sort: pending first, then newest first. Wrapped in useMemo so
+  // we don't re-sort on every render; React Query triggers a fresh
+  // `entries` reference only when the underlying data actually
+  // changes, so `useMemo([entries])` is sufficient.
+  const sorted = useMemo(
+    () =>
+      [...entries].sort((a, b) => {
+        if (a.status === "pending" && b.status !== "pending") return -1;
+        if (b.status === "pending" && a.status !== "pending") return 1;
+        return b.id - a.id;
+      }),
+    [entries],
+  );
 
   return (
     <ul className="flex-1 divide-y divide-border/40 overflow-y-auto">

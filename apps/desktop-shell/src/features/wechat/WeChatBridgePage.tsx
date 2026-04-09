@@ -58,6 +58,26 @@ const TERMINAL_LOGIN_STATUSES = [
   "expired",
 ] as const;
 
+/**
+ * Review nit #13: single source of truth for the terminal-status
+ * check so the cast doesn't get re-written at every call site.
+ */
+function isTerminalLoginStatus(status: string): boolean {
+  return (TERMINAL_LOGIN_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Review nit #16: make sure the QR image src is a `data:` URL before
+ * we drop it into an `<img>` tag. An `<img>` can't execute JavaScript
+ * from its `src`, but a compromised backend could return a `data:`
+ * URL with a `text/html` content-type that some UAs try to sniff as
+ * HTML; rejecting anything that doesn't start with `data:image/`
+ * removes the edge case.
+ */
+function isSafeQrDataUrl(src: string): boolean {
+  return src.startsWith("data:image/");
+}
+
 export function WeChatBridgePage() {
   const queryClient = useQueryClient();
 
@@ -79,11 +99,7 @@ export function WeChatBridgePage() {
   // When login reaches a terminal state, stop polling and refresh list.
   useEffect(() => {
     if (!loginStatus) return;
-    if (
-      TERMINAL_LOGIN_STATUSES.includes(
-        loginStatus.status as (typeof TERMINAL_LOGIN_STATUSES)[number],
-      )
-    ) {
+    if (isTerminalLoginStatus(loginStatus.status)) {
       if (loginPollRef.current !== null) {
         window.clearInterval(loginPollRef.current);
         loginPollRef.current = null;
@@ -147,9 +163,7 @@ export function WeChatBridgePage() {
   const hasLoginInFlight =
     loginHandle !== null &&
     loginStatus !== null &&
-    !TERMINAL_LOGIN_STATUSES.includes(
-      loginStatus.status as (typeof TERMINAL_LOGIN_STATUSES)[number],
-    );
+    !isTerminalLoginStatus(loginStatus.status);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -451,9 +465,15 @@ function QrLoginCard({
     }
   }, [status]);
 
-  const isTerminal = TERMINAL_LOGIN_STATUSES.includes(
-    status.status as (typeof TERMINAL_LOGIN_STATUSES)[number],
-  );
+  const isTerminal = isTerminalLoginStatus(status.status);
+
+  // Review nit #16: refuse to render the QR code when the backend
+  // returns something that's not a data:image/* URL. This guard
+  // matches the contract on the Rust side (always base64-encoded
+  // PNG) and fails safely if that contract is ever broken.
+  const safeQrSrc = isSafeQrDataUrl(handle.qr_image_base64)
+    ? handle.qr_image_base64
+    : null;
 
   return (
     <div className="rounded-lg border border-border bg-muted/5 p-5">
@@ -461,13 +481,22 @@ function QrLoginCard({
         {/* QR image */}
         <div className="shrink-0">
           <div className="relative rounded-md border border-border bg-background p-2">
-            <img
-              src={handle.qr_image_base64}
-              alt="WeChat ClawBot QR code"
-              width={192}
-              height={192}
-              className="size-[192px] rounded"
-            />
+            {safeQrSrc ? (
+              <img
+                src={safeQrSrc}
+                alt="WeChat ClawBot QR code"
+                width={192}
+                height={192}
+                className="size-[192px] rounded"
+              />
+            ) : (
+              <div
+                className="flex size-[192px] items-center justify-center rounded text-center text-caption"
+                style={{ color: "var(--color-error)" }}
+              >
+                QR payload is not a data:image/ URL — refusing to render
+              </div>
+            )}
             {status.status === "confirmed" && (
               <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/90">
                 <CheckCircle2
