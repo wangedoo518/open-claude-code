@@ -1137,6 +1137,7 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
     }
 
     // Concept nodes — id is `wiki-{slug}`, label is title || slug.
+    // Also collect internal links from each body for `references` edges.
     for concept in &concepts {
         let label = if concept.title.is_empty() {
             concept.slug.clone()
@@ -1157,6 +1158,22 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
                 kind: "derived-from".to_string(),
             });
         }
+
+        // feat(Q): backlink edges — parse internal markdown links
+        // in the body. For each `[...](concepts/target.md)` found,
+        // emit a `references` edge from this concept to the target.
+        let concept_file =
+            paths.wiki.join(WIKI_CONCEPTS_SUBDIR).join(format!("{}.md", concept.slug));
+        if let Ok(content) = fs::read_to_string(&concept_file) {
+            let body = strip_frontmatter(&content);
+            for target_slug in extract_internal_links(body) {
+                edges.push(WikiGraphEdge {
+                    from: format!("wiki-{}", concept.slug),
+                    to: format!("wiki-{target_slug}"),
+                    kind: "references".to_string(),
+                });
+            }
+        }
     }
 
     let edge_count = edges.len();
@@ -1167,6 +1184,111 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
         concept_count,
         edge_count,
     })
+}
+
+/// Extract internal wiki links from a concept page body. Looks for
+/// markdown links of the form `[anything](concepts/{slug}.md)` and
+/// returns the unique slugs referenced. Case-insensitive path match.
+///
+/// This is the parser that feeds the backlinks system: if page A
+/// mentions `[LLM Wiki](concepts/llm-wiki.md)` in its body, then
+/// `extract_internal_links(body_a)` returns `["llm-wiki"]`, and
+/// `build_wiki_graph` emits a `references` edge from A to B.
+///
+/// The regex is intentionally simple — we only look for
+/// `](concepts/slug.md)` suffixes. Future sprints can extend this
+/// to detect bare `[[slug]]` wiki-link syntax if we add that.
+pub fn extract_internal_links(body: &str) -> Vec<String> {
+    let mut slugs: Vec<String> = Vec::new();
+    // Look for `](concepts/SLUG.md)` patterns.
+    // We search for the closing paren → walk backward to find `](concepts/`
+    // prefix. This avoids pulling in the `regex` crate for one function.
+    let prefix = "](concepts/";
+    let suffix = ".md)";
+    let lower = body.to_lowercase();
+    let mut search_from = 0usize;
+    while let Some(start) = lower[search_from..].find(prefix) {
+        let abs_start = search_from + start + prefix.len();
+        if let Some(end_rel) = lower[abs_start..].find(suffix) {
+            let slug = &body[abs_start..abs_start + end_rel];
+            // Validate: slug must be non-empty and ASCII-safe.
+            let slug_lower = slug.to_lowercase();
+            if !slug_lower.is_empty()
+                && slug_lower
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
+                && !slugs.contains(&slug_lower)
+            {
+                slugs.push(slug_lower);
+            }
+            search_from = abs_start + end_rel + suffix.len();
+        } else {
+            break;
+        }
+    }
+    slugs
+}
+
+/// List all concept pages that link to `target_slug` in their body.
+/// This is the "reverse" lookup for backlinks: given slug B, which
+/// pages A have a `[...](concepts/B.md)` link?
+///
+/// Returns a list of `WikiPageSummary` for each referring page.
+/// Empty when no page links to `target_slug` (including when the
+/// target itself doesn't exist — that's not an error, it just
+/// means nothing links to a nonexistent page).
+///
+/// Performance: re-reads every concept page body on each call.
+/// Same "no index cache" philosophy as `list_wiki_pages`. When
+/// the concept count outgrows a few hundred, we can add a manifest
+/// or SQLite FTS index. For now, the simplicity is worth it.
+pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPageSummary>> {
+    let target = target_slug.to_lowercase();
+    let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+    if !concepts_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut results: Vec<WikiPageSummary> = Vec::new();
+    let dir =
+        fs::read_dir(&concepts_dir).map_err(|e| WikiStoreError::io(concepts_dir.clone(), e))?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let slug = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        // Don't include the target page itself in its own backlinks.
+        if slug.to_lowercase() == target {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let body = strip_frontmatter(&content);
+        let links = extract_internal_links(body);
+        if links.iter().any(|s| *s == target) {
+            let metadata = match fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let (title, summary, source_raw_id, created_at) =
+                parse_wiki_frontmatter_fields(&content);
+            results.push(WikiPageSummary {
+                slug,
+                title,
+                summary,
+                source_raw_id,
+                created_at,
+                byte_size: metadata.len(),
+            });
+        }
+    }
+    results.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(results)
 }
 
 /// One hit in a [`search_wiki_pages`] result. Carries the matching
@@ -2793,6 +2915,161 @@ mod tests {
         // Falls back to slug as title; no " — summary" suffix.
         assert!(content.contains("- [bare-page](concepts/bare-page.md)\n"));
         assert!(!content.contains("bare-page.md — "));
+    }
+
+    // ── Q backlinks tests ────────────────────────────────────────
+
+    #[test]
+    fn extract_internal_links_finds_concept_links() {
+        let body = "See [LLM Wiki](concepts/llm-wiki.md) and \
+                    [RAG](concepts/rag-vs-llm-wiki.md) for details.";
+        let links = extract_internal_links(body);
+        assert_eq!(links.len(), 2);
+        assert!(links.contains(&"llm-wiki".to_string()));
+        assert!(links.contains(&"rag-vs-llm-wiki".to_string()));
+    }
+
+    #[test]
+    fn extract_internal_links_ignores_external_links() {
+        let body = "See [Example](https://example.com) and [Docs](docs/readme.md).";
+        let links = extract_internal_links(body);
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn extract_internal_links_deduplicates() {
+        let body = "[A](concepts/alpha.md) and [A again](concepts/alpha.md).";
+        let links = extract_internal_links(body);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0], "alpha");
+    }
+
+    #[test]
+    fn extract_internal_links_case_insensitive() {
+        let body = "[Cap](Concepts/Alpha.md) and [low](concepts/alpha.md).";
+        let links = extract_internal_links(body);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0], "alpha");
+    }
+
+    #[test]
+    fn list_backlinks_returns_referring_pages() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(
+            &paths,
+            "alpha",
+            "Alpha",
+            "Summary",
+            "See [Bravo](concepts/bravo.md) for more.",
+            Some(1),
+        )
+        .unwrap();
+        write_wiki_page(
+            &paths,
+            "bravo",
+            "Bravo",
+            "Summary",
+            "See [Alpha](concepts/alpha.md) for context.",
+            Some(2),
+        )
+        .unwrap();
+        write_wiki_page(
+            &paths,
+            "charlie",
+            "Charlie",
+            "Summary",
+            "No internal links here.",
+            Some(3),
+        )
+        .unwrap();
+
+        let bl_for_bravo = list_backlinks(&paths, "bravo").unwrap();
+        assert_eq!(bl_for_bravo.len(), 1);
+        assert_eq!(bl_for_bravo[0].slug, "alpha");
+
+        let bl_for_alpha = list_backlinks(&paths, "alpha").unwrap();
+        assert_eq!(bl_for_alpha.len(), 1);
+        assert_eq!(bl_for_alpha[0].slug, "bravo");
+
+        let bl_for_charlie = list_backlinks(&paths, "charlie").unwrap();
+        assert!(bl_for_charlie.is_empty());
+    }
+
+    #[test]
+    fn list_backlinks_excludes_self_references() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(
+            &paths,
+            "self-ref",
+            "Self Ref",
+            "Summary",
+            "I link to [myself](concepts/self-ref.md).",
+            None,
+        )
+        .unwrap();
+
+        let bl = list_backlinks(&paths, "self-ref").unwrap();
+        assert!(bl.is_empty());
+    }
+
+    #[test]
+    fn build_wiki_graph_includes_references_edges_from_backlinks() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(
+            &paths,
+            "page-a",
+            "Page A",
+            "summary",
+            "Links to [Page B](concepts/page-b.md).",
+            Some(1),
+        )
+        .unwrap();
+        write_wiki_page(&paths, "page-b", "Page B", "summary", "No links.", Some(2))
+            .unwrap();
+
+        // Need at least 1 raw entry for the derived-from edges
+        write_raw_entry(
+            &paths,
+            "paste",
+            "First",
+            "body",
+            &RawFrontmatter::for_paste("paste", None),
+        )
+        .unwrap();
+        write_raw_entry(
+            &paths,
+            "paste",
+            "Second",
+            "body",
+            &RawFrontmatter::for_paste("paste", None),
+        )
+        .unwrap();
+
+        let g = build_wiki_graph(&paths).unwrap();
+
+        // Should have a references edge from page-a to page-b
+        assert!(
+            g.edges.iter().any(|e| e.from == "wiki-page-a"
+                && e.to == "wiki-page-b"
+                && e.kind == "references"),
+            "missing references edge: {:?}",
+            g.edges
+        );
+
+        // No reverse references edge (page-b doesn't link to page-a)
+        assert!(!g
+            .edges
+            .iter()
+            .any(|e| e.from == "wiki-page-b" && e.to == "wiki-page-a" && e.kind == "references"));
     }
 
     // ── R mark_conflict tests ────────────────────────────────────

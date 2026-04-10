@@ -506,6 +506,8 @@ pub fn app(state: AppState) -> Router {
         // edges (derived-from) for the Graph page. Frontend uses
         // this to render the Karpathy three-layer cognitive web.
         .route("/api/wiki/graph", get(get_wiki_graph_handler))
+        // ── ClawWiki Q: backlinks endpoint ─────────────────────────
+        .route("/api/wiki/pages/{slug}/backlinks", get(get_wiki_backlinks_handler))
         // ── Phase 6C: WeChat account management ────────────────────
         .route(
             "/api/desktop/wechat/accounts",
@@ -2088,6 +2090,32 @@ async fn put_wiki_schema_handler(
 #[derive(Debug, serde::Deserialize)]
 struct PutSchemaRequest {
     content: String,
+}
+
+/// `GET /api/wiki/pages/{slug}/backlinks` (feat Q)
+///
+/// Return every concept page that contains a markdown link to
+/// `concepts/{slug}.md` in its body. This is the reverse lookup for
+/// the bidirectional backlinks system required by canonical §8
+/// Triggers row 3 ("A→B implies B→A"). Self-references excluded.
+///
+/// Returns `{ pages: [...WikiPageSummary] }`.
+async fn get_wiki_backlinks_handler(
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let pages = wiki_store::list_backlinks(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("list_backlinks failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({
+        "pages": pages,
+        "count": pages.len(),
+    })))
 }
 
 /// `GET /api/wiki/graph` (canonical §9.3 · feat T)
