@@ -378,6 +378,22 @@ pub fn app(state: AppState) -> Router {
             "/api/desktop/sessions/{id}/events",
             get(stream_session_events),
         )
+        // ── feat(U): canonical §9.3 Ask session aliases ────────────
+        // The canonical route prefix is /api/ask/sessions. Pre-U all
+        // session routes lived under /api/desktop/sessions (inherited
+        // from the pre-ClawWiki CCD shell). Both paths now work; the
+        // canonical alias lets the frontend migrate at its own pace.
+        .route(
+            "/api/ask/sessions",
+            get(list_sessions).post(create_session),
+        )
+        .route("/api/ask/sessions/{id}", get(get_session).delete(delete_session_handler))
+        .route("/api/ask/sessions/{id}/messages", post(append_message))
+        .route("/api/ask/sessions/{id}/cancel", post(cancel_session))
+        .route("/api/ask/sessions/{id}/resume", post(resume_session))
+        .route("/api/ask/sessions/{id}/events", get(stream_session_events))
+        .route("/api/ask/sessions/{id}/permission", post(forward_permission))
+        // ── end feat(U) aliases ─────────────────────────────────────
         .route(
             "/api/desktop/scheduled/{id}",
             delete(delete_scheduled_task_handler).post(update_scheduled_task),
