@@ -93,11 +93,30 @@ pub const RAW_DIR: &str = "raw";
 /// the Inbox UI.
 pub const WIKI_DIR: &str = "wiki";
 
-/// Subdirectory under `wiki/` for concept pages specifically. Other
-/// canonical categories (people, topics, compare, changelog) get
-/// their own subdirs as future sprints add them; for S4 maintainer
-/// MVP only `concepts/` exists.
+/// Subdirectory under `wiki/` for concept pages specifically.
 pub const WIKI_CONCEPTS_SUBDIR: &str = "concepts";
+
+/// Subdirectory under `wiki/` for people pages (canonical §10).
+/// Each page describes a person referenced in the user's raw sources
+/// (authors, researchers, collaborators).
+pub const WIKI_PEOPLE_SUBDIR: &str = "people";
+
+/// Subdirectory under `wiki/` for topic pages (canonical §10).
+/// Cross-concept theme aggregations (e.g. "AI Memory", "RAG
+/// evolution").
+pub const WIKI_TOPICS_SUBDIR: &str = "topics";
+
+/// Subdirectory under `wiki/` for compare pages (canonical §10).
+/// Structured A-vs-B comparisons with argument columns.
+pub const WIKI_COMPARE_SUBDIR: &str = "compare";
+
+/// All wiki page categories, in display order.
+pub const WIKI_CATEGORIES: &[(&str, &str)] = &[
+    ("concept", WIKI_CONCEPTS_SUBDIR),
+    ("people", WIKI_PEOPLE_SUBDIR),
+    ("topic", WIKI_TOPICS_SUBDIR),
+    ("compare", WIKI_COMPARE_SUBDIR),
+];
 
 /// Filename for the content-oriented catalog at the top of `wiki/`.
 /// Karpathy's llm-wiki.md calls out `index.md` as the "first entry
@@ -314,6 +333,12 @@ pub fn init_wiki(root: &Path) -> Result<()> {
     // and creates intermediate components, so even a fresh root works.
     for dir in [&paths.root, &paths.raw, &paths.wiki, &paths.schema, &paths.meta] {
         fs::create_dir_all(dir).map_err(|e| WikiStoreError::io(dir.clone(), e))?;
+    }
+    // feat(W): create all 4 wiki category subdirectories so the
+    // maintainer can write pages of any type from day one.
+    for (_cat_name, subdir) in WIKI_CATEGORIES {
+        let cat_dir = paths.wiki.join(subdir);
+        fs::create_dir_all(&cat_dir).map_err(|e| WikiStoreError::io(cat_dir.clone(), e))?;
     }
 
     // Seed CLAUDE.md only if absent. We deliberately do NOT compare
@@ -990,6 +1015,53 @@ pub fn write_wiki_page(
     Ok(path)
 }
 
+/// Write a wiki page to any category subdir. Generalizes
+/// `write_wiki_page` (which is hardcoded to concepts). The
+/// `category` must be one of the keys in `WIKI_CATEGORIES`
+/// ("concept", "people", "topic", "compare"). Returns the written
+/// file path.
+///
+/// `page_type_tag` is the frontmatter `type:` value (same as
+/// category name for MVP). The frontmatter gets `type: people`
+/// or `type: topic` etc.
+pub fn write_wiki_page_in_category(
+    paths: &WikiPaths,
+    category: &str,
+    slug: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    source_raw_id: Option<u32>,
+) -> Result<PathBuf> {
+    validate_wiki_slug(slug)?;
+    let subdir = WIKI_CATEGORIES
+        .iter()
+        .find(|(name, _)| *name == category)
+        .map(|(_, dir)| *dir)
+        .ok_or_else(|| {
+            WikiStoreError::Invalid(format!(
+                "unknown wiki category: {category} (expected one of: concept, people, topic, compare)"
+            ))
+        })?;
+    let cat_dir = paths.wiki.join(subdir);
+    fs::create_dir_all(&cat_dir).map_err(|e| WikiStoreError::io(cat_dir.clone(), e))?;
+    let path = cat_dir.join(format!("{slug}.md"));
+
+    let mut fm = WikiFrontmatter::for_concept(title, summary, source_raw_id);
+    fm.kind = category.to_string();
+    let mut content = fm.to_yaml_block();
+    content.push('\n');
+    content.push_str(body);
+    if !body.ends_with('\n') {
+        content.push('\n');
+    }
+
+    let tmp = path.with_extension("md.tmp");
+    fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(path)
+}
+
 /// List every wiki concept page under `wiki/concepts/`, sorted by
 /// slug ascending. Missing or empty directory both return an empty
 /// `Vec` (consistent with `list_raw_entries`).
@@ -999,35 +1071,21 @@ pub fn write_wiki_page(
 /// directory rarely exceeds a few hundred entries during MVP and
 /// re-parsing avoids any drift-vs-disk bugs.
 pub fn list_wiki_pages(paths: &WikiPaths) -> Result<Vec<WikiPageSummary>> {
-    let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
-    if !concepts_dir.is_dir() {
-        return Ok(Vec::new());
+    list_pages_in_dir(&paths.wiki.join(WIKI_CONCEPTS_SUBDIR))
+}
+
+/// List wiki pages across ALL categories (concepts + people +
+/// topics + compare), merged and sorted by slug. Used by the
+/// Graph page and other surfaces that want the full picture.
+pub fn list_all_wiki_pages(paths: &WikiPaths) -> Result<Vec<WikiPageSummary>> {
+    let mut all: Vec<WikiPageSummary> = Vec::new();
+    for (_cat_name, subdir) in WIKI_CATEGORIES {
+        let dir = paths.wiki.join(subdir);
+        let mut pages = list_pages_in_dir(&dir)?;
+        all.append(&mut pages);
     }
-    let mut summaries: Vec<WikiPageSummary> = Vec::new();
-    let dir = fs::read_dir(&concepts_dir)
-        .map_err(|e| WikiStoreError::io(concepts_dir.clone(), e))?;
-    for entry in dir.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        let slug = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s.to_string(),
-            None => continue,
-        };
-        // Silently skip filenames that don't match the slug contract
-        // (e.g. a stray README.md a user drops into the dir). Don't
-        // error the whole list — the frontend still wants to show
-        // the rest.
-        if validate_wiki_slug(&slug).is_err() {
-            continue;
-        }
-        if let Ok(summary) = parse_wiki_file(&path, &slug) {
-            summaries.push(summary);
-        }
-    }
-    summaries.sort_by(|a, b| a.slug.cmp(&b.slug));
-    Ok(summaries)
+    all.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(all)
 }
 
 /// Read a single wiki concept page by slug. Returns the parsed
@@ -1679,7 +1737,7 @@ pub fn append_wiki_log(
 ///
 /// Auto-generated catalog ...
 ///
-/// ## Concepts (N)
+/// ## Concept (N)
 /// - [{title}](concepts/{slug}.md) - {summary}
 /// - ...
 /// ```
@@ -1688,40 +1746,42 @@ pub fn rebuild_wiki_index(paths: &WikiPaths) -> Result<PathBuf> {
     fs::create_dir_all(&paths.wiki).map_err(|e| WikiStoreError::io(paths.wiki.clone(), e))?;
     let path = wiki_index_path(paths);
 
-    // list_wiki_pages is already sorted alphabetically by slug, so
-    // the generated listing is deterministic. We ignore the guard
-    // inside list_wiki_pages (it doesn't take one) — we're holding
-    // the WIKI_WRITE_GUARD ourselves so no one else can append.
-    let concepts = list_wiki_pages(paths)?;
-
+    // feat(W): loop over ALL 4 wiki categories so the index reflects
+    // the full wiki breadth. Each category gets its own ## section.
     let mut content = String::new();
     content.push_str("# ClawWiki index\n\n");
     content.push_str(
         "Auto-generated catalog of every wiki page. Updated after every \
          maintainer write. Canonical §10, Karpathy llm-wiki §\"Indexing and logging\".\n\n",
     );
-    content.push_str(&format!("## Concepts ({})\n\n", concepts.len()));
-    if concepts.is_empty() {
-        content.push_str("_No concept pages yet. Ingest something and approve a maintainer proposal from the Inbox._\n");
-    } else {
-        for page in &concepts {
-            let title = if page.title.is_empty() {
-                page.slug.clone()
-            } else {
-                page.title.clone()
-            };
-            let summary = if page.summary.is_empty() {
-                String::new()
-            } else {
-                format!(" — {}", page.summary)
-            };
-            content.push_str(&format!(
-                "- [{title}]({subdir}/{slug}.md){summary}\n",
-                title = title,
-                subdir = WIKI_CONCEPTS_SUBDIR,
-                slug = page.slug,
-                summary = summary,
-            ));
+    for (cat_name, subdir) in WIKI_CATEGORIES {
+        let cat_dir = paths.wiki.join(subdir);
+        let pages = list_pages_in_dir(&cat_dir)?;
+        let display_name = capitalize_first(cat_name);
+        content.push_str(&format!("## {display_name} ({})\n\n", pages.len()));
+        if pages.is_empty() {
+            content.push_str(&format!("_No {cat_name} pages yet._\n\n"));
+        } else {
+            for page in &pages {
+                let title = if page.title.is_empty() {
+                    page.slug.clone()
+                } else {
+                    page.title.clone()
+                };
+                let summary = if page.summary.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", page.summary)
+                };
+                content.push_str(&format!(
+                    "- [{title}]({subdir}/{slug}.md){summary}\n",
+                    title = title,
+                    subdir = subdir,
+                    slug = page.slug,
+                    summary = summary,
+                ));
+            }
+            content.push('\n');
         }
     }
 
@@ -1730,6 +1790,44 @@ pub fn rebuild_wiki_index(paths: &WikiPaths) -> Result<PathBuf> {
     fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
     fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
     Ok(path)
+}
+
+/// List pages in an arbitrary wiki subdir (concepts/ or people/ etc.).
+/// Shared by both `list_wiki_pages` and `rebuild_wiki_index`.
+fn list_pages_in_dir(dir: &Path) -> Result<Vec<WikiPageSummary>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let rd = fs::read_dir(dir).map_err(|e| WikiStoreError::io(dir.to_path_buf(), e))?;
+    let mut pages: Vec<WikiPageSummary> = Vec::new();
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let slug = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if validate_wiki_slug(&slug).is_err() {
+            continue;
+        }
+        match parse_wiki_file(&path, &slug) {
+            Ok(page) => pages.push(page),
+            Err(_) => continue,
+        }
+    }
+    pages.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(pages)
+}
+
+/// Capitalize the first char of a string for display.
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 /// Format `now()` as `YYYY-MM-DD HH:MM` for wiki log entries.
@@ -2559,10 +2657,9 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
 
-        // Precondition: wiki/concepts/ does NOT exist after init_wiki
-        // (init creates wiki/ but not its subdirs).
+        // After feat(W) init_wiki creates all 4 category dirs up front.
         let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
-        assert!(!concepts_dir.exists(), "concepts/ must not exist pre-write");
+        assert!(concepts_dir.is_dir(), "init_wiki should create concepts/");
 
         let written = write_wiki_page(
             &paths,
@@ -2890,7 +2987,7 @@ mod tests {
         assert!(content.starts_with("# ClawWiki index"));
         assert!(content.contains("Auto-generated catalog"));
         // Header says "(0)" when the wiki is empty.
-        assert!(content.contains("## Concepts (0)"));
+        assert!(content.contains("## Concept (0)"));
         // And an explicit placeholder message so the user sees
         // something informative when they open the raw file.
         assert!(content.contains("_No concept pages yet."));
@@ -2935,7 +3032,7 @@ mod tests {
         let content = fs::read_to_string(wiki_index_path(&paths)).unwrap();
 
         // Count header should reflect the 3 concepts.
-        assert!(content.contains("## Concepts (3)"));
+        assert!(content.contains("## Concept (3)"));
 
         // Each entry must appear as a markdown list item linking
         // into the concepts/ subdir.
@@ -2995,6 +3092,109 @@ mod tests {
         // Falls back to slug as title; no " — summary" suffix.
         assert!(content.contains("- [bare-page](concepts/bare-page.md)\n"));
         assert!(!content.contains("bare-page.md — "));
+    }
+
+    // ── W multi-category wiki tests ──────────────────────────────
+
+    #[test]
+    fn init_wiki_creates_all_four_category_dirs() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        assert!(tmp.path().join(WIKI_DIR).join(WIKI_CONCEPTS_SUBDIR).is_dir());
+        assert!(tmp.path().join(WIKI_DIR).join(WIKI_PEOPLE_SUBDIR).is_dir());
+        assert!(tmp.path().join(WIKI_DIR).join(WIKI_TOPICS_SUBDIR).is_dir());
+        assert!(tmp.path().join(WIKI_DIR).join(WIKI_COMPARE_SUBDIR).is_dir());
+    }
+
+    #[test]
+    fn write_wiki_page_in_category_writes_to_correct_subdir() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page_in_category(
+            &paths,
+            "people",
+            "karpathy",
+            "Andrej Karpathy",
+            "AI researcher.",
+            "Bio body.",
+            Some(1),
+        )
+        .unwrap();
+
+        // File lands in wiki/people/karpathy.md, NOT concepts/
+        let people_file = tmp
+            .path()
+            .join(WIKI_DIR)
+            .join(WIKI_PEOPLE_SUBDIR)
+            .join("karpathy.md");
+        assert!(people_file.is_file());
+        let content = fs::read_to_string(&people_file).unwrap();
+        assert!(content.contains("type: people"));
+        assert!(content.contains("Andrej Karpathy"));
+    }
+
+    #[test]
+    fn write_wiki_page_in_category_rejects_unknown_category() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let err = write_wiki_page_in_category(
+            &paths,
+            "unknown-cat",
+            "test",
+            "Test",
+            "summary",
+            "body",
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+    }
+
+    #[test]
+    fn list_all_wiki_pages_returns_pages_from_all_categories() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(&paths, "llm-wiki", "LLM Wiki", "s", "b", None).unwrap();
+        write_wiki_page_in_category(&paths, "people", "karpathy", "K", "s", "b", None)
+            .unwrap();
+        write_wiki_page_in_category(&paths, "topic", "ai-memory", "AI Memory", "s", "b", None)
+            .unwrap();
+
+        let concepts = list_wiki_pages(&paths).unwrap();
+        assert_eq!(concepts.len(), 1); // only concepts/
+
+        let all = list_all_wiki_pages(&paths).unwrap();
+        assert_eq!(all.len(), 3); // all categories
+    }
+
+    #[test]
+    fn rebuild_wiki_index_includes_all_categories() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(&paths, "alpha", "Alpha", "s", "b", None).unwrap();
+        write_wiki_page_in_category(&paths, "people", "bob", "Bob", "s", "b", None)
+            .unwrap();
+        write_wiki_page_in_category(&paths, "compare", "a-vs-b", "A vs B", "s", "b", None)
+            .unwrap();
+
+        rebuild_wiki_index(&paths).unwrap();
+        let content = fs::read_to_string(wiki_index_path(&paths)).unwrap();
+
+        assert!(content.contains("## Concept (1)"));
+        assert!(content.contains("## People (1)"));
+        assert!(content.contains("## Topic (0)"));
+        assert!(content.contains("## Compare (1)"));
+        assert!(content.contains("[Alpha](concepts/alpha.md)"));
+        assert!(content.contains("[Bob](people/bob.md)"));
+        assert!(content.contains("[A vs B](compare/a-vs-b.md)"));
     }
 
     // ── P notify_affected_pages tests ────────────────────────────
