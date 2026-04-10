@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { GeneralSettings } from "./sections/GeneralSettings";
 import { ProviderSettings } from "./sections/ProviderSettings";
+import { MultiProviderSettings } from "./sections/MultiProviderSettings";
 import { SubscriptionCodexPool } from "./sections/SubscriptionCodexPool";
 import { WeChatSettings } from "./sections/WeChatSettings";
 import { McpSettings } from "./sections/McpSettings";
@@ -39,6 +40,7 @@ import { useSettingsStore } from "@/state/settings-store";
 type SettingsSection =
   | "general"
   | "provider"
+  | "multi-provider"
   | "codex-pool"
   | "wechat"
   | "mcp"
@@ -57,6 +59,12 @@ interface MenuItem {
 const MENU_ITEMS: MenuItem[] = [
   { id: "general", i18nKey: "settings.general", icon: Settings },
   { id: "provider", i18nKey: "settings.provider", icon: Key },
+  {
+    id: "multi-provider",
+    i18nKey: "settings.multiProvider",
+    icon: ServerCog,
+    labelOverride: "LLM Gateway",
+  },
   // S2: Codex pool read-only panel. The broker lives in the Rust
   // process (canonical §9.2); this entry is the only user-facing
   // surface — there is no provider picker, no API-key paste form.
@@ -203,6 +211,7 @@ function SettingsContent({
   // S2 Codex pool has its own React Query hooks (broker status +
   // account list + clear mutation) and is not blocked by bootstrap.
   if (section === "codex-pool") return <SubscriptionCodexPool />;
+  if (section === "multi-provider") return <MultiProviderSettings />;
   // Same story for WeChat accounts — fully self-contained React Query +
   // polling, never blocked on bootstrap/settings/customize.
   if (section === "wechat") return <WeChatSettings />;

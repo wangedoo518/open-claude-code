@@ -12,8 +12,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use api::{
     detect_provider_kind, max_tokens_for_model, read_base_url as read_claw_base_url,
     read_xai_base_url, resolve_model_alias, resolve_startup_auth_source,
-    AuthSource, ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest,
-    MessageResponse, OutputContentBlock, ProviderClient,
+    AnthropicClient, AuthSource, ContentBlockDelta, InputContentBlock, InputMessage,
+    MessageRequest, MessageResponse, OpenAiCompatClient, OpenAiCompatConfig,
+    OutputContentBlock, ProviderClient,
     ProviderKind, StreamEvent as ApiStreamEvent, ToolChoice, ToolResultContentBlock,
 };
 use plugins::{PluginManager, PluginManagerConfig};
@@ -47,9 +48,10 @@ pub mod codex_broker;
 mod managed_auth;
 mod oauth_runtime;
 pub mod protocol_codegen;
-// S0.4 cut day: providers_config (Phase 3-5 multi-provider registry)
-// is gone. ClawWiki canonical §11.1 cut #6 — users do not pick a
-// provider; the Codex pool (S2 codex_broker) is the single source.
+// S0.4 cut day note: providers_config was removed but restored for
+// ClawWiki Cloud gateway integration — users need to configure
+// claude-wiki-api as an Anthropic-compatible provider via the UI.
+pub mod providers_config;
 pub mod secure_storage;
 pub mod system_prompt;
 pub mod wechat_ilink;
@@ -2937,10 +2939,17 @@ impl DesktopState {
         match runtime_client {
             Ok(client) => {
                 // Use the new agentic loop with real tool execution.
-                let bridge_base_url = format!(
-                    "http://127.0.0.1:4357/api/desktop/code-tools/claude-bridge/{}",
-                    client.provider_id
-                );
+                //
+                // AnthropicCompat providers (e.g. ClawWiki Cloud, direct
+                // Anthropic API key) speak native Anthropic Messages API,
+                // so the agentic loop calls the gateway directly. The
+                // code-tools bridge was removed in S0.4 — the codex_broker
+                // handles Codex pool routing separately.
+                let bridge_base_url = client.base_url.clone();
+                let model_override = client
+                    .default_model
+                    .clone()
+                    .unwrap_or_else(|| "default".to_string());
                 let tool_specs = tools::mvp_tool_specs();
                 let project_path_buf = PathBuf::from(&project_path);
                 let claude_md_discovery =
@@ -3056,7 +3065,7 @@ impl DesktopState {
                 let config = agentic_loop::AgenticLoopConfig {
                     bridge_base_url,
                     bearer_token: client.bearer_token,
-                    model: "default".to_string(),
+                    model: model_override,
                     project_path: project_path_buf,
                     system_prompt: Some(system_prompt_text),
                     bypass_permissions,
@@ -4686,9 +4695,79 @@ async fn resolve_runtime_credentials(
         return Ok(client);
     }
 
+    // 4. .claw/providers.json — user-configured providers from the
+    //    settings UI. For Anthropic-compatible gateways (e.g. ClawWiki
+    //    Cloud / claude-wiki-api) the agentic loop can call the gateway
+    //    directly since it already speaks native Anthropic Messages API.
+    //
+    //    The providers_config module was removed in S0.4 (codex_broker
+    //    owns this surface now), but we still support the on-disk JSON
+    //    file as a lightweight local-dev override. Parse it inline.
+    //
+    //    Try project_path first, then fall back to cwd. The settings UI
+    //    saves providers.json relative to cwd (desktop-server's working
+    //    directory), but session metadata may carry a different
+    //    project_path (e.g. the hardcoded DEFAULT_PROJECT_PATH).
+    let search_roots: Vec<PathBuf> = {
+        let mut roots = vec![project_path.to_path_buf()];
+        if let Ok(cwd) = std::env::current_dir() {
+            if cwd != project_path {
+                roots.push(cwd);
+            }
+        }
+        roots
+    };
+    for root in &search_roots {
+        let providers_path = root.join(".claw").join("providers.json");
+        if !providers_path.is_file() {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&providers_path) else { continue };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+        let active_id = parsed.get("active").and_then(|v| v.as_str()).unwrap_or("");
+        if active_id.is_empty() {
+            continue;
+        }
+        let Some(entry) = parsed
+            .get("providers")
+            .and_then(|p| p.get(active_id))
+        else {
+            continue;
+        };
+        let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let api_key = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+        if api_key.trim().is_empty() || kind != "anthropic" {
+            continue;
+        }
+        let base_url = entry
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("https://api.anthropic.com")
+            .to_string();
+        let model = entry
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("claude-sonnet-4-5")
+            .to_string();
+        eprintln!(
+            "[providers] resolved from {}/.claw/providers.json: \
+             active={active_id:?} kind={kind:?} base_url={base_url:?} model={model:?}",
+            root.display(),
+        );
+        return Ok(DesktopManagedAuthRuntimeClient {
+            provider_id: format!("providers-json:{active_id}"),
+            provider_kind: DesktopManagedAuthProviderKind::AnthropicCompat,
+            base_url,
+            bearer_token: api_key.to_string(),
+            extra_headers: HashMap::new(),
+            default_model: Some(model),
+        });
+    }
+
     Err(DesktopStateError::ProviderNotFound(
         "no credentials available — set ANTHROPIC_API_KEY env var, add \
-         direct_api_key to .claude/settings.json, or run codex/qwen login"
+         direct_api_key to .claude/settings.json, configure a provider in \
+         Settings, or run codex/qwen login"
             .into(),
     ))
 }
@@ -4698,18 +4777,105 @@ async fn resolve_runtime_credentials(
 fn direct_anthropic_client(api_key: String) -> DesktopManagedAuthRuntimeClient {
     DesktopManagedAuthRuntimeClient {
         provider_id: "direct-anthropic".to_string(),
-        provider_kind: DesktopManagedAuthProviderKind::CodexOpenai, // closest enum variant; doesn't matter at runtime
+        provider_kind: DesktopManagedAuthProviderKind::AnthropicCompat,
         base_url: "https://api.anthropic.com".to_string(),
         bearer_token: api_key,
         extra_headers: HashMap::new(),
+        default_model: None,
     }
 }
 
-// S0.4 cut day: `build_provider_client_from_entry` + `ProviderProbeResult`
-// + `probe_provider_entry` were removed along with `providers_config`.
-// They were the runtime glue for the Phase 3-5 multi-provider registry
-// (`.claw/providers.json`). ClawWiki canonical §11.1 cut #6 — users no
-// longer pick a provider; the S2 codex_broker will own this surface.
+/// Construct a `ProviderClient` directly from a [`providers_config::ProviderEntry`].
+fn build_provider_client_from_entry(
+    entry: &providers_config::ProviderEntry,
+) -> Result<ProviderClient, String> {
+    use providers_config::ProviderKind as CfgKind;
+    match entry.kind {
+        CfgKind::Anthropic => {
+            if entry.api_key.trim().is_empty() {
+                return Err("anthropic provider has empty api_key".to_string());
+            }
+            let mut client = AnthropicClient::from_auth(AuthSource::ApiKey(
+                entry.api_key.clone(),
+            ));
+            let configured_base = entry.effective_base_url();
+            if !configured_base.is_empty() {
+                client = client.with_base_url(configured_base);
+            }
+            Ok(ProviderClient::Anthropic(client))
+        }
+        CfgKind::OpenAiCompat => {
+            let base_url = entry.effective_base_url();
+            if base_url.is_empty() {
+                return Err("openai_compat provider has empty base_url".to_string());
+            }
+            if entry.api_key.trim().is_empty() {
+                return Err("openai_compat provider has empty api_key".to_string());
+            }
+            let client = OpenAiCompatClient::new(
+                entry.api_key.clone(),
+                OpenAiCompatConfig::openai(),
+            )
+            .with_base_url(base_url);
+            Ok(ProviderClient::OpenAi(client))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderProbeResult {
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    pub model_echo: Option<String>,
+}
+
+pub async fn probe_provider_entry(
+    entry: &providers_config::ProviderEntry,
+) -> ProviderProbeResult {
+    let started = std::time::Instant::now();
+    let client = match build_provider_client_from_entry(entry) {
+        Ok(c) => c,
+        Err(err) => {
+            return ProviderProbeResult {
+                ok: false,
+                latency_ms: started.elapsed().as_millis() as u64,
+                error: Some(err),
+                model_echo: None,
+            };
+        }
+    };
+    let request = MessageRequest {
+        model: entry.model.clone(),
+        max_tokens: 8,
+        messages: vec![InputMessage::user_text("ping")],
+        system: None,
+        tools: None,
+        tool_choice: None,
+        stream: false,
+    };
+    let send_fut = client.send_message(&request);
+    match tokio::time::timeout(std::time::Duration::from_secs(60), send_fut).await {
+        Ok(Ok(response)) => ProviderProbeResult {
+            ok: true,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: None,
+            model_echo: Some(response.model),
+        },
+        Ok(Err(err)) => ProviderProbeResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: Some(err.to_string()),
+            model_echo: None,
+        },
+        Err(_) => ProviderProbeResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: Some("request timed out after 60s".to_string()),
+            model_echo: None,
+        },
+    }
+}
 
 /// Resolve the default project path that newly-created WeChat sessions
 /// should be associated with. Precedence:

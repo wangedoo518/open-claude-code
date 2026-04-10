@@ -351,3 +351,131 @@ export async function deleteWeChatAccount(
     { method: "DELETE" }
   );
 }
+
+// ── Multi-provider registry (restored for ClawWiki Cloud gateway) ──
+
+export type ProviderKind = "anthropic" | "openai_compat";
+
+export interface DesktopProviderSummary {
+  id: string;
+  kind: ProviderKind;
+  display_name: string | null;
+  base_url: string;
+  api_key_display: string;
+  api_key_length: number;
+  model: string;
+  max_tokens: number;
+}
+
+export interface DesktopProvidersListResponse {
+  version: number;
+  active: string;
+  providers: DesktopProviderSummary[];
+}
+
+export interface UpsertProviderRequest {
+  id: string;
+  project_path?: string;
+  entry: {
+    kind: ProviderKind;
+    display_name?: string;
+    base_url?: string;
+    api_key: string;
+    model: string;
+    max_tokens?: number;
+  };
+}
+
+export interface UpsertProviderResponse {
+  ok: boolean;
+  id: string;
+  active: string;
+  entry: DesktopProviderSummary;
+}
+
+export interface DesktopProviderTemplate {
+  id: string;
+  display_name: string;
+  kind: ProviderKind;
+  base_url: string;
+  default_model: string;
+  max_tokens: number;
+  description: string;
+  api_key_url: string;
+}
+
+export interface DesktopProviderTemplatesResponse {
+  templates: DesktopProviderTemplate[];
+}
+
+export async function listProviders(
+  projectPath?: string
+): Promise<DesktopProvidersListResponse> {
+  const query = projectPath
+    ? `?project_path=${encodeURIComponent(projectPath)}`
+    : "";
+  return fetchJson<DesktopProvidersListResponse>(
+    `/api/desktop/providers${query}`
+  );
+}
+
+export async function listProviderTemplates(): Promise<DesktopProviderTemplatesResponse> {
+  return fetchJson<DesktopProviderTemplatesResponse>(
+    "/api/desktop/providers/templates"
+  );
+}
+
+export async function upsertProvider(
+  request: UpsertProviderRequest
+): Promise<UpsertProviderResponse> {
+  return fetchJson<UpsertProviderResponse>("/api/desktop/providers", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function deleteProvider(
+  id: string,
+  projectPath?: string
+): Promise<{ deleted: boolean; id: string; active: string }> {
+  const query = projectPath
+    ? `?project_path=${encodeURIComponent(projectPath)}`
+    : "";
+  return fetchJson<{ deleted: boolean; id: string; active: string }>(
+    `/api/desktop/providers/${encodeURIComponent(id)}${query}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function activateProvider(
+  id: string,
+  projectPath?: string
+): Promise<{ ok: boolean; active: string }> {
+  const query = projectPath
+    ? `?project_path=${encodeURIComponent(projectPath)}`
+    : "";
+  return fetchJson<{ ok: boolean; active: string }>(
+    `/api/desktop/providers/${encodeURIComponent(id)}/activate${query}`,
+    { method: "POST" }
+  );
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  latency_ms: number;
+  error?: string | null;
+  model_echo?: string | null;
+}
+
+export async function testProvider(
+  id: string,
+  projectPath?: string
+): Promise<ProviderTestResult> {
+  const query = projectPath
+    ? `?project_path=${encodeURIComponent(projectPath)}`
+    : "";
+  return fetchJson<ProviderTestResult>(
+    `/api/desktop/providers/${encodeURIComponent(id)}/test${query}`,
+    { method: "POST" }
+  );
+}

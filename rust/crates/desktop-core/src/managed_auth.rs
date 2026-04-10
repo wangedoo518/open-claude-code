@@ -47,6 +47,11 @@ static QWEN_LOGIN_SESSIONS: LazyLock<Mutex<HashMap<String, Arc<QwenLoginSessionR
 pub enum DesktopManagedAuthProviderKind {
     CodexOpenai,
     QwenCode,
+    /// Anthropic-compatible gateway (e.g. ClawWiki Cloud / claude-wiki-api).
+    /// Requests are forwarded as-is in native Anthropic Messages API format
+    /// — no OpenAI translation layer is needed. The agentic loop bypasses
+    /// the code-tools bridge and calls the gateway URL directly.
+    AnthropicCompat,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -91,6 +96,10 @@ pub struct DesktopManagedAuthRuntimeClient {
     pub base_url: String,
     pub bearer_token: String,
     pub extra_headers: HashMap<String, String>,
+    /// Model override for providers resolved from `.claw/providers.json`.
+    /// When set, the agentic loop uses this instead of the default `"default"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -500,6 +509,7 @@ pub(crate) fn runtime_client(provider_id: &str) -> Result<DesktopManagedAuthRunt
                 base_url: "https://chatgpt.com/backend-api/codex".to_string(),
                 bearer_token: tokens.access_token,
                 extra_headers: HashMap::new(),
+                default_model: None,
             })
         }
         QWEN_CODE_AUTH_PROVIDER_ID => {
@@ -520,6 +530,7 @@ pub(crate) fn runtime_client(provider_id: &str) -> Result<DesktopManagedAuthRunt
                 base_url: normalized_qwen_runtime_base_url(profile.resource_url.as_deref()),
                 bearer_token: profile.access_token,
                 extra_headers,
+                default_model: None,
             })
         }
         _ => Err(format!("Unsupported managed auth provider: {provider_id}")),
