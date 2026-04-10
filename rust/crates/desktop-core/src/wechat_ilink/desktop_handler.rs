@@ -522,18 +522,97 @@ fn ingest_wechat_text_to_wiki(
     from_user_id: &str,
     user_text: &str,
 ) {
-    // Title slot is slugified by `write_raw_entry` — the value here is
-    // eventually passed through `slugify("WeChat · ab12cd")` and ends
-    // up as `wechat-ab12cd` in the filename. The local name matches
-    // that reality so future readers don't trip over the pre-slug
-    // value carrying punctuation.
-    let raw_slug_seed = format!("WeChat · {}", short_openid(from_user_id));
-    let frontmatter = wiki_store::RawFrontmatter::for_paste("wechat-text", None);
+    // URL auto-detect: if the entire message (trimmed) looks like an
+    // HTTP(S) URL, fetch the page and store the extracted markdown
+    // instead of the bare URL text. This is the primary path for the
+    // canonical §2 user story: user copies an mp.weixin.qq.com link
+    // and pastes it to ClawBot. The extractor (feat H) handles the
+    // HTML → clean markdown conversion including WeChat-specific
+    // selectors.
+    let trimmed = user_text.trim();
+    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+    // Also detect URLs embedded in text (e.g. "看看这个 https://mp.weixin.qq.com/s/xxx")
+    let extracted_url = if is_url {
+        Some(trimmed.to_string())
+    } else {
+        extract_first_url(trimmed)
+    };
+
+    let (source_tag, slug_seed, body, source_url) = if let Some(url) = extracted_url {
+        eprintln!("[wechat agent] detected URL in message, fetching: {url}");
+        // Use tokio runtime to run the async fetch synchronously
+        // (we're already inside spawn_blocking).
+        let rt = tokio::runtime::Handle::try_current();
+        match rt {
+            Ok(handle) => {
+                match std::thread::spawn(move || {
+                    handle.block_on(wiki_ingest::url::fetch_and_body(&url))
+                })
+                .join()
+                {
+                    Ok(Ok(result)) => {
+                        eprintln!(
+                            "[wechat agent] URL fetched OK: title={:?} body_len={}",
+                            result.title,
+                            result.body.len()
+                        );
+                        (
+                            "wechat-url".to_string(),
+                            result.title,
+                            result.body,
+                            result.source_url,
+                        )
+                    }
+                    Ok(Err(fetch_err)) => {
+                        eprintln!(
+                            "[wechat agent] URL fetch failed: {fetch_err}, storing raw text"
+                        );
+                        // Fallback: store the original text with the URL
+                        (
+                            "wechat-text".to_string(),
+                            format!("WeChat · {}", short_openid(from_user_id)),
+                            user_text.to_string(),
+                            None,
+                        )
+                    }
+                    Err(_panic) => {
+                        eprintln!("[wechat agent] URL fetch thread panicked, storing raw text");
+                        (
+                            "wechat-text".to_string(),
+                            format!("WeChat · {}", short_openid(from_user_id)),
+                            user_text.to_string(),
+                            None,
+                        )
+                    }
+                }
+            }
+            Err(_) => {
+                eprintln!("[wechat agent] no tokio runtime for URL fetch, storing raw text");
+                (
+                    "wechat-text".to_string(),
+                    format!("WeChat · {}", short_openid(from_user_id)),
+                    user_text.to_string(),
+                    None,
+                )
+            }
+        }
+    } else {
+        // Plain text message — store as-is.
+        (
+            "wechat-text".to_string(),
+            format!("WeChat · {}", short_openid(from_user_id)),
+            user_text.to_string(),
+            None,
+        )
+    };
+
+    let frontmatter =
+        wiki_store::RawFrontmatter::for_paste(&source_tag, source_url);
     let entry = match wiki_store::write_raw_entry(
         paths,
-        "wechat-text",
-        &raw_slug_seed,
-        user_text,
+        &source_tag,
+        &slug_seed,
+        &body,
         &frontmatter,
     ) {
         Ok(entry) => entry,
@@ -546,8 +625,6 @@ fn ingest_wechat_text_to_wiki(
         }
     };
 
-    // Formatting lives in `wiki_store::append_new_raw_task` so the
-    // HTTP path and this WeChat path stay consistent. Review nit #15.
     let origin = format!("WeChat user `{}`", short_openid(from_user_id));
     if let Err(err) = wiki_store::append_new_raw_task(paths, &entry, &origin) {
         eprintln!("[wechat agent] raw written but inbox append failed: {err}");
@@ -556,6 +633,22 @@ fn ingest_wechat_text_to_wiki(
         "[wechat agent] wrote raw entry #{:05} ({})",
         entry.id, entry.filename
     );
+}
+
+/// Extract the first HTTP(S) URL from a text that may contain other
+/// content (e.g. "看看这个 https://mp.weixin.qq.com/s/xxx 很有意思").
+fn extract_first_url(text: &str) -> Option<String> {
+    for word in text.split_whitespace() {
+        if word.starts_with("http://") || word.starts_with("https://") {
+            // Trim trailing Chinese punctuation that often gets attached
+            let url = word
+                .trim_end_matches(|c: char| {
+                    matches!(c, '。' | '，' | '！' | '？' | '；' | '、' | '\u{201c}' | '\u{201d}' | ')' | '）')
+                });
+            return Some(url.to_string());
+        }
+    }
+    None
 }
 
 /// Trim a long openid down to a recognizable suffix for use in session titles.

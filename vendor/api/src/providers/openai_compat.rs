@@ -190,12 +190,27 @@ impl OpenAiCompatClient {
         &self,
         request: &MessageRequest,
     ) -> Result<reqwest::Response, ApiError> {
+        // For non-OpenAI providers (Kimi, DeepSeek, etc.), strip tools
+        // from the request to avoid 400 errors from incompatible tool
+        // schema formats. The `base_url` check is a heuristic: if it's
+        // not api.openai.com, it's likely a third-party provider that
+        // may not support the full OpenAI function-calling spec.
+        let effective_request = if !self.base_url.contains("api.openai.com")
+            && request.tools.is_some()
+        {
+            let mut r = request.clone();
+            r.tools = None;
+            r.tool_choice = None;
+            r
+        } else {
+            request.clone()
+        };
         let request_url = chat_completions_endpoint(&self.base_url);
         self.http
             .post(&request_url)
             .header("content-type", "application/json")
             .bearer_auth(&self.api_key)
-            .json(&build_chat_completion_request(request, self.config()))
+            .json(&build_chat_completion_request(&effective_request, self.config()))
             .send()
             .await
             .map_err(ApiError::from)

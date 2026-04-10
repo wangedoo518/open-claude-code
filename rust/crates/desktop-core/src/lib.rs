@@ -78,7 +78,31 @@ pub type SessionId = String;
 
 const BROADCAST_CAPACITY: usize = 64;
 const DEFAULT_PROJECT_NAME: &str = "Warwolf";
-const DEFAULT_PROJECT_PATH: &str = "/Users/champion/Documents/develop/Warwolf/open-claude-code";
+/// Fallback project path (compile-time constant, ONLY used when
+/// `default_project_path()` can't resolve the CWD — should never
+/// happen in practice).
+const DEFAULT_PROJECT_PATH_FALLBACK: &str = ".";
+
+/// Runtime-resolved default project path. Uses `OnceLock` so the
+/// current working directory is captured ONCE at first access and
+/// reused for the lifetime of the process. This works on both
+/// Windows (`D:\Users\111\...`) and Mac (`/Users/xxx/...`).
+///
+/// The original hardcoded Mac path (`/Users/champion/...`) was a
+/// dev artifact that caused "os error 3" on Windows.
+static RESOLVED_DEFAULT_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn default_project_path() -> &'static str {
+    RESOLVED_DEFAULT_PATH.get_or_init(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| DEFAULT_PROJECT_PATH_FALLBACK.to_string())
+    })
+}
+
+/// Compat alias — old code references this as a const str. Now
+/// delegates to `default_project_path()` at runtime.
+const DEFAULT_PROJECT_PATH: &str = DEFAULT_PROJECT_PATH_FALLBACK;
 const DEFAULT_MODEL_ID: &str = "claude-opus-4-6";
 const DEFAULT_MODEL_LABEL: &str = "Opus 4.6";
 const DEFAULT_ENVIRONMENT_LABEL: &str = "Local";
@@ -1590,14 +1614,14 @@ impl DesktopState {
                 .values()
                 .max_by_key(|record| record.metadata.updated_at)
                 .map(|record| record.metadata.project_path.clone())
-                .unwrap_or_else(|| DEFAULT_PROJECT_PATH.to_string())
+                .unwrap_or_else(|| default_project_path().to_string())
         };
 
         tokio::task::spawn_blocking(move || build_customize_state(project_path))
             .await
             .unwrap_or_else(|error| {
                 DesktopCustomizeState::empty_with_warning(
-                    DEFAULT_PROJECT_PATH.to_string(),
+                    default_project_path().to_string(),
                     format!("desktop customize worker crashed: {error}"),
                 )
             })
@@ -1611,14 +1635,14 @@ impl DesktopState {
                 .values()
                 .max_by_key(|record| record.metadata.updated_at)
                 .map(|record| record.metadata.project_path.clone())
-                .unwrap_or_else(|| DEFAULT_PROJECT_PATH.to_string())
+                .unwrap_or_else(|| default_project_path().to_string())
         };
 
         tokio::task::spawn_blocking(move || build_settings_state(project_path))
             .await
             .unwrap_or_else(|error| DesktopSettingsState {
-                project_path: DEFAULT_PROJECT_PATH.to_string(),
-                config_home: ConfigLoader::default_for(DEFAULT_PROJECT_PATH)
+                project_path: default_project_path().to_string(),
+                config_home: ConfigLoader::default_for(default_project_path())
                     .config_home()
                     .display()
                     .to_string(),
@@ -1951,7 +1975,7 @@ impl DesktopState {
                     .project_path
                     .clone()
                     .or_else(|| target_record.map(|record| record.metadata.project_path.clone()))
-                    .unwrap_or_else(|| DEFAULT_PROJECT_PATH.to_string()),
+                    .unwrap_or_else(|| default_project_path().to_string()),
             )
         };
 
@@ -2095,7 +2119,7 @@ impl DesktopState {
                     .project_path
                     .clone()
                     .or_else(|| target_record.map(|record| record.metadata.project_path.clone()))
-                    .unwrap_or_else(|| DEFAULT_PROJECT_PATH.to_string()),
+                    .unwrap_or_else(|| default_project_path().to_string()),
             )
         };
 
@@ -2743,7 +2767,7 @@ impl DesktopState {
             .unwrap_or_else(|| DEFAULT_PROJECT_NAME.to_string());
         let project_path = request
             .project_path
-            .unwrap_or_else(|| DEFAULT_PROJECT_PATH.to_string());
+            .unwrap_or_else(|| default_project_path().to_string());
 
         let record = session_record(SessionMetadata {
             id: session_id.clone(),
@@ -2936,15 +2960,33 @@ impl DesktopState {
         let state = self.clone();
         let turn_executor = Arc::clone(&self.turn_executor);
 
+        // Fix: OpenAiCompat providers (Kimi, DeepSeek, Qwen, etc.) need
+        // the OpenAI ChatCompletions format (/chat/completions), but the
+        // agentic loop only speaks Anthropic Messages API (/v1/messages).
+        // When we detect an OpenAiCompat provider, force the fallback path
+        // (execute_live_turn) which has the providers_override logic that
+        // builds the correct OpenAiCompatClient.
+        let runtime_client = match &runtime_client {
+            Ok(client) if client.provider_kind == DesktopManagedAuthProviderKind::OpenAiCompat => {
+                eprintln!(
+                    "[runtime] OpenAiCompat provider detected ({:?}), \
+                     routing through execute_live_turn for correct /chat/completions path",
+                    client.provider_id,
+                );
+                Err(DesktopStateError::ProviderNotFound(
+                    "openai_compat routed to execute_live_turn".into(),
+                ))
+            }
+            other => other.clone(),
+        };
+
         match runtime_client {
             Ok(client) => {
                 // Use the new agentic loop with real tool execution.
                 //
-                // AnthropicCompat providers (e.g. ClawWiki Cloud, direct
-                // Anthropic API key) speak native Anthropic Messages API,
-                // so the agentic loop calls the gateway directly. The
-                // code-tools bridge was removed in S0.4 — the codex_broker
-                // handles Codex pool routing separately.
+                // This path is for AnthropicCompat providers ONLY (e.g.
+                // ClawWiki Cloud, direct Anthropic API key). OpenAiCompat
+                // providers are routed to execute_live_turn above.
                 let bridge_base_url = client.base_url.clone();
                 let model_override = client
                     .default_model
@@ -3437,7 +3479,7 @@ impl DesktopState {
 
     async fn session_context(&self) -> DesktopSessionContext {
         let store = self.store.read().await;
-        let mut trusted_project_paths = BTreeSet::from([DEFAULT_PROJECT_PATH.to_string()]);
+        let mut trusted_project_paths = BTreeSet::from([default_project_path().to_string()]);
         let mut session_titles = HashMap::new();
         for record in store.sessions.values() {
             trusted_project_paths.insert(record.metadata.project_path.clone());
@@ -3456,7 +3498,7 @@ impl DesktopState {
             .values()
             .max_by_key(|record| record.metadata.updated_at)
             .map(|record| record.metadata.project_path.clone())
-            .unwrap_or_else(|| DEFAULT_PROJECT_PATH.to_string())
+            .unwrap_or_else(|| default_project_path().to_string())
     }
 
     async fn run_background_turn(
@@ -3679,7 +3721,7 @@ impl DesktopCustomizeState {
 
 impl DesktopPersistence {
     fn default_path() -> PathBuf {
-        ConfigLoader::default_for(DEFAULT_PROJECT_PATH)
+        ConfigLoader::default_for(default_project_path())
             .config_home()
             .join("desktop")
             .join("sessions.json")
@@ -3709,7 +3751,7 @@ impl DesktopPersistence {
 
 impl DesktopScheduledPersistence {
     fn default_path() -> PathBuf {
-        ConfigLoader::default_for(DEFAULT_PROJECT_PATH)
+        ConfigLoader::default_for(default_project_path())
             .config_home()
             .join("desktop")
             .join("scheduled.json")
@@ -3739,7 +3781,7 @@ impl DesktopScheduledPersistence {
 
 impl DesktopDispatchPersistence {
     fn default_path() -> PathBuf {
-        ConfigLoader::default_for(DEFAULT_PROJECT_PATH)
+        ConfigLoader::default_for(default_project_path())
             .config_home()
             .join("desktop")
             .join("dispatch.json")
@@ -4428,59 +4470,166 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
             }
         };
 
-    // A.2: consult the process-global codex_broker first. If it has a
-    // fresh account, build the ProviderClient directly from the pool's
-    // access token and skip the env-var chain. If the broker isn't
-    // installed (tests) or the pool is empty/exhausted, fall back to
-    // `default_auth_source` which is the pre-A.2 behavior.
+    // ── Credential resolution chain (priority order) ───────────
     //
-    // This is the hinge point where the canonical §9.2 promise "Token
-    // 100% 内部消化" becomes operational. Before this wiring the
-    // pool was cold data; every turn now picks a token out of it and
-    // runs the LLM round-trip through an OpenAiCompat client bound to
-    // that token. The token never leaves the closure that builds the
-    // client — it's cloned once into the `OpenAiCompatClient` and
-    // dropped with the client on turn completion.
-    let (default_auth, client_override) = match codex_broker::global() {
-        Some(broker) => match broker.build_provider_client() {
-            Ok(client) => {
-                eprintln!(
-                    "[runtime] using codex_broker pool for turn (model={resolved_model})"
-                );
-                (None, Some(client))
+    // 1. providers.json active provider (highest — user explicitly
+    //    configured this in Settings > LLM Gateway)
+    // 2. codex_broker pool (Codex subscription accounts)
+    // 3. default_auth_source (env vars, managed auth, etc.)
+    //
+    // providers.json is checked FIRST because when a user configures
+    // Kimi/DeepSeek/Qwen in the LLM Gateway UI, that choice must
+    // override the empty codex_broker pool. Without this ordering,
+    // the broker's "pool empty" error swallows the providers.json
+    // path and the user-configured provider never gets used.
+
+    // Step 1: scan .claw/providers.json for an active provider.
+    // Handles both "anthropic" (native Anthropic Messages API) and
+    // "openai_compat" (OpenAI ChatCompletions — Kimi, DeepSeek, etc.).
+    // Returns (ProviderClient, model_name) so we can override
+    // resolved_model with the provider's configured model.
+    let providers_override: Option<(ProviderClient, String)> = {
+        let mut result: Option<(ProviderClient, String)> = None;
+        let mut roots = vec![cwd.clone()];
+        if let Ok(process_cwd) = std::env::current_dir() {
+            if process_cwd != cwd {
+                roots.push(process_cwd);
             }
-            Err(err) => {
-                eprintln!(
-                    "[runtime] codex_broker has no usable account ({err}); \
-                     falling back to env-var credential chain"
-                );
-                match default_auth_source(&resolved_model, &runtime_config) {
-                    Ok(auth) => (auth, None),
-                    Err(error) => {
-                        return fallback_turn_result(
-                            session,
-                            &request.message,
-                            model_label.clone(),
-                            format!(
-                                "failed to resolve model authentication: {error}"
-                            ),
-                        )
+        }
+        'providers: for root in &roots {
+            let providers_path = root.join(".claw").join("providers.json");
+            let Ok(raw) = fs::read_to_string(&providers_path) else {
+                eprintln!("[runtime:providers] {}: not found, skipping", providers_path.display());
+                continue;
+            };
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                eprintln!("[runtime:providers] {}: parse error, skipping", providers_path.display());
+                continue;
+            };
+            let Some(active_id) = parsed.get("active").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
+                eprintln!("[runtime:providers] {}: no active provider set", providers_path.display());
+                continue;
+            };
+            let Some(entry) = parsed.get("providers").and_then(|p| p.get(active_id)) else {
+                eprintln!("[runtime:providers] active={active_id:?} not found in providers map");
+                continue;
+            };
+            let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let api_key = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+            if api_key.trim().is_empty() {
+                eprintln!("[runtime:providers] active={active_id:?} has empty api_key, skipping");
+                continue;
+            }
+            let base_url = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+            let model = entry.get("model").and_then(|v| v.as_str()).unwrap_or("");
+
+            match kind {
+                "openai_compat" => {
+                    if base_url.is_empty() {
+                        eprintln!("[runtime:providers] active={active_id:?} openai_compat has empty base_url, skipping");
+                        continue;
                     }
+                    eprintln!(
+                        "[runtime:providers] using OpenAiCompat provider {active_id:?} \
+                         base_url={base_url:?} model={model:?}"
+                    );
+                    let oai_client = OpenAiCompatClient::new(
+                        api_key.to_string(),
+                        OpenAiCompatConfig::openai(),
+                    )
+                    .with_base_url(base_url.to_string());
+                    let effective_model = if model.is_empty() { "moonshot-v1-auto".to_string() } else { model.to_string() };
+                    result = Some((ProviderClient::OpenAi(oai_client), effective_model));
+                    break 'providers;
+                }
+                "anthropic" => {
+                    let effective_base = if base_url.is_empty() {
+                        "https://api.anthropic.com"
+                    } else {
+                        base_url
+                    };
+                    eprintln!(
+                        "[runtime:providers] using Anthropic provider {active_id:?} \
+                         base_url={effective_base:?} model={model:?}"
+                    );
+                    let mut client = AnthropicClient::from_auth(
+                        AuthSource::ApiKey(api_key.to_string()),
+                    );
+                    client = client.with_base_url(effective_base.to_string());
+                    let effective_model = if model.is_empty() { "claude-sonnet-4-5".to_string() } else { model.to_string() };
+                    result = Some((ProviderClient::Anthropic(client), effective_model));
+                    break 'providers;
+                }
+                _ => {
+                    eprintln!(
+                        "[runtime:providers] active={active_id:?} unknown kind={kind:?}, skipping"
+                    );
+                    continue;
                 }
             }
-        },
-        None => match default_auth_source(&resolved_model, &runtime_config) {
-            Ok(auth) => (auth, None),
-            Err(error) => {
-                return fallback_turn_result(
-                    session,
-                    &request.message,
-                    model_label.clone(),
-                    format!("failed to resolve model authentication: {error}"),
-                )
-            }
-        },
+        }
+        result
     };
+
+    // Step 2: if providers.json gave us a client, use it directly.
+    // Otherwise fall through to codex_broker and default_auth_source.
+    let (default_auth, client_override, resolved_model) = if let Some((provider_client, provider_model)) = providers_override {
+        eprintln!("[runtime] using providers.json override for this turn (model={provider_model:?})");
+        (None, Some(provider_client), provider_model)
+    } else {
+        // Step 3: codex_broker pool
+        match codex_broker::global() {
+            Some(broker) => match broker.build_provider_client() {
+                Ok(client) => {
+                    eprintln!(
+                        "[runtime] using codex_broker pool for turn (model={resolved_model})"
+                    );
+                    (None, Some(client), resolved_model)
+                }
+                Err(err) => {
+                    eprintln!(
+                        "[runtime] codex_broker has no usable account ({err}); \
+                         falling back to env-var credential chain"
+                    );
+                    match default_auth_source(&resolved_model, &runtime_config) {
+                        Ok(auth) => (auth, None, resolved_model),
+                        Err(error) => {
+                            return fallback_turn_result(
+                                session,
+                                &request.message,
+                                model_label.clone(),
+                                format!(
+                                    "failed to resolve model authentication: {error}"
+                                ),
+                            )
+                        }
+                    }
+                }
+            },
+            None => match default_auth_source(&resolved_model, &runtime_config) {
+                Ok(auth) => (auth, None, resolved_model),
+                Err(error) => {
+                    return fallback_turn_result(
+                        session,
+                        &request.message,
+                        model_label.clone(),
+                        format!("failed to resolve model authentication: {error}"),
+                    )
+                }
+            },
+        }
+    };
+
+    // When using an OpenAI-compat provider (Kimi, DeepSeek, etc.),
+    // strip tools from the request. These providers have varying
+    // degrees of function-calling support, and sending the full
+    // Anthropic tool schema causes 400 errors ("invalid scalar
+    // type"). For MVP the Ask page works as a pure chat surface
+    // without tool use when on OpenAI-compat providers.
+    let is_openai_compat_override = matches!(&client_override, Some(ProviderClient::OpenAi(_)));
+    if is_openai_compat_override {
+        eprintln!("[runtime] OpenAi provider: stripping tools for compatibility");
+    }
 
     let api_client = match DesktopRuntimeClient::new(
         resolved_model.to_string(),
@@ -4736,18 +4885,43 @@ async fn resolve_runtime_credentials(
         };
         let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         let api_key = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
-        if api_key.trim().is_empty() || kind != "anthropic" {
+        if api_key.trim().is_empty() {
             continue;
         }
+        // Support both "anthropic" (native Anthropic Messages API) and
+        // "openai_compat" (OpenAI ChatCompletions API — DeepSeek, Kimi,
+        // Qwen, GLM, xAI, etc.). Each routes to the appropriate client
+        // in the agentic loop via the provider_kind field.
+        let (provider_kind, default_base, default_model_str) = match kind {
+            "anthropic" => (
+                DesktopManagedAuthProviderKind::AnthropicCompat,
+                "https://api.anthropic.com",
+                "claude-sonnet-4-5",
+            ),
+            "openai_compat" => (
+                DesktopManagedAuthProviderKind::OpenAiCompat,
+                "",
+                "moonshot-v1-auto",
+            ),
+            _ => continue,
+        };
         let base_url = entry
             .get("base_url")
             .and_then(|v| v.as_str())
-            .unwrap_or("https://api.anthropic.com")
+            .filter(|s| !s.is_empty())
+            .unwrap_or(default_base)
             .to_string();
+        if base_url.is_empty() {
+            eprintln!(
+                "[providers] skipping {active_id:?}: openai_compat requires base_url"
+            );
+            continue;
+        }
         let model = entry
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or("claude-sonnet-4-5")
+            .filter(|s| !s.is_empty())
+            .unwrap_or(default_model_str)
             .to_string();
         eprintln!(
             "[providers] resolved from {}/.claw/providers.json: \
@@ -4756,7 +4930,7 @@ async fn resolve_runtime_credentials(
         );
         return Ok(DesktopManagedAuthRuntimeClient {
             provider_id: format!("providers-json:{active_id}"),
-            provider_kind: DesktopManagedAuthProviderKind::AnthropicCompat,
+            provider_kind,
             base_url,
             bearer_token: api_key.to_string(),
             extra_headers: HashMap::new(),
@@ -5986,7 +6160,7 @@ fn seeded_record(
             created_at,
             updated_at,
             project_name: DEFAULT_PROJECT_NAME.to_string(),
-            project_path: DEFAULT_PROJECT_PATH.to_string(),
+            project_path: default_project_path().to_string(),
             environment_label: DEFAULT_ENVIRONMENT_LABEL.to_string(),
             model_label: DEFAULT_MODEL_LABEL.to_string(),
             turn_state: DesktopTurnState::Idle,

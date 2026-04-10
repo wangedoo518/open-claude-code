@@ -84,15 +84,107 @@ impl BrokerSender for BrokerAdapter {
         &self,
         request: MessageRequest,
     ) -> wiki_maintainer::Result<MessageResponse> {
-        // Flatten BrokerError into MaintainerError::Broker(String).
-        // We deliberately include the Display form so the maintainer
-        // crate's error messages stay informative without coupling
-        // to `BrokerError`'s variant shape.
-        self.broker
-            .chat_completion(request)
-            .await
-            .map_err(|e| MaintainerError::Broker(e.to_string()))
+        // Try the codex_broker pool first.
+        match self.broker.chat_completion(request.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(broker_err) => {
+                eprintln!(
+                    "[maintainer-adapter] codex_broker failed: {broker_err}, \
+                     trying providers.json fallback"
+                );
+            }
+        }
+
+        // Fallback: try .claw/providers.json active provider.
+        // This lets "Maintain this" work with Kimi/DeepSeek/etc.
+        // when no Codex account is available.
+        let provider_result = try_providers_json_chat_completion(&request).await;
+        match provider_result {
+            Some(Ok(resp)) => Ok(resp),
+            Some(Err(api_err)) => {
+                Err(MaintainerError::Broker(format!(
+                    "providers.json fallback failed: {api_err}"
+                )))
+            }
+            None => {
+                Err(MaintainerError::Broker(
+                    "no codex account available and no providers.json fallback found".to_string(),
+                ))
+            }
+        }
     }
+}
+
+/// Try to use the active provider from .claw/providers.json to run
+/// a chat_completion. Returns None if no providers.json or no active
+/// provider found. Returns Some(result) if a provider was found and
+/// the request was attempted.
+async fn try_providers_json_chat_completion(
+    request: &MessageRequest,
+) -> Option<Result<MessageResponse, api::ApiError>> {
+    use api::{AnthropicClient, AuthSource, OpenAiCompatClient, OpenAiCompatConfig};
+
+    let mut roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+
+    for root in &roots {
+        let path = root.join(".claw").join("providers.json");
+        let Ok(raw) = std::fs::read_to_string(&path) else { continue };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+        let Some(active_id) = parsed.get("active").and_then(|v| v.as_str()) else { continue };
+        let Some(entry) = parsed.get("providers").and_then(|p| p.get(active_id)) else { continue };
+        let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let api_key = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+        if api_key.trim().is_empty() { continue }
+        let base_url = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+        let model = entry.get("model").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Override the model in the request to match the provider's model.
+        let mut req = request.clone();
+        if !model.is_empty() {
+            req.model = model.to_string();
+        }
+        // Strip tools for non-OpenAI providers (same fix as openai_compat.rs).
+        if !base_url.contains("api.openai.com") {
+            req.tools = None;
+            req.tool_choice = None;
+        }
+
+        match kind {
+            "openai_compat" if !base_url.is_empty() => {
+                eprintln!(
+                    "[maintainer-adapter] using providers.json OpenAiCompat \
+                     {active_id:?} base_url={base_url:?} model={model:?}"
+                );
+                let client = OpenAiCompatClient::new(
+                    api_key.to_string(),
+                    OpenAiCompatConfig::openai(),
+                )
+                .with_base_url(base_url.to_string());
+                return Some(client.send_message(&req).await);
+            }
+            "anthropic" => {
+                let effective_base = if base_url.is_empty() {
+                    "https://api.anthropic.com"
+                } else {
+                    base_url
+                };
+                eprintln!(
+                    "[maintainer-adapter] using providers.json Anthropic \
+                     {active_id:?} base_url={effective_base:?} model={model:?}"
+                );
+                let client = AnthropicClient::from_auth(
+                    AuthSource::ApiKey(api_key.to_string()),
+                )
+                .with_base_url(effective_base.to_string());
+                return Some(client.send_message(&req).await);
+            }
+            _ => continue,
+        }
+    }
+    None
 }
 
 #[cfg(test)]

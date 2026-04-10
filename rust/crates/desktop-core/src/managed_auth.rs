@@ -52,6 +52,11 @@ pub enum DesktopManagedAuthProviderKind {
     /// — no OpenAI translation layer is needed. The agentic loop bypasses
     /// the code-tools bridge and calls the gateway URL directly.
     AnthropicCompat,
+    /// OpenAI-compatible gateway (DeepSeek, Kimi/Moonshot, Qwen via
+    /// DashScope, GLM/Zhipu, xAI/Grok, etc.). Requests use the OpenAI
+    /// ChatCompletions format. The agentic loop routes these through the
+    /// OpenAiCompat client path.
+    OpenAiCompat,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

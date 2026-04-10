@@ -443,6 +443,7 @@ dependencies = [
  "tools",
  "url",
  "uuid",
+ "wiki_ingest",
  "wiki_maintainer",
  "wiki_store",
 ]
