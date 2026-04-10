@@ -4354,7 +4354,7 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
     let resolved_model =
         resolve_model_alias(runtime_config.model().unwrap_or(DEFAULT_MODEL_ID));
     let model_label = humanize_model_label(&resolved_model);
-    let system_prompt = match load_system_prompt(
+    let mut system_prompt = match load_system_prompt(
         &cwd,
         current_date_string(),
         env::consts::OS,
@@ -4370,6 +4370,41 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
             )
         }
     };
+
+    // feat(W9): inject wiki/index.md as context into the system prompt
+    // so the LLM can reference the user's external brain when answering
+    // questions. This is Karpathy llm-wiki.md §"Query": "the LLM reads
+    // the index first to find relevant pages, then drills into them".
+    //
+    // Injection is best-effort: if the wiki root doesn't exist or
+    // index.md hasn't been built yet, we silently skip. The system
+    // prompt already works without the wiki section — this just makes
+    // it richer when the user has accumulated knowledge.
+    //
+    // `system_prompt` is a `Vec<String>` — each entry becomes a
+    // separate system-prompt block. We push one block with the
+    // wiki index so it doesn't interleave with existing entries.
+    {
+        let wiki_root = wiki_store::default_root();
+        let index_path = wiki_root.join("wiki").join("index.md");
+        if let Ok(index_content) = fs::read_to_string(&index_path) {
+            let trimmed = index_content.trim();
+            if !trimmed.is_empty() {
+                let mut section = String::new();
+                section.push_str("## Your External Brain (ClawWiki)\n\n");
+                section.push_str(
+                    "The user has a personal wiki — their \"external brain\" — at ~/.clawwiki/. \
+                     Below is the current index of their knowledge base. When answering questions, \
+                     consider whether the user's wiki contains relevant concept pages. Reference \
+                     them by slug when appropriate.\n\n",
+                );
+                section.push_str("<wiki-index>\n");
+                section.push_str(trimmed);
+                section.push_str("\n</wiki-index>");
+                system_prompt.push(section);
+            }
+        }
+    }
 
     let (feature_config, tool_registry) =
         match build_runtime_plugin_state(&cwd, &loader, &runtime_config) {
