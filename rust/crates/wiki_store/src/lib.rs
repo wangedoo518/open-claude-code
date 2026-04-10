@@ -168,6 +168,21 @@ pub const DEFAULT_DIRNAME: &str = ".clawwiki";
 /// to avoid escaping a 60-line markdown blob inside Rust source).
 const CLAUDE_MD_TEMPLATE: &str = include_str!("../templates/CLAUDE.md");
 
+/// Embedded AGENTS.md template (canonical §10 schema layer).
+const AGENTS_MD_TEMPLATE: &str = include_str!("../templates/AGENTS.md");
+
+/// Page templates for each wiki category.
+const TEMPLATE_CONCEPT: &str = include_str!("../templates/templates/concept.md");
+const TEMPLATE_PEOPLE: &str = include_str!("../templates/templates/people.md");
+const TEMPLATE_TOPIC: &str = include_str!("../templates/templates/topic.md");
+const TEMPLATE_COMPARE: &str = include_str!("../templates/templates/compare.md");
+
+/// Policy files governing maintainer behavior.
+const POLICY_MAINTENANCE: &str = include_str!("../templates/policies/maintenance.md");
+const POLICY_CONFLICT: &str = include_str!("../templates/policies/conflict.md");
+const POLICY_DEPRECATION: &str = include_str!("../templates/policies/deprecation.md");
+const POLICY_NAMING: &str = include_str!("../templates/policies/naming.md");
+
 /// Errors raised by `wiki_store` filesystem operations.
 #[derive(Debug, thiserror::Error)]
 pub enum WikiStoreError {
@@ -347,6 +362,45 @@ pub fn init_wiki(root: &Path) -> Result<()> {
     if !paths.schema_claude_md.exists() {
         fs::write(&paths.schema_claude_md, CLAUDE_MD_TEMPLATE)
             .map_err(|e| WikiStoreError::io(paths.schema_claude_md.clone(), e))?;
+    }
+
+    // Seed AGENTS.md only if absent (same contract as CLAUDE.md).
+    let agents_md_path = paths.schema.join("AGENTS.md");
+    if !agents_md_path.exists() {
+        fs::write(&agents_md_path, AGENTS_MD_TEMPLATE)
+            .map_err(|e| WikiStoreError::io(agents_md_path.clone(), e))?;
+    }
+
+    // Seed schema/templates/ directory with page templates.
+    let templates_dir = paths.schema.join("templates");
+    fs::create_dir_all(&templates_dir)
+        .map_err(|e| WikiStoreError::io(templates_dir.clone(), e))?;
+    for (name, content) in [
+        ("concept.md", TEMPLATE_CONCEPT),
+        ("people.md", TEMPLATE_PEOPLE),
+        ("topic.md", TEMPLATE_TOPIC),
+        ("compare.md", TEMPLATE_COMPARE),
+    ] {
+        let file = templates_dir.join(name);
+        if !file.exists() {
+            fs::write(&file, content).map_err(|e| WikiStoreError::io(file.clone(), e))?;
+        }
+    }
+
+    // Seed schema/policies/ directory with governance rules.
+    let policies_dir = paths.schema.join("policies");
+    fs::create_dir_all(&policies_dir)
+        .map_err(|e| WikiStoreError::io(policies_dir.clone(), e))?;
+    for (name, content) in [
+        ("maintenance.md", POLICY_MAINTENANCE),
+        ("conflict.md", POLICY_CONFLICT),
+        ("deprecation.md", POLICY_DEPRECATION),
+        ("naming.md", POLICY_NAMING),
+    ] {
+        let file = policies_dir.join(name);
+        if !file.exists() {
+            fs::write(&file, content).map_err(|e| WikiStoreError::io(file.clone(), e))?;
+        }
     }
 
     // Seed .gitignore only if absent.
@@ -3092,6 +3146,57 @@ mod tests {
         // Falls back to slug as title; no " — summary" suffix.
         assert!(content.contains("- [bare-page](concepts/bare-page.md)\n"));
         assert!(!content.contains("bare-page.md — "));
+    }
+
+    // ── Schema seed tests ──────────────────────────────────────
+
+    #[test]
+    fn init_wiki_seeds_agents_md() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let agents = tmp.path().join(SCHEMA_DIR).join("AGENTS.md");
+        assert!(agents.is_file());
+        let content = fs::read_to_string(&agents).unwrap();
+        assert!(content.contains("wiki-maintainer"));
+        assert!(content.contains("ask-runtime"));
+    }
+
+    #[test]
+    fn init_wiki_seeds_page_templates() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let tpl_dir = tmp.path().join(SCHEMA_DIR).join("templates");
+        assert!(tpl_dir.join("concept.md").is_file());
+        assert!(tpl_dir.join("people.md").is_file());
+        assert!(tpl_dir.join("topic.md").is_file());
+        assert!(tpl_dir.join("compare.md").is_file());
+    }
+
+    #[test]
+    fn init_wiki_seeds_policy_files() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let pol_dir = tmp.path().join(SCHEMA_DIR).join("policies");
+        assert!(pol_dir.join("maintenance.md").is_file());
+        assert!(pol_dir.join("conflict.md").is_file());
+        assert!(pol_dir.join("deprecation.md").is_file());
+        assert!(pol_dir.join("naming.md").is_file());
+        // Verify content is meaningful
+        let naming = fs::read_to_string(pol_dir.join("naming.md")).unwrap();
+        assert!(naming.contains("Lowercase ASCII"));
+    }
+
+    #[test]
+    fn init_wiki_preserves_user_edited_agents_md() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let agents = tmp.path().join(SCHEMA_DIR).join("AGENTS.md");
+        let custom = "# Custom agents\n\nMy rules.\n";
+        fs::write(&agents, custom).unwrap();
+        // Re-running init_wiki must not clobber the user's edits.
+        init_wiki(tmp.path()).unwrap();
+        let after = fs::read_to_string(&agents).unwrap();
+        assert_eq!(after, custom, "AGENTS.md was overwritten");
     }
 
     // ── W multi-category wiki tests ──────────────────────────────
