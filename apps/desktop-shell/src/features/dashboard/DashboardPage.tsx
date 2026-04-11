@@ -131,7 +131,7 @@ export function DashboardPage() {
         <StatCard
           icon={Brain}
           label="已维护页面"
-          value={wikiQuery.isLoading ? "…" : String(wikiQuery.data?.pages?.length ?? 0)}
+          value={wikiQuery.isLoading ? "…" : String(Array.isArray(wikiQuery.data?.pages) ? wikiQuery.data.pages.length : 0)}
           hint={wikiQuery.error ? "加载失败" : `知识页面`}
           tint={wikiQuery.error ? "var(--color-error)" : "var(--deeptutor-purple, var(--agent-purple))"}
           link="/wiki"

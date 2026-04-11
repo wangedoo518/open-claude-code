@@ -649,30 +649,52 @@ fn extract_first_url(text: &str) -> Option<String> {
 }
 
 /// Truncate a URL string at the first non-URL character.
-/// Keeps ASCII letters, digits, and common URL punctuation (-._~:/?#[]@!$&'()*+,;=%);
-/// stops at CJK characters, Chinese punctuation, or any other non-ASCII char
-/// that isn't part of a percent-encoded sequence.
+///
+/// Strategy: scan forward byte-by-byte. All valid URL characters are ASCII
+/// (RFC 3986 §2). Non-ASCII bytes indicate either:
+///   1. A percent-encoded sequence like `%E4%B8%AD` — valid, skip 3 bytes
+///   2. Raw UTF-8 bytes (CJK text appended to URL) — truncate here
+///
+/// We distinguish by looking for `%XX` patterns where X is a hex digit.
 fn truncate_url(raw: &str) -> &str {
     let bytes = raw.as_bytes();
-    let mut end = bytes.len();
-    for (i, &b) in bytes.iter().enumerate() {
-        // ASCII chars valid in URLs — keep going
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+
+        if b == b'%' {
+            // Possible percent-encoding: need exactly 2 hex digits after %
+            if i + 2 < len
+                && is_hex_digit(bytes[i + 1])
+                && is_hex_digit(bytes[i + 2])
+            {
+                i += 3; // skip %XX
+                continue;
+            }
+            // Incomplete or invalid percent-encoding — truncate here
+            break;
+        }
+
         if b.is_ascii() {
+            i += 1;
             continue;
         }
-        // Check if this is a percent-encoded sequence (%XX)
-        // Non-ASCII byte that isn't part of valid URL → truncate here
-        // But first, check if we're in a %-encoded sequence
-        if i >= 2 && bytes[i - 2] == b'%' {
-            continue; // part of %XX encoding
-        }
-        // Non-ASCII char (CJK, Chinese punctuation, etc.) → stop
-        end = i;
+
+        // Non-ASCII byte that isn't part of %XX — this is raw UTF-8
+        // (e.g., Chinese characters appended to URL). Truncate here.
         break;
     }
-    // Also trim common trailing ASCII punctuation that gets attached
-    let s = &raw[..end];
+
+    let s = &raw[..i];
+    // Trim trailing ASCII punctuation that may have been attached
     s.trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | ';' | '!' | '?'))
+}
+
+#[inline]
+fn is_hex_digit(b: u8) -> bool {
+    b.is_ascii_hexdigit()
 }
 
 /// Trim a long openid down to a recognizable suffix for use in session titles.
@@ -723,5 +745,85 @@ mod tests {
     #[test]
     fn truncate_for_log_preserves_short() {
         assert_eq!(truncate_for_log("hi"), "hi");
+    }
+
+    // ── truncate_url tests ────────────────────────────────────────
+
+    #[test]
+    fn truncate_url_pure_ascii() {
+        assert_eq!(
+            truncate_url("https://example.com/path?q=1&r=2#frag"),
+            "https://example.com/path?q=1&r=2#frag"
+        );
+    }
+
+    #[test]
+    fn truncate_url_strips_chinese_suffix() {
+        assert_eq!(
+            truncate_url("https://mp.weixin.qq.com/s/abc123入库"),
+            "https://mp.weixin.qq.com/s/abc123"
+        );
+    }
+
+    #[test]
+    fn truncate_url_keeps_percent_encoded_utf8() {
+        assert_eq!(
+            truncate_url("https://example.com/%E4%B8%AD%E6%96%87"),
+            "https://example.com/%E4%B8%AD%E6%96%87"
+        );
+    }
+
+    #[test]
+    fn truncate_url_stops_at_incomplete_percent() {
+        // % is invalid encoding → truncated before %, leaving trailing /
+        assert_eq!(
+            truncate_url("https://example.com/%"),
+            "https://example.com/"
+        );
+    }
+
+    #[test]
+    fn truncate_url_stops_at_invalid_hex() {
+        // %ZZ is not valid hex → truncated before %
+        assert_eq!(
+            truncate_url("https://example.com/%ZZ"),
+            "https://example.com/"
+        );
+    }
+
+    #[test]
+    fn truncate_url_empty() {
+        assert_eq!(truncate_url(""), "");
+    }
+
+    #[test]
+    fn truncate_url_trims_trailing_punctuation() {
+        assert_eq!(
+            truncate_url("https://example.com."),
+            "https://example.com"
+        );
+    }
+
+    // ── extract_first_url tests ───────────────────────────────────
+
+    #[test]
+    fn extract_url_from_mixed_text() {
+        assert_eq!(
+            extract_first_url("看看这个 https://mp.weixin.qq.com/s/abc 很好"),
+            Some("https://mp.weixin.qq.com/s/abc".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_url_strips_chinese_tail() {
+        assert_eq!(
+            extract_first_url("https://example.com/path入库"),
+            Some("https://example.com/path".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_url_returns_none_for_no_url() {
+        assert_eq!(extract_first_url("没有链接"), None);
     }
 }

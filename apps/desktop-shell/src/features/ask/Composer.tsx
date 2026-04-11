@@ -196,6 +196,12 @@ export function Composer({
   const [isUploading, setIsUploading] = useState(false);
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = inputRef ?? internalRef;
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const permMenuRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -256,6 +262,8 @@ export function Composer({
         errors.push(`${file.name}: ${msg}`);
       }
     }
+
+    if (!mountedRef.current) return; // Component unmounted during upload
 
     if (errors.length > 0) {
       const preview = errors.slice(0, 2).join("; ");

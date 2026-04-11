@@ -266,7 +266,7 @@ export function ForceGraph({ graphData, rawEntries, onClickConcept, onClickRaw }
       // Label
       if (t.k > 0.5 || node.kind === "concept") {
         ctx.fillStyle = isActive
-          ? getComputedStyle(canvas).getPropertyValue("--color-foreground").trim() || "#2D2B28"
+          ? (canvas.isConnected ? getComputedStyle(canvas).getPropertyValue("--color-foreground").trim() : "") || "#2D2B28"
           : "#999";
         ctx.font = node.kind === "concept"
           ? `600 ${Math.max(10, 11 / t.k)}px "Lora", serif`
