@@ -498,10 +498,27 @@ export function Composer({
     if (urlMatch) {
       const detectedUrl = urlMatch[0];
 
-      // WeChat links blocked by anti-scraping — clear input and send guidance immediately
+      // WeChat links: try Playwright fetch first, fallback to guidance
       if (detectedUrl.includes("mp.weixin.qq.com") || detectedUrl.includes("weixin.qq.com")) {
         resetComposer();
-        await onSend("用户发送了一个微信公众号链接，但由于微信反爬机制无法直接抓取。请告诉用户：1. 在微信中将文章转发给 ClawBot 自动入库；2. 或手动复制文章内容粘贴到输入框。不要给出代码示例。");
+        try {
+          console.log("[composer] fetching WeChat article via Playwright:", detectedUrl);
+          const result = await fetchJson<{ ok: boolean; title: string; markdown: string; raw_id?: number }>(
+            "/api/desktop/wechat-fetch",
+            { method: "POST", body: JSON.stringify({ url: detectedUrl, ingest: true }) },
+            120_000, // 2 min timeout for Playwright
+          );
+          if (result.ok && result.markdown && result.markdown.length > 100) {
+            console.log("[composer] WeChat fetch OK, title:", result.title);
+            const enriched = `[系统：用户发送了微信文章链接，系统已通过 Playwright 抓取内容并入库 (Raw #${result.raw_id ?? "?"})。请基于以下内容回答用户。]\n\n标题：${result.title}\n\n${result.markdown.slice(0, 6000)}\n\n---\n用户原始消息：${finalMessage}`;
+            await onSend(enriched);
+            return;
+          }
+        } catch (err) {
+          console.warn("[composer] WeChat Playwright fetch failed:", err);
+        }
+        // Fallback: guidance
+        await onSend("用户发送了一个微信公众号链接，但 Playwright 抓取失败。请告诉用户：1. 在微信中将文章转发给 ClawBot 自动入库；2. 或手动复制文章内容粘贴到输入框。不要给出代码示例。");
         return;
       }
 

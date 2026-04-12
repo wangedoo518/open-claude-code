@@ -430,6 +430,8 @@ pub fn app(state: AppState) -> Router {
         // ── MarkItDown file conversion ──
         .route("/api/desktop/markitdown/check", get(markitdown_check_handler))
         .route("/api/desktop/markitdown/convert", post(markitdown_convert_handler))
+        // ── WeChat article fetch (Playwright) ──
+        .route("/api/desktop/wechat-fetch", post(wechat_fetch_handler))
         // ── Storage migration ──
         .route("/api/desktop/storage/migrate", post(migrate_storage_handler))
         // ── Multi-provider registry (restored for ClawWiki Cloud gateway) ──
@@ -3590,6 +3592,73 @@ async fn markitdown_convert_handler(
             Ok(entry) => Some(entry.id),
             Err(e) => {
                 eprintln!("[markitdown] ingest failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "title": result.title,
+        "markdown": result.body,
+        "source": result.source,
+        "raw_id": raw_id,
+    })))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WeChat article fetch handler
+// ═══════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+struct WechatFetchRequest {
+    url: String,
+    #[serde(default = "default_true")]
+    ingest: bool,
+}
+fn default_true() -> bool { true }
+
+/// `POST /api/desktop/wechat-fetch`
+///
+/// Fetch a WeChat article using Playwright and optionally ingest it.
+async fn wechat_fetch_handler(
+    Json(body): Json<WechatFetchRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let url = body.url.trim();
+    if url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: "url must not be empty".to_string() }),
+        ));
+    }
+
+    let result = wiki_ingest::wechat_fetch::fetch_wechat_article(url)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: format!("{e}") }),
+            )
+        })?;
+
+    let raw_id = if body.ingest {
+        let paths = resolve_wiki_root_for_handler()?;
+        let frontmatter = wiki_store::RawFrontmatter::for_paste(
+            &result.source,
+            result.source_url.clone(),
+        );
+        match wiki_store::write_raw_entry(
+            &paths, &result.source, &result.title, &result.body, &frontmatter,
+        ) {
+            Ok(entry) => {
+                // Also append inbox task
+                let _ = wiki_store::append_new_raw_task(&paths, &entry, "wechat-fetch");
+                Some(entry.id)
+            }
+            Err(e) => {
+                eprintln!("[wechat-fetch] ingest failed: {e}");
                 None
             }
         }

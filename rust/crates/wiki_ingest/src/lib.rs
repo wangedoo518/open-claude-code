@@ -45,6 +45,7 @@ pub mod pptx;
 pub mod url;
 pub mod video;
 pub mod voice;
+pub mod wechat_fetch;
 
 /// Common output shape for every adapter. Carries the pieces the
 /// caller needs to construct a `wiki_store::RawFrontmatter` and to
