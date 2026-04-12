@@ -427,6 +427,9 @@ pub fn app(state: AppState) -> Router {
             "/api/desktop/dispatch/items/{id}",
             delete(delete_dispatch_item_handler).post(update_dispatch_item),
         )
+        // ── MarkItDown file conversion ──
+        .route("/api/desktop/markitdown/check", get(markitdown_check_handler))
+        .route("/api/desktop/markitdown/convert", post(markitdown_convert_handler))
         // ── Storage migration ──
         .route("/api/desktop/storage/migrate", post(migrate_storage_handler))
         // ── Multi-provider registry (restored for ClawWiki Cloud gateway) ──
@@ -3519,5 +3522,86 @@ async fn migrate_storage_handler(
         "files_copied": file_count,
         "old_path": current_root.to_string_lossy(),
         "new_path": new_path,
+    })))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MarkItDown handlers
+// ═══════════════════════════════════════════════════════════════
+
+/// `GET /api/desktop/markitdown/check`
+///
+/// Check if Python + markitdown are available on this machine.
+async fn markitdown_check_handler() -> Json<serde_json::Value> {
+    match wiki_ingest::markitdown::check_environment().await {
+        Ok(version) => Json(serde_json::json!({
+            "available": true,
+            "version": version,
+            "supported_formats": wiki_ingest::markitdown::supported_extensions(),
+        })),
+        Err(error) => Json(serde_json::json!({
+            "available": false,
+            "error": error,
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct MarkItDownConvertRequest {
+    /// Absolute path to the file to convert.
+    path: String,
+    /// If true, also ingest the result into Raw Library.
+    #[serde(default)]
+    ingest: bool,
+}
+
+/// `POST /api/desktop/markitdown/convert`
+///
+/// Convert a local file to Markdown using MarkItDown.
+/// Optionally ingests the result into Raw Library.
+async fn markitdown_convert_handler(
+    Json(body): Json<MarkItDownConvertRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let path = std::path::PathBuf::from(&body.path);
+
+    let result = wiki_ingest::markitdown::extract_via_markitdown(&path)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: format!("{e}") }),
+            )
+        })?;
+
+    // Optionally ingest into Raw Library
+    let raw_id = if body.ingest {
+        let paths = resolve_wiki_root_for_handler()?;
+        let frontmatter = wiki_store::RawFrontmatter::for_paste(
+            &result.source,
+            result.source_url.clone(),
+        );
+        match wiki_store::write_raw_entry(
+            &paths,
+            &result.source,
+            &result.title,
+            &result.body,
+            &frontmatter,
+        ) {
+            Ok(entry) => Some(entry.id),
+            Err(e) => {
+                eprintln!("[markitdown] ingest failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "title": result.title,
+        "markdown": result.body,
+        "source": result.source,
+        "raw_id": raw_id,
     })))
 }

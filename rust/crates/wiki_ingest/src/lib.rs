@@ -39,6 +39,7 @@ pub mod docx;
 pub mod extractor;
 pub mod html_to_md;
 pub mod image;
+pub mod markitdown;
 pub mod pdf;
 pub mod pptx;
 pub mod url;
@@ -82,6 +83,10 @@ pub enum IngestError {
     TooLarge { bytes: usize, max: usize },
     #[error("response is not utf-8: {0}")]
     NotUtf8(String),
+    #[error("file not found: {0}")]
+    NotFound(String),
+    #[error("parse error: {0}")]
+    Parse(String),
 }
 
 pub type Result<T> = std::result::Result<T, IngestError>;
