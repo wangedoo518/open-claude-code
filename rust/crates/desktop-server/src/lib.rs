@@ -27,15 +27,15 @@ use tower_http::cors::{Any, CorsLayer};
 // `/api/desktop/code-tools/*` routes. ClawWiki canonical §11.1 cut #3
 // — there is no /code page, no CLI launcher, no claude-bridge proxy.
 
+#[cfg(feature = "private-cloud")]
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
     desktop: DesktopState,
-    // S2: internal Codex account pool (canonical §9.2). Shared across
-    // handlers via Arc because AppState is Clone'd into every request.
-    // `Arc<CodexBroker>` — the inner RwLock + AtomicU64 handle their
-    // own sync; we never need a Mutex around the whole thing.
+    // Optional private-cloud account pool. OSS builds keep this off
+    // and rely on the generic provider registry instead.
+    #[cfg(feature = "private-cloud")]
     broker: Arc<desktop_core::codex_broker::CodexBroker>,
     // feat(O): broadcast channel for inbox change notifications. Every
     // time a raw entry lands, an inbox task is appended, or a proposal
@@ -46,32 +46,43 @@ pub struct AppState {
     inbox_notify: tokio::sync::broadcast::Sender<()>,
 }
 
+#[cfg(feature = "private-cloud")]
+fn build_default_broker() -> Arc<desktop_core::codex_broker::CodexBroker> {
+    let fallback = std::env::temp_dir().join(format!("warwolf-broker-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&fallback);
+    let broker = desktop_core::codex_broker::CodexBroker::new(&fallback).unwrap_or_else(|_| {
+        let alt = std::env::temp_dir();
+        desktop_core::codex_broker::CodexBroker::new(&alt)
+            .expect("broker must construct from tempdir fallback")
+    });
+    Arc::new(broker)
+}
+
+#[cfg(feature = "private-cloud")]
+fn build_wiki_broker() -> Arc<desktop_core::codex_broker::CodexBroker> {
+    let wiki_root = wiki_store::default_root();
+    let _ = wiki_store::init_wiki(&wiki_root);
+    let paths = wiki_store::WikiPaths::resolve(&wiki_root);
+    let broker = desktop_core::codex_broker::CodexBroker::new(&paths.meta).unwrap_or_else(|err| {
+        eprintln!(
+            "private-cloud broker: failed to init from {:?}: {err}",
+            paths.meta
+        );
+        eprintln!("private-cloud broker: falling back to empty in-memory pool");
+        desktop_core::codex_broker::CodexBroker::new(&paths.meta)
+            .expect("broker second-try must succeed")
+    });
+    Arc::new(broker)
+}
+
 impl Default for AppState {
     fn default() -> Self {
-        // Tests + in-process construction fall through here. We can't
-        // `unwrap()` broker init because the filesystem may be locked
-        // (e.g. Windows AV sandbox during CI), so fall back to an
-        // in-memory broker rooted at a tempdir. The tempdir lives
-        // until the process exits.
-        let fallback = std::env::temp_dir().join(format!(
-            "warwolf-broker-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::create_dir_all(&fallback);
-        let broker = desktop_core::codex_broker::CodexBroker::new(&fallback)
-            .unwrap_or_else(|_| {
-                // This can only fail if secure_storage can't read/write
-                // the key file AND we somehow got a partial tempdir.
-                // Fall back to an even simpler tempdir.
-                let alt = std::env::temp_dir();
-                desktop_core::codex_broker::CodexBroker::new(&alt)
-                    .expect("broker must construct from tempdir fallback")
-            });
         let (inbox_notify, _) = tokio::sync::broadcast::channel(16);
         install_inbox_notify(inbox_notify.clone());
         Self {
             desktop: DesktopState::default(),
-            broker: Arc::new(broker),
+            #[cfg(feature = "private-cloud")]
+            broker: build_default_broker(),
             inbox_notify,
         }
     }
@@ -80,34 +91,16 @@ impl Default for AppState {
 impl AppState {
     #[must_use]
     pub fn new(desktop: DesktopState) -> Self {
-        // Use the canonical `~/.clawwiki/.clawwiki/` meta directory
-        // resolved through wiki_store so the broker's encrypted blob
-        // lives alongside the rest of the wiki metadata.
-        let wiki_root = wiki_store::default_root();
-        let _ = wiki_store::init_wiki(&wiki_root);
-        let paths = wiki_store::WikiPaths::resolve(&wiki_root);
-        let broker = desktop_core::codex_broker::CodexBroker::new(&paths.meta)
-            .unwrap_or_else(|err| {
-                eprintln!("codex_broker: failed to init from {:?}: {err}", paths.meta);
-                eprintln!("codex_broker: falling back to empty in-memory pool");
-                // Construct with a non-existent path so any `new` that
-                // tries to reload finds nothing. `sync` calls later
-                // will still work because `persist` recreates parents.
-                desktop_core::codex_broker::CodexBroker::new(&paths.meta)
-                    .expect("broker second-try must succeed")
-            });
-        let broker_arc = Arc::new(broker);
-        // A.2: install as the process-global so desktop-core's
-        // `execute_live_turn` free-function can consult it without
-        // having to thread an AppState handle through the session
-        // runtime. First install wins; tests that construct a second
-        // AppState silently skip.
-        desktop_core::codex_broker::install_global(Arc::clone(&broker_arc));
         let (inbox_notify, _) = tokio::sync::broadcast::channel(16);
         install_inbox_notify(inbox_notify.clone());
+        #[cfg(feature = "private-cloud")]
+        let broker = build_wiki_broker();
+        #[cfg(feature = "private-cloud")]
+        desktop_core::codex_broker::install_global(Arc::clone(&broker));
         Self {
             desktop,
-            broker: broker_arc,
+            #[cfg(feature = "private-cloud")]
+            broker,
             inbox_notify,
         }
     }
@@ -117,6 +110,7 @@ impl AppState {
         &self.desktop
     }
 
+    #[cfg(feature = "private-cloud")]
     #[must_use]
     pub fn broker(&self) -> &desktop_core::codex_broker::CodexBroker {
         &self.broker
@@ -263,6 +257,26 @@ type ApiResult<T> = Result<T, ApiError>;
 /// Requests larger than this return 413 without reaching handler code.
 const MAX_REQUEST_BODY_BYTES: usize = 15 * 1024 * 1024;
 
+#[cfg(feature = "private-cloud")]
+fn install_private_cloud_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(
+            "/api/desktop/cloud/codex-accounts",
+            get(list_cloud_codex_accounts_handler)
+                .post(sync_cloud_codex_accounts_handler),
+        )
+        .route(
+            "/api/desktop/cloud/codex-accounts/clear",
+            post(clear_cloud_codex_accounts_handler),
+        )
+        .route("/api/broker/status", get(broker_status_handler))
+}
+
+#[cfg(not(feature = "private-cloud"))]
+fn install_private_cloud_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+}
+
 #[must_use]
 pub fn app(state: AppState) -> Router {
     // CORS policy: permissive by design.
@@ -277,7 +291,7 @@ pub fn app(state: AppState) -> Router {
         .allow_headers(Any)
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS]);
 
-    Router::new()
+    let router = Router::new()
         .route("/healthz", get(health))
         .route("/api/desktop/bootstrap", get(bootstrap))
         .route("/api/desktop/workbench", get(workbench))
@@ -436,7 +450,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/desktop/python-deps/install", post(install_python_deps_handler))
         // ── Storage migration ──
         .route("/api/desktop/storage/migrate", post(migrate_storage_handler))
-        // ── Multi-provider registry (restored for ClawWiki Cloud gateway) ──
+        // ── Multi-provider registry (generic compatible gateways) ──
         .route(
             "/api/desktop/providers",
             get(list_providers_handler).post(upsert_provider_handler),
@@ -456,21 +470,9 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/desktop/providers/{id}/test",
             post(test_provider_handler),
-        )
-        // ── ClawWiki S2 Codex broker routes ────────────────────────
-        // Per canonical §9.2 the broker pool lives inside the Rust
-        // process — these four routes never return tokens, only a
-        // redacted view + aggregate counts.
-        .route(
-            "/api/desktop/cloud/codex-accounts",
-            get(list_cloud_codex_accounts_handler)
-                .post(sync_cloud_codex_accounts_handler),
-        )
-        .route(
-            "/api/desktop/cloud/codex-accounts/clear",
-            post(clear_cloud_codex_accounts_handler),
-        )
-        .route("/api/broker/status", get(broker_status_handler))
+        );
+    let router = install_private_cloud_routes(router);
+    router
         // ── ClawWiki S1 wiki/raw layer routes ──────────────────────
         // The "raw" layer is the immutable facts directory under
         // `~/.clawwiki/raw/`. Per canonical §10 every WeChat-ingested
@@ -577,6 +579,20 @@ pub fn app(state: AppState) -> Router {
             "/api/desktop/wechat/login/{handle}/cancel",
             post(cancel_wechat_login_handler),
         )
+        // ── Channel B: Official WeChat Customer Service (kefu) ───────
+        .route("/api/desktop/wechat-kefu/config", post(save_kefu_config_handler))
+        .route("/api/desktop/wechat-kefu/config", get(load_kefu_config_handler))
+        .route("/api/desktop/wechat-kefu/account/create", post(create_kefu_account_handler))
+        .route("/api/desktop/wechat-kefu/contact-url", get(get_kefu_contact_url_handler))
+        .route("/api/desktop/wechat-kefu/status", get(kefu_status_handler))
+        .route("/api/desktop/wechat-kefu/monitor/start", post(start_kefu_monitor_handler))
+        .route("/api/desktop/wechat-kefu/monitor/stop", post(stop_kefu_monitor_handler))
+        .route("/api/desktop/wechat-kefu/callback", get(kefu_callback_verify_handler))
+        .route("/api/desktop/wechat-kefu/callback", post(kefu_callback_event_handler))
+        // Pipeline
+        .route("/api/desktop/wechat-kefu/pipeline/start", post(start_kefu_pipeline_handler))
+        .route("/api/desktop/wechat-kefu/pipeline/status", get(kefu_pipeline_status_handler))
+        .route("/api/desktop/wechat-kefu/pipeline/cancel", post(cancel_kefu_pipeline_handler))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(cors)
         .with_state(state)
@@ -1818,6 +1834,260 @@ async fn cancel_wechat_login_handler(
     Json(serde_json::json!({ "ok": cancelled }))
 }
 
+// ── Channel B: Official WeChat Customer Service (kefu) handlers ──
+
+async fn save_kefu_config_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let config = desktop_core::wechat_kefu::KefuConfig {
+        corpid: body["corpid"].as_str().unwrap_or_default().to_string(),
+        secret: body["secret"].as_str().unwrap_or_default().to_string(),
+        token: body["token"].as_str().unwrap_or_default().to_string(),
+        encoding_aes_key: body["encoding_aes_key"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        open_kfid: body["open_kfid"].as_str().map(|s| s.to_string()),
+        contact_url: None,
+        account_name: body["account_name"].as_str().map(|s| s.to_string()),
+        saved_at: None,
+        cf_api_token: body["cf_api_token"].as_str().map(|s| s.to_string()),
+        worker_url: None,
+        relay_ws_url: None,
+        relay_auth_token: None,
+        callback_url: None,
+        callback_token_generated: None,
+    };
+    state
+        .desktop
+        .save_kefu_config(config)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn load_kefu_config_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match state.desktop.load_kefu_config().await {
+        Ok(Some(config)) => {
+            let summary = config.to_summary();
+            Json(serde_json::to_value(&summary).unwrap_or_default())
+        }
+        Ok(None) => Json(serde_json::json!({ "configured": false })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn create_kefu_account_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let name = body["name"].as_str().unwrap_or("ClaudeWiki助手");
+    let open_kfid = state
+        .desktop
+        .create_kefu_account(name)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "open_kfid": open_kfid,
+    })))
+}
+
+async fn get_kefu_contact_url_handler(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let url = state
+        .desktop
+        .get_kefu_contact_url()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+async fn kefu_status_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let status = state.desktop.kefu_status().await;
+    Json(serde_json::to_value(&status).unwrap_or_default())
+}
+
+async fn start_kefu_monitor_handler(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    state.desktop.spawn_kefu_monitor().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn stop_kefu_monitor_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    state.desktop.stop_kefu_monitor().await;
+    Json(serde_json::json!({ "ok": true }))
+}
+
+/// GET callback — kf.weixin.qq.com URL verification (echostr decrypt).
+async fn kefu_callback_verify_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<String, StatusCode> {
+    let config = state
+        .desktop
+        .load_kefu_config()
+        .await
+        .map_err(|e| {
+            eprintln!("[kefu callback] load config failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            eprintln!("[kefu callback] config not found");
+            StatusCode::NOT_FOUND
+        })?;
+
+    eprintln!(
+        "[kefu callback] verify: corpid={} token_len={} aes_key_len={}",
+        config.corpid,
+        config.token.len(),
+        config.encoding_aes_key.len()
+    );
+
+    let callback = desktop_core::wechat_kefu::KefuCallback::new(
+        &config.token,
+        &config.encoding_aes_key,
+        &config.corpid,
+    )
+    .map_err(|e| {
+        eprintln!("[kefu callback] CallbackCrypto::new failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let msg_sig = params.get("msg_signature").map(|s| s.as_str()).unwrap_or("");
+    let timestamp = params.get("timestamp").map(|s| s.as_str()).unwrap_or("");
+    let nonce = params.get("nonce").map(|s| s.as_str()).unwrap_or("");
+    let echostr = params.get("echostr").map(|s| s.as_str()).unwrap_or("");
+
+    eprintln!(
+        "[kefu callback] params: msg_sig_len={} ts={} nonce={} echostr_len={}",
+        msg_sig.len(), timestamp, nonce, echostr.len()
+    );
+
+    callback
+        .verify_echostr(msg_sig, timestamp, nonce, echostr)
+        .map_err(|e| {
+            eprintln!("[kefu callback] verify failed: {e}");
+            StatusCode::FORBIDDEN
+        })
+}
+
+/// POST callback — receive encrypted event notifications from WeChat.
+async fn kefu_callback_event_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: String,
+) -> Result<String, StatusCode> {
+    let config = state
+        .desktop
+        .load_kefu_config()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let callback = desktop_core::wechat_kefu::KefuCallback::new(
+        &config.token,
+        &config.encoding_aes_key,
+        &config.corpid,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let msg_sig = params.get("msg_signature").map(|s| s.as_str()).unwrap_or("");
+    let timestamp = params.get("timestamp").map(|s| s.as_str()).unwrap_or("");
+    let nonce = params.get("nonce").map(|s| s.as_str()).unwrap_or("");
+
+    let event = callback
+        .decrypt_event(msg_sig, timestamp, nonce, &body)
+        .map_err(|e| {
+            eprintln!("[kefu callback] decrypt failed: {e}");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    eprintln!("[kefu callback] event: {event:?}");
+    state.desktop.dispatch_kefu_callback(event).await;
+
+    Ok("success".to_string())
+}
+
+// ── Pipeline handlers ────────────────────────────────────────────
+
+async fn start_kefu_pipeline_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let skip_cf = body["skip_cf_register"].as_bool().unwrap_or(false);
+    let cf_token = body["cf_api_token"].as_str().map(String::from);
+    let skip_cb = body["skip_callback_config"].as_bool().unwrap_or(false);
+    let corpid = body["corpid"].as_str().map(String::from);
+    let secret = body["secret"].as_str().map(String::from);
+
+    state
+        .desktop
+        .start_kefu_pipeline(skip_cf, cf_token, skip_cb, corpid, secret)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn kefu_pipeline_status_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match state.desktop.kefu_pipeline_status().await {
+        Some(s) => {
+            let mut val = serde_json::to_value(&s).unwrap_or_default();
+            val["active"] = serde_json::Value::Bool(s.is_active());
+            Json(val)
+        }
+        None => {
+            let empty = desktop_core::wechat_kefu::pipeline_types::PipelineState::new();
+            let mut val = serde_json::to_value(empty).unwrap_or_default();
+            val["active"] = serde_json::Value::Bool(false);
+            Json(val)
+        }
+    }
+}
+
+async fn cancel_kefu_pipeline_handler(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    state.desktop.cancel_kefu_pipeline().await;
+    Json(serde_json::json!({ "ok": true }))
+}
+
 // ── ClawWiki S1: wiki/raw layer HTTP handlers ─────────────────────
 //
 // These three handlers wrap `wiki_store::{write_raw_entry,
@@ -2386,19 +2656,10 @@ async fn propose_wiki_inbox_handler(
         )
     })?;
 
-    // Step 2: build a broker adapter. When the process-global broker
-    // is not installed (CLI tool path, tests) we explicitly return
-    // 503 so the frontend can distinguish "LLM unavailable" from
-    // "raw entry missing" and render the right CTA.
-    let adapter = desktop_core::wiki_maintainer_adapter::BrokerAdapter::from_global()
-        .ok_or_else(|| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: "codex broker is not installed in this process".to_string(),
-                }),
-            )
-        })?;
+    // Step 2: build an auth adapter. In OSS builds this goes straight
+    // to the providers.json fallback; in private-cloud builds it tries
+    // the managed broker first and then falls back to providers.json.
+    let adapter = desktop_core::wiki_maintainer_adapter::BrokerAdapter::from_global();
 
     // Step 3: fire the proposal.
     let proposal =
@@ -2412,12 +2673,14 @@ async fn propose_wiki_inbox_handler(
                     }),
                 ),
                 wiki_maintainer::MaintainerError::Broker(msg) => {
-                    // NoAccountAvailable lands here via BrokerAdapter's
-                    // string flattening. Pin the 503 on anything that
-                    // includes the pool-empty signal; everything else
-                    // is an upstream LLM error worth a 502.
+                    // Empty-broker / no-provider cases land here via the
+                    // adapter's string flattening. Pin the 503 on anything
+                    // that looks like "no usable auth source"; everything
+                    // else is an upstream LLM error worth a 502.
                     let is_empty_pool =
-                        msg.contains("no codex account") || msg.contains("pool_size");
+                        msg.contains("no codex account")
+                            || msg.contains("pool_size")
+                            || msg.contains("no providers.json fallback");
                     let code = if is_empty_pool {
                         StatusCode::SERVICE_UNAVAILABLE
                     } else {
@@ -2827,11 +3090,13 @@ async fn get_wiki_log_handler() -> Result<Json<serde_json::Value>, ApiError> {
 // returns only aggregate counts. There is no route that exposes a
 // single account's full record.
 
+#[cfg(feature = "private-cloud")]
 #[derive(Debug, Deserialize)]
 struct SyncCloudCodexAccountsRequest {
     accounts: Vec<desktop_core::codex_broker::CloudAccountInput>,
 }
 
+#[cfg(feature = "private-cloud")]
 async fn sync_cloud_codex_accounts_handler(
     State(state): State<AppState>,
     Json(body): Json<SyncCloudCodexAccountsRequest>,
@@ -2851,6 +3116,7 @@ async fn sync_cloud_codex_accounts_handler(
     })))
 }
 
+#[cfg(feature = "private-cloud")]
 async fn list_cloud_codex_accounts_handler(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
@@ -2858,6 +3124,7 @@ async fn list_cloud_codex_accounts_handler(
     Json(serde_json::json!({ "accounts": accounts }))
 }
 
+#[cfg(feature = "private-cloud")]
 async fn clear_cloud_codex_accounts_handler(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -2872,6 +3139,7 @@ async fn clear_cloud_codex_accounts_handler(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+#[cfg(feature = "private-cloud")]
 async fn broker_status_handler(
     State(state): State<AppState>,
 ) -> Json<desktop_core::codex_broker::BrokerPublicStatus> {
@@ -3251,7 +3519,7 @@ mod tests {
     }
 }
 
-// ── Multi-provider registry handlers (restored for ClawWiki Cloud) ──
+// ── Multi-provider registry handlers (generic compatible gateways) ──
 
 fn redact_api_key_for_display(key: &str) -> String {
     let len = key.chars().count();

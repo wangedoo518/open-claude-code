@@ -47,10 +47,10 @@ static QWEN_LOGIN_SESSIONS: LazyLock<Mutex<HashMap<String, Arc<QwenLoginSessionR
 pub enum DesktopManagedAuthProviderKind {
     CodexOpenai,
     QwenCode,
-    /// Anthropic-compatible gateway (e.g. ClawWiki Cloud / claude-wiki-api).
-    /// Requests are forwarded as-is in native Anthropic Messages API format
-    /// — no OpenAI translation layer is needed. The agentic loop bypasses
-    /// the code-tools bridge and calls the gateway URL directly.
+    /// Anthropic-compatible gateway.
+    /// Requests are forwarded as-is in native Anthropic Messages API
+    /// format. No OpenAI translation layer is needed, and the agentic
+    /// loop can call the gateway URL directly.
     AnthropicCompat,
     /// OpenAI-compatible gateway (DeepSeek, Kimi/Moonshot, Qwen via
     /// DashScope, GLM/Zhipu, xAI/Grok, etc.). Requests use the OpenAI

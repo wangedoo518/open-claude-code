@@ -166,94 +166,6 @@ export async function pollCodexLogin(
   );
 }
 
-// ── Phase 3-5 multi-provider registry: DELETED on S0.4 cut day ────
-//
-// The Phase 3-5 multi-provider catalogue was removed per ClawWiki
-// canonical §11.1 cut #6. ClawWiki uses a single managed Codex pool
-// from S2 onward — users do not pick a provider, do not paste API
-// keys, and do not see this surface. See the S2 block below instead.
-
-// ── S2: Codex broker (subscription pool) ──────────────────────────
-//
-// Wire protocol for the 4 S2 routes in `desktop-server/src/lib.rs`:
-//   POST /api/desktop/cloud/codex-accounts         sync
-//   GET  /api/desktop/cloud/codex-accounts         list (redacted)
-//   POST /api/desktop/cloud/codex-accounts/clear   clear
-//   GET  /api/broker/status                        public status
-//
-// Types match `desktop_core::codex_broker::{CloudAccountInput,
-// CloudAccountPublic, BrokerPublicStatus}` byte-for-byte. The pool
-// itself lives inside the Rust process; this TS layer only ever sees
-// redacted views and aggregate counts.
-
-export type CodexAccountStatus = "fresh" | "expiring" | "expired";
-
-/** Raw tokens the frontend pushes into the broker. Sensitive —
- *  comes from `billing/cloud-accounts-sync` and goes directly into
- *  the sync POST body. Never persisted in localStorage, never echoed
- *  back to the frontend on subsequent reads. */
-export interface CloudAccountInput {
-  codex_user_id: string;
-  alias: string;
-  access_token: string;
-  refresh_token: string;
-  token_expires_at_epoch: number;
-  subscription_id?: number | null;
-  cloud_account_id?: number | null;
-}
-
-/** Redacted view returned by GET. Has NO token fields. */
-export interface CloudAccountPublic {
-  codex_user_id: string;
-  alias: string;
-  token_expires_at_epoch: number;
-  subscription_id: number | null;
-  cloud_account_id: number | null;
-  status: CodexAccountStatus;
-}
-
-export interface CloudAccountsListResponse {
-  accounts: CloudAccountPublic[];
-}
-
-export interface BrokerPublicStatus {
-  pool_size: number;
-  fresh_count: number;
-  expiring_count: number;
-  expired_count: number;
-  requests_today: number;
-  next_refresh_at_epoch: number | null;
-}
-
-export async function syncCloudCodexAccounts(
-  accounts: CloudAccountInput[],
-): Promise<{ ok: boolean; pool_size: number }> {
-  return fetchJson<{ ok: boolean; pool_size: number }>(
-    "/api/desktop/cloud/codex-accounts",
-    {
-      method: "POST",
-      body: JSON.stringify({ accounts }),
-    },
-  );
-}
-
-export async function listCloudCodexAccounts(): Promise<CloudAccountsListResponse> {
-  return fetchJson<CloudAccountsListResponse>(
-    "/api/desktop/cloud/codex-accounts",
-  );
-}
-
-export async function clearCloudCodexAccounts(): Promise<{ ok: boolean }> {
-  return fetchJson<{ ok: boolean }>(
-    "/api/desktop/cloud/codex-accounts/clear",
-    { method: "POST" },
-  );
-}
-
-export async function getBrokerStatus(): Promise<BrokerPublicStatus> {
-  return fetchJson<BrokerPublicStatus>("/api/broker/status");
-}
-
 // ── Phase 6: WeChat account management ────────────────────────────
 //
 // These routes pair with the WeChat iLink backend to let the user
@@ -352,7 +264,124 @@ export async function deleteWeChatAccount(
   );
 }
 
-// ── Multi-provider registry (restored for ClawWiki Cloud gateway) ──
+// ── Channel B: Official WeChat Customer Service (kefu) ──────────────
+
+export interface KefuConfigRequest {
+  corpid: string;
+  secret: string;
+  token: string;
+  encoding_aes_key: string;
+  account_name?: string;
+}
+
+export interface KefuConfigSummary {
+  corpid: string;
+  secret_preview: string;
+  token_preview: string;
+  open_kfid: string | null;
+  contact_url: string | null;
+  account_name: string | null;
+  saved_at: string | null;
+  has_aes_key: boolean;
+  configured?: boolean;
+}
+
+export interface KefuStatus {
+  configured: boolean;
+  account_created: boolean;
+  monitor_running: boolean;
+  last_poll_unix_ms: number | null;
+  last_inbound_unix_ms: number | null;
+  consecutive_failures: number;
+  last_error: string | null;
+}
+
+export async function saveKefuConfig(
+  config: KefuConfigRequest
+): Promise<{ ok: boolean }> {
+  return fetchJson("/api/desktop/wechat-kefu/config", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
+export async function loadKefuConfig(): Promise<KefuConfigSummary> {
+  return fetchJson("/api/desktop/wechat-kefu/config");
+}
+
+export async function createKefuAccount(
+  name: string = "ClaudeWiki助手"
+): Promise<{ ok: boolean; open_kfid: string }> {
+  return fetchJson("/api/desktop/wechat-kefu/account/create", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function getKefuContactUrl(): Promise<{ url: string }> {
+  return fetchJson("/api/desktop/wechat-kefu/contact-url");
+}
+
+export async function getKefuStatus(): Promise<KefuStatus> {
+  return fetchJson("/api/desktop/wechat-kefu/status");
+}
+
+export async function startKefuMonitor(): Promise<{ ok: boolean }> {
+  return fetchJson("/api/desktop/wechat-kefu/monitor/start", {
+    method: "POST",
+  });
+}
+
+export async function stopKefuMonitor(): Promise<{ ok: boolean }> {
+  return fetchJson("/api/desktop/wechat-kefu/monitor/stop", {
+    method: "POST",
+  });
+}
+
+// ── Pipeline ────────────────────────────────────────────────────────
+
+export interface PipelinePhaseState {
+  phase: "cf_register" | "worker_deploy" | "wecom_auth" | "callback_config" | "kefu_create";
+  status: "pending" | "running" | "waiting_scan" | "skipped" | "done" | "failed";
+  message: string | null;
+  error: string | null;
+}
+
+export interface KefuPipelineState {
+  phases: PipelinePhaseState[];
+  logs: string[];
+  current_phase: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  contact_url: string | null;
+  qr_data: string | null;
+  active: boolean;
+}
+
+export async function startKefuPipeline(opts: {
+  skip_cf_register?: boolean;
+  cf_api_token?: string;
+  skip_callback_config?: boolean;
+  corpid?: string;
+  secret?: string;
+}): Promise<{ ok: boolean }> {
+  return fetchJson("/api/desktop/wechat-kefu/pipeline/start", {
+    method: "POST",
+    body: JSON.stringify(opts),
+  });
+}
+
+export async function getKefuPipelineStatus(): Promise<KefuPipelineState> {
+  return fetchJson("/api/desktop/wechat-kefu/pipeline/status");
+}
+
+export async function cancelKefuPipeline(): Promise<{ ok: boolean }> {
+  return fetchJson("/api/desktop/wechat-kefu/pipeline/cancel", {
+    method: "POST",
+  });
+}
+
+// ── Multi-provider registry (generic compatible gateways) ──────────
 
 export type ProviderKind = "anthropic" | "openai_compat";
 

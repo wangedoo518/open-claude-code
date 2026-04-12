@@ -1,9 +1,9 @@
 /**
  * Single source of truth for ClawWiki canonical shell routes.
  *
- * Per `docs/clawwiki/product-design.md` §5, the shell exposes seven
- * PRIMARY pages, one FUNNEL page (WeChat Bridge), and one persistent
- * Settings entry pinned to the Sidebar foot. The Sidebar component,
+ * The shell exposes seven PRIMARY pages, one FUNNEL page (WeChat
+ * Bridge), and one persistent Settings entry pinned to the Sidebar
+ * foot. The Sidebar component,
  * the `ClawWikiShell` route table, and any future "go to next section"
  * keyboard shortcut all read from this list so they stay in sync.
  *

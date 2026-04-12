@@ -597,7 +597,7 @@ mod tests {
             kind: ProviderKind::OpenAiCompat,
             display_name: Some("DeepSeek".to_string()),
             base_url: Some("https://api.deepseek.com/v1".to_string()),
-            api_key: "sk-test-long-enough-to-look-real-abcdef1234567890".to_string(),
+            api_key: "example-openai-key-abcdef1234567890".to_string(),
             model: "deepseek-chat".to_string(),
             max_tokens: None,
             extra_headers: BTreeMap::new(),
@@ -609,7 +609,7 @@ mod tests {
             kind: ProviderKind::Anthropic,
             display_name: Some("Claude".to_string()),
             base_url: None,
-            api_key: "sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            api_key: "example-anthropic-key-aaaaaaaaaaaaaaaa".to_string(),
             model: "claude-opus-4-6".to_string(),
             max_tokens: None,
             extra_headers: BTreeMap::new(),
@@ -625,7 +625,7 @@ mod tests {
             "api_key value leaked into Debug output: {debug_str}"
         );
         assert!(debug_str.contains("redacted"));
-        assert!(debug_str.contains("prefix=\"sk-t\""));
+        assert!(debug_str.contains("prefix=\"exam\""));
     }
 
     #[test]
@@ -752,7 +752,7 @@ mod tests {
         // encrypted yet; Phase 3.6 changes this).
         assert_eq!(
             loaded.providers["deepseek"].api_key,
-            "sk-test-long-enough-to-look-real-abcdef1234567890"
+            "example-openai-key-abcdef1234567890"
         );
     }
 

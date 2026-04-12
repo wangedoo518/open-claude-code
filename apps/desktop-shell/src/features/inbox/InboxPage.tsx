@@ -1,5 +1,5 @@
 /**
- * Inbox · CCD 权限确认 + 任务审阅 (wireframes.html §07, SOUL ③+④)
+ * Inbox · CCD 权限确认 + 任务审阅
  *
  * S4 MVP implementation. The canonical §7 wireframe shows a
  * SubagentPanel-style tree of tool calls for each maintainer task,

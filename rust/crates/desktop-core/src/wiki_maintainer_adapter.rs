@@ -1,19 +1,21 @@
-//! Adapter bridging `desktop-core`'s `CodexBroker` to
+//! Adapter bridging `desktop-core` runtime auth sources to
 //! `wiki_maintainer::BrokerSender` (canonical §4 blade 3).
 //!
 //! ## Why this exists
 //!
 //! `wiki_maintainer` cannot depend on `desktop-core` — that would
 //! create a cycle, since desktop-core wants to CALL the maintainer
-//! from its HTTP handler layer. And it can't impl `BrokerSender`
-//! for `Arc<CodexBroker>` directly, because the orphan rule
-//! forbids third-party trait impls on third-party types.
+//! from its HTTP handler layer. And when the optional private-cloud
+//! broker is enabled, it can't impl `BrokerSender` for
+//! `Arc<CodexBroker>` directly, because the orphan rule forbids
+//! third-party trait impls on third-party types.
 //!
 //! Solution: a thin wrapper struct owned here in desktop-core that
-//! wraps `Arc<CodexBroker>` and impls the maintainer's trait. The
-//! maintainer crate sees only `&impl BrokerSender`, so tests keep
-//! using their `MockBrokerSender` and the production HTTP handler
-//! builds a `BrokerAdapter::from_global()` per request.
+//! optionally wraps the process-global private-cloud broker and then
+//! falls back to `.claw/providers.json`. The maintainer crate sees
+//! only `&impl BrokerSender`, so tests keep using their
+//! `MockBrokerSender` and the production HTTP handler builds a
+//! `BrokerAdapter::from_global()` per request.
 //!
 //! ## Error mapping
 //!
@@ -25,56 +27,73 @@
 //! `desktop-server → desktop-core → wiki_maintainer`, never the
 //! reverse.
 
-use std::sync::Arc;
-
 use api::{MessageRequest, MessageResponse};
 use async_trait::async_trait;
 use wiki_maintainer::{BrokerSender, MaintainerError};
 
+#[cfg(feature = "private-cloud")]
+use std::sync::Arc;
+
+#[cfg(feature = "private-cloud")]
 use crate::codex_broker::{self, CodexBroker};
 
-/// Wrapper around `Arc<CodexBroker>` that implements
+/// Wrapper around the optional private-cloud broker that implements
 /// `wiki_maintainer::BrokerSender`. Construct one per
-/// `propose_for_raw_entry` call — it holds only an `Arc` so cloning
-/// is cheap, and the adapter is stateless.
-#[derive(Clone)]
+/// `propose_for_raw_entry` call — it is cheap to clone and stays
+/// stateless when only the providers.json fallback is available.
+#[derive(Clone, Default)]
 pub struct BrokerAdapter {
-    broker: Arc<CodexBroker>,
+    #[cfg(feature = "private-cloud")]
+    broker: Option<Arc<CodexBroker>>,
 }
 
 impl BrokerAdapter {
+    #[cfg(feature = "private-cloud")]
     /// Wrap a specific broker instance. Used by tests that build
     /// their own `CodexBroker` and by callers that already hold a
     /// handle (e.g. `AppState` in desktop-server).
     #[must_use]
     pub fn new(broker: Arc<CodexBroker>) -> Self {
-        Self { broker }
+        Self {
+            broker: Some(broker),
+        }
     }
 
-    /// Convenience: pull the process-global broker installed by
-    /// desktop-server's `AppState::new`. Returns `None` if no
-    /// broker has been installed (tests, CLI tools, or any
-    /// process that hasn't booted the server).
+    /// Build an adapter from the process-global broker installed by
+    /// desktop-server's `AppState::new`. This constructor always
+    /// succeeds: when the private-cloud broker is disabled or absent,
+    /// the adapter simply skips that step and relies on the generic
+    /// providers.json fallback.
     ///
     /// Combined with `propose_for_raw_entry`'s `&impl BrokerSender`
     /// signature, this lets an HTTP handler write:
     ///
     /// ```ignore
-    /// let adapter = BrokerAdapter::from_global()
-    ///     .ok_or_else(|| AppError::service_unavailable("broker not installed"))?;
+    /// let adapter = BrokerAdapter::from_global();
     /// let proposal = propose_for_raw_entry(&paths, id, &adapter).await?;
     /// ```
     #[must_use]
-    pub fn from_global() -> Option<Self> {
-        codex_broker::global().map(Self::new)
+    pub fn from_global() -> Self {
+        #[cfg(feature = "private-cloud")]
+        {
+            return Self {
+                broker: codex_broker::global(),
+            };
+        }
+
+        #[cfg(not(feature = "private-cloud"))]
+        {
+            Self::default()
+        }
     }
 
+    #[cfg(feature = "private-cloud")]
     /// Expose the inner broker handle for callers that need the
     /// original API (e.g. to check pool status before deciding
     /// whether to propose at all).
     #[must_use]
-    pub fn inner(&self) -> &Arc<CodexBroker> {
-        &self.broker
+    pub fn inner(&self) -> Option<&Arc<CodexBroker>> {
+        self.broker.as_ref()
     }
 }
 
@@ -84,14 +103,16 @@ impl BrokerSender for BrokerAdapter {
         &self,
         request: MessageRequest,
     ) -> wiki_maintainer::Result<MessageResponse> {
-        // Try the codex_broker pool first.
-        match self.broker.chat_completion(request.clone()).await {
-            Ok(resp) => return Ok(resp),
-            Err(broker_err) => {
-                eprintln!(
-                    "[maintainer-adapter] codex_broker failed: {broker_err}, \
-                     trying providers.json fallback"
-                );
+        #[cfg(feature = "private-cloud")]
+        if let Some(broker) = &self.broker {
+            match broker.chat_completion(request.clone()).await {
+                Ok(resp) => return Ok(resp),
+                Err(broker_err) => {
+                    eprintln!(
+                        "[maintainer-adapter] private-cloud broker failed: {broker_err}, \
+                         trying providers.json fallback"
+                    );
+                }
             }
         }
 
@@ -190,13 +211,17 @@ async fn try_providers_json_chat_completion(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "private-cloud")]
     use crate::secure_storage;
+    #[cfg(feature = "private-cloud")]
     use tempfile::tempdir;
 
+    #[cfg(feature = "private-cloud")]
     fn seed_test_key() {
         secure_storage::seed_key_for_test([11u8; 32]);
     }
 
+    #[cfg(feature = "private-cloud")]
     #[tokio::test]
     async fn adapter_surfaces_empty_pool_as_broker_error() {
         // Build a broker with an empty pool and verify that calling
@@ -236,15 +261,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn from_global_returns_none_when_broker_uninstalled() {
-        // Tests don't install the process-global broker (install is
-        // idempotent and cannot be undone, so enabling it would
-        // pollute other tests in the same binary). Verify the
-        // adapter handles None gracefully.
+    async fn from_global_is_safe_without_a_private_cloud_broker() {
+        // Tests do not guarantee a process-global broker. The adapter
+        // should still construct so the providers.json fallback path
+        // remains available in OSS builds and in server-side tests.
         let adapter = BrokerAdapter::from_global();
-        // We can't assert Some/None deterministically since another
-        // test in this binary might have installed. Just assert the
-        // function does not panic.
         let _ = adapter;
     }
 }

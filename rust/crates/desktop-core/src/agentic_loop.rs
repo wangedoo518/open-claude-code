@@ -876,6 +876,7 @@ async fn parse_sse_stream(
 
     let mut model_label: Option<String> = None;
     let mut stop_reason: Option<String> = None;
+    let mut stream_finished = false;
 
     // Accumulated content blocks indexed by position.
     let mut text_blocks: HashMap<usize, String> = HashMap::new();
@@ -914,6 +915,7 @@ async fn parse_sse_stream(
 
             if let Some(data) = line.strip_prefix("data: ") {
                 if data == "[DONE]" {
+                    stream_finished = true;
                     break;
                 }
                 let event: Value = match serde_json::from_str(data) {
@@ -1024,11 +1026,20 @@ async fn parse_sse_stream(
                         }
                     }
                     "message_stop" | "error" => {
-                        // Stream complete.
+                        // Some providers/proxies leave the HTTP connection
+                        // open briefly after sending the terminal SSE event.
+                        // Treat the semantic end-of-stream as authoritative
+                        // so the session can finalize immediately instead of
+                        // waiting for the socket to close.
+                        stream_finished = true;
                     }
                     _ => {}
                 }
             }
+        }
+
+        if stream_finished {
+            break;
         }
     }
 
@@ -1709,6 +1720,87 @@ mod sse_buffer_tests {
         }
         assert_eq!(drained, 1000);
         assert!(buf.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sse_completion_tests {
+    use super::parse_sse_stream;
+    use crate::{ContentBlock, DesktopSessionEvent};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::broadcast;
+    use tokio::time::{timeout, Duration};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn parse_finishes_on_done_even_if_socket_stays_open() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept client");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await;
+
+            let body = concat!(
+                "event: message_start\n",
+                "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-test\"}}\n\n",
+                "event: content_block_start\n",
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                "event: content_block_delta\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好\"}}\n\n",
+                "event: content_block_stop\n",
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                "event: message_delta\n",
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+                "event: message_stop\n",
+                "data: {\"type\":\"message_stop\"}\n\n",
+                "data: [DONE]\n\n"
+            );
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: keep-alive\r\n\r\n{body}"
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            socket.flush().await.expect("flush response");
+
+            // Keep the socket open to mimic a proxy that sends the final SSE
+            // frame before it actually closes the HTTP connection.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("http://{addr}"))
+            .send()
+            .await
+            .expect("send request");
+        let (tx, _rx) = broadcast::channel::<DesktopSessionEvent>(16);
+        let cancel_token = CancellationToken::new();
+
+        let (message, stop_reason, model_label) = timeout(
+            Duration::from_secs(1),
+            parse_sse_stream(response, &tx, "desktop-session-test", &cancel_token),
+        )
+        .await
+        .expect("parser should finish without waiting for socket close")
+        .expect("parser should succeed");
+
+        assert_eq!(stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(model_label.as_deref(), Some("claude-sonnet-test"));
+        assert_eq!(message.blocks.len(), 1);
+        assert!(matches!(
+            &message.blocks[0],
+            ContentBlock::Text { text } if text == "你好"
+        ));
+
+        server.abort();
     }
 }
 

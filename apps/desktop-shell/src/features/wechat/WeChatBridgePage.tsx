@@ -1,11 +1,10 @@
 /**
- * WeChat Bridge · 个微 iLink 漏斗 (wireframes.html §02, D2 override)
+ * WeChat Bridge · 个微 iLink 漏斗
  *
- * S5 real implementation. Per the user's D2 override (`docs/clawwiki/
- * product-design.md` §7.1 diagram + commit 6617945), this page does
- * NOT configure an enterprise-WeChat outbound bot + cloud ingest
- * microservice. Instead it surfaces the EXISTING personal-WeChat
- * iLink pipeline that Phase 1-2 of (8) already wired:
+ * S5 real implementation. This page does NOT configure an
+ * enterprise-WeChat outbound bot + cloud ingest microservice.
+ * Instead it surfaces the existing personal-WeChat iLink pipeline
+ * that earlier implementation phases already wired:
  *
  *   WeChat user (phone)
  *     → ClawBot plugin → ilinkai.weixin.qq.com
@@ -34,6 +33,10 @@ import {
   WifiOff,
   AlertTriangle,
   CheckCircle2,
+  Circle,
+  XCircle,
+  MinusCircle,
+  Rocket,
 } from "lucide-react";
 import {
   listWeChatAccounts,
@@ -41,6 +44,16 @@ import {
   getWeChatLoginStatus,
   cancelWeChatLogin,
   deleteWeChatAccount,
+  loadKefuConfig,
+  saveKefuConfig,
+  createKefuAccount,
+  getKefuContactUrl,
+  getKefuStatus,
+  startKefuMonitor,
+  stopKefuMonitor,
+  startKefuPipeline,
+  getKefuPipelineStatus,
+  cancelKefuPipeline,
   type WeChatAccountSummary,
   type WeChatAccountStatus,
   type WeChatLoginStartResponse,
@@ -275,6 +288,12 @@ export function WeChatBridgePage() {
           />
         </section>
       )}
+
+      {/* ── Pipeline: One-scan kefu setup ──────────────────────── */}
+      <KefuPipelineSection />
+
+      {/* ── Channel B: Official WeChat Customer Service ─────────── */}
+      <KefuSection />
 
       {/* Pipeline info */}
       <section className="px-6 py-5">
@@ -570,4 +589,592 @@ function statusLabel(status: string): string {
     default:
       return status;
   }
+}
+
+/* ─── Channel B: Official WeChat Customer Service ──────────────── */
+
+const kefuKeys = {
+  config: () => ["kefu", "config"] as const,
+  status: () => ["kefu", "status"] as const,
+};
+
+function KefuSection() {
+  const queryClient = useQueryClient();
+  const [showConfig, setShowConfig] = useState(false);
+
+  const configQuery = useQuery({
+    queryKey: kefuKeys.config(),
+    queryFn: () => loadKefuConfig(),
+    staleTime: 10_000,
+  });
+
+  const statusQuery = useQuery({
+    queryKey: kefuKeys.status(),
+    queryFn: () => getKefuStatus(),
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () => createKefuAccount("ClaudeWiki助手"),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: kefuKeys.config() });
+      void queryClient.invalidateQueries({ queryKey: kefuKeys.status() });
+    },
+  });
+
+  const startMutation = useMutation({
+    mutationFn: () => startKefuMonitor(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: kefuKeys.status() });
+    },
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => stopKefuMonitor(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: kefuKeys.status() });
+    },
+  });
+
+  const config = configQuery.data;
+  const status = statusQuery.data;
+  const configured = config?.corpid && config.corpid.length > 0 && config.configured !== false;
+  const accountCreated = !!config?.open_kfid;
+
+  return (
+    <section className="border-b border-border/50 px-6 py-5">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-subhead font-semibold text-foreground">
+            ClaudeWiki助手 · 微信客服
+          </h2>
+          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
+            Channel B
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowConfig(!showConfig)}
+          className="text-caption text-primary hover:underline"
+        >
+          {showConfig ? "隐藏配置" : "配置"}
+        </button>
+      </div>
+
+      {/* Config form */}
+      {showConfig && <KefuConfigForm onSaved={() => {
+        void queryClient.invalidateQueries({ queryKey: kefuKeys.config() });
+        setShowConfig(false);
+      }} />}
+
+      {/* Status cards */}
+      {configured ? (
+        <div className="space-y-3">
+          {/* Account status */}
+          <div className="rounded-md border border-border bg-muted/5 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-body-sm font-medium text-foreground">
+                  {accountCreated ? (
+                    <>
+                      <CheckCircle2
+                        className="mr-1 inline size-4"
+                        style={{ color: "var(--color-success)" }}
+                      />
+                      {config?.account_name ?? "ClaudeWiki助手"}
+                    </>
+                  ) : (
+                    "未创建客服账号"
+                  )}
+                </div>
+                {config?.open_kfid && (
+                  <div className="mt-0.5 font-mono text-caption text-muted-foreground">
+                    open_kfid: {config.open_kfid}
+                  </div>
+                )}
+                <div className="mt-0.5 text-caption text-muted-foreground">
+                  corpid: {config?.corpid} · secret: {config?.secret_preview}
+                </div>
+              </div>
+              {!accountCreated && (
+                <button
+                  type="button"
+                  onClick={() => createMutation.mutate()}
+                  disabled={createMutation.isPending}
+                  className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {createMutation.isPending ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Plus className="size-3" />
+                  )}
+                  创建客服账号
+                </button>
+              )}
+            </div>
+            {createMutation.error && (
+              <div className="mt-2 text-caption" style={{ color: "var(--color-error)" }}>
+                {String(createMutation.error)}
+              </div>
+            )}
+          </div>
+
+          {/* Contact URL QR */}
+          {accountCreated && <KefuContactQR />}
+
+          {/* Monitor status */}
+          {accountCreated && status && (
+            <div className="rounded-md border border-border bg-muted/5 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {status.monitor_running ? (
+                    <Wifi className="size-4" style={{ color: "var(--color-success)" }} />
+                  ) : (
+                    <WifiOff className="size-4 text-muted-foreground" />
+                  )}
+                  <span className="text-body-sm font-medium text-foreground">
+                    Monitor {status.monitor_running ? "运行中" : "已停止"}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  {!status.monitor_running ? (
+                    <button
+                      type="button"
+                      onClick={() => startMutation.mutate()}
+                      disabled={startMutation.isPending}
+                      className="rounded-md bg-primary px-3 py-1 text-caption font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      启动
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => stopMutation.mutate()}
+                      disabled={stopMutation.isPending}
+                      className="rounded-md border border-border px-3 py-1 text-caption text-muted-foreground hover:border-destructive hover:text-destructive disabled:opacity-50"
+                    >
+                      停止
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted-foreground">
+                {status.last_poll_unix_ms && (
+                  <span>拉取: {new Date(status.last_poll_unix_ms).toLocaleTimeString()}</span>
+                )}
+                {status.last_inbound_unix_ms && (
+                  <span>消息: {new Date(status.last_inbound_unix_ms).toLocaleTimeString()}</span>
+                )}
+                {status.consecutive_failures > 0 && (
+                  <span style={{ color: "var(--color-warning)" }}>
+                    失败: {status.consecutive_failures}
+                  </span>
+                )}
+                {status.last_error && (
+                  <span style={{ color: "var(--color-error)" }}>
+                    {status.last_error}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed border-border/50 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
+          <Link2 className="mx-auto mb-1.5 size-5 opacity-40" />
+          点击 "配置" 填入企业微信 corpid 和客服 secret，开始接入微信客服。
+        </div>
+      )}
+    </section>
+  );
+}
+
+function KefuConfigForm({ onSaved }: { onSaved: () => void }) {
+  const [corpid, setCorpid] = useState("");
+  const [secret, setSecret] = useState("");
+  const [token, setToken] = useState("");
+  const [aesKey, setAesKey] = useState("");
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      saveKefuConfig({
+        corpid,
+        secret,
+        token,
+        encoding_aes_key: aesKey,
+      }),
+    onSuccess: () => onSaved(),
+  });
+
+  return (
+    <div className="mb-4 rounded-md border border-border bg-muted/5 p-4">
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-caption font-medium text-foreground">
+            企业 ID (corpid)
+          </label>
+          <input
+            type="text"
+            value={corpid}
+            onChange={(e) => setCorpid(e.target.value)}
+            placeholder="ww1234567890abcd"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-body-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-caption font-medium text-foreground">
+            客服 Secret
+          </label>
+          <input
+            type="password"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            placeholder="微信客服应用的 secret"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-body-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-caption font-medium text-foreground">
+            Token (回调验证)
+          </label>
+          <input
+            type="text"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="从 kf.weixin.qq.com 获取"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-body-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-caption font-medium text-foreground">
+            EncodingAESKey (43 位)
+          </label>
+          <input
+            type="text"
+            value={aesKey}
+            onChange={(e) => setAesKey(e.target.value)}
+            placeholder="从 kf.weixin.qq.com 获取"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-body-sm"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending || !corpid || !secret || !token || !aesKey}
+            className="rounded-md bg-primary px-4 py-1.5 text-body-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {saveMutation.isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              "保存配置"
+            )}
+          </button>
+          {saveMutation.error && (
+            <span className="text-caption" style={{ color: "var(--color-error)" }}>
+              {String(saveMutation.error)}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KefuContactQR() {
+  const contactQuery = useQuery({
+    queryKey: ["kefu", "contact-url"],
+    queryFn: () => getKefuContactUrl(),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const url = contactQuery.data?.url;
+
+  return (
+    <div className="rounded-md border border-border bg-muted/5 p-4">
+      <div className="flex items-start gap-4">
+        {url ? (
+          <>
+            <div className="shrink-0 rounded-md border border-border bg-background p-2">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(url)}`}
+                alt="客服二维码"
+                width={160}
+                height={160}
+                className="size-[160px] rounded"
+              />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <QrCode className="size-4" style={{ color: "var(--claude-orange)" }} />
+                <span className="text-body-sm font-semibold text-foreground">
+                  扫码接入 ClaudeWiki助手
+                </span>
+              </div>
+              <p className="mt-1 text-body text-foreground/80">
+                微信扫描二维码开始对话。扫码后可在微信 "转发给朋友 → 客服消息" 中看到 ClaudeWiki助手。
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(url)}
+                  className="rounded-md border border-border px-2 py-1 text-caption text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  复制链接
+                </button>
+              </div>
+              <p className="mt-2 truncate font-mono text-caption text-muted-foreground">
+                {url}
+              </p>
+            </div>
+          </>
+        ) : contactQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-caption text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            生成客服链接...
+          </div>
+        ) : (
+          <div className="text-caption text-muted-foreground">
+            {contactQuery.error
+              ? `获取客服链接失败: ${String(contactQuery.error)}`
+              : "客服链接未生成"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Pipeline: One-scan kefu setup ──────────────────────────── */
+
+const PHASE_LABELS: Record<string, string> = {
+  cf_register: "Cloudflare 账号注册",
+  worker_deploy: "中继服务器部署",
+  wecom_auth: "企业微信授权",
+  callback_config: "回调 URL 配置",
+  kefu_create: "客服账号创建",
+};
+
+function PhaseIcon({ status }: { status: string }) {
+  switch (status) {
+    case "done":
+      return <CheckCircle2 className="size-4" style={{ color: "var(--color-success)" }} />;
+    case "running":
+      return <Loader2 className="size-4 animate-spin text-primary" />;
+    case "waiting_scan":
+      return <QrCode className="size-4" style={{ color: "var(--claude-orange)" }} />;
+    case "failed":
+      return <XCircle className="size-4" style={{ color: "var(--color-error)" }} />;
+    case "skipped":
+      return <MinusCircle className="size-4 text-muted-foreground" />;
+    default:
+      return <Circle className="size-4 text-muted-foreground/40" />;
+  }
+}
+
+function KefuPipelineSection() {
+  const queryClient = useQueryClient();
+  const [skipCf, setSkipCf] = useState(false);
+  const [cfToken, setCfToken] = useState("");
+  const [kickoffPolling, setKickoffPolling] = useState(false);
+
+  const pipelineQuery = useQuery({
+    queryKey: ["kefu", "pipeline"],
+    queryFn: () => getKefuPipelineStatus(),
+    staleTime: 1000,
+    refetchInterval: 2000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: "always",
+  });
+
+  useEffect(() => {
+    if (!kickoffPolling) return;
+    const pipeline = pipelineQuery.data;
+    if (!pipeline) return;
+    const phases = pipeline.phases ?? [];
+    const logs = pipeline.logs ?? [];
+    const hasMoved =
+      logs.length > 0 ||
+      Boolean(pipeline.active) ||
+      Boolean(pipeline.finished_at) ||
+      phases.some((phase) => phase.status !== "pending");
+    if (hasMoved) {
+      setKickoffPolling(false);
+    }
+  }, [kickoffPolling, pipelineQuery.data]);
+
+  const startMutation = useMutation({
+    mutationFn: () =>
+      startKefuPipeline({
+        skip_cf_register: skipCf,
+        cf_api_token: skipCf ? cfToken : undefined,
+      }),
+    onMutate: () => {
+      setKickoffPolling(true);
+      void pipelineQuery.refetch();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["kefu", "pipeline"] });
+      await pipelineQuery.refetch();
+    },
+    onError: () => {
+      setKickoffPolling(false);
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelKefuPipeline(),
+  });
+
+  const pipeline = pipelineQuery.data;
+  const isActive = pipeline?.active ?? false;
+  const phases = pipeline?.phases ?? [];
+  const logs = pipeline?.logs ?? [];
+  const hasStarted =
+    kickoffPolling ||
+    Boolean(pipeline?.started_at) ||
+    phases.some((phase) => phase.status !== "pending");
+  const visibleLogs =
+    logs.length > 0
+      ? logs
+      : kickoffPolling
+        ? ["准备启动新的微信客服接入流程...", "等待桌面后端返回最新阶段状态..."]
+        : [];
+
+  return (
+    <section className="border-b border-border/50 px-6 py-5">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-subhead font-semibold text-foreground">
+            一键接入微信客服
+          </h2>
+          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
+            Pipeline
+          </span>
+        </div>
+      </div>
+
+      {/* Start controls */}
+      {!isActive && !pipeline?.contact_url && (
+        <div className="space-y-3">
+          <p className="text-caption text-muted-foreground">
+            自动注册 Cloudflare 中继 → 企业微信扫码授权 → 配置回调 → 创建客服账号。全程仅需扫码一次。
+          </p>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-caption text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={skipCf}
+                onChange={(e) => setSkipCf(e.target.checked)}
+                className="size-3.5"
+              />
+              已有 Cloudflare 账号
+            </label>
+            {skipCf && (
+              <input
+                type="text"
+                value={cfToken}
+                onChange={(e) => setCfToken(e.target.value)}
+                placeholder="Cloudflare API Token"
+                className="rounded-md border border-border bg-background px-2 py-1 text-caption"
+              />
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => startMutation.mutate()}
+            disabled={startMutation.isPending || (skipCf && !cfToken)}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-body-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {startMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Rocket className="size-4" />
+            )}
+            {hasStarted ? "重新开始" : "一键接入"}
+          </button>
+          {startMutation.error && (
+            <div className="text-caption" style={{ color: "var(--color-error)" }}>
+              {String(startMutation.error)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase progress */}
+      {phases.length > 0 && (
+        <div className="space-y-2">
+          {phases.map((p) => (
+            <div key={p.phase} className="flex items-center gap-3">
+              <PhaseIcon status={p.status} />
+              <span
+                className={`text-body-sm ${
+                  p.status === "done" || p.status === "running" || p.status === "waiting_scan"
+                    ? "text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {PHASE_LABELS[p.phase] || p.phase}
+              </span>
+              {p.status === "skipped" && (
+                <span className="text-caption italic text-muted-foreground">已跳过</span>
+              )}
+              {p.message && (
+                <span className="truncate text-caption text-muted-foreground">
+                  {p.message}
+                </span>
+              )}
+              {p.error && (
+                <span className="truncate text-caption" style={{ color: "var(--color-error)" }}>
+                  {p.error}
+                </span>
+              )}
+            </div>
+          ))}
+
+          {/* Cancel button */}
+          {isActive && (
+            <button
+              type="button"
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+              className="mt-2 rounded-md border border-border px-3 py-1 text-caption text-muted-foreground hover:border-destructive hover:text-destructive"
+            >
+              取消
+            </button>
+          )}
+
+          {/* Contact URL on completion */}
+          {pipeline?.contact_url && (
+            <div className="mt-3 rounded-md border border-border bg-muted/5 p-3">
+              <div className="flex items-center gap-2 text-body-sm font-medium text-foreground">
+                <CheckCircle2 className="size-4" style={{ color: "var(--color-success)" }} />
+                接入完成!
+              </div>
+              <p className="mt-1 font-mono text-caption text-muted-foreground">
+                {pipeline.contact_url}
+              </p>
+            </div>
+          )}
+
+          <div className="mt-3 rounded-md border border-border bg-muted/5 p-3">
+            <div className="mb-2 text-caption font-medium text-foreground">执行日志</div>
+            <div className="max-h-56 overflow-auto rounded-md bg-background px-3 py-2">
+              {visibleLogs.length > 0 ? (
+                <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted-foreground">
+                  {visibleLogs.join("\n")}
+                </pre>
+              ) : (
+                <div className="text-caption text-muted-foreground">
+                  暂无日志
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }

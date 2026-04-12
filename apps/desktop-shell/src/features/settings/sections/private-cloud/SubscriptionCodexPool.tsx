@@ -16,17 +16,17 @@
 // `billing/cloud-accounts-sync.ts` whenever the user's subscription
 // status changes. This panel is informational only.
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ServerCog, Shield, AlertTriangle, Trash2 } from "lucide-react";
-import { SettingGroup, SettingRow } from "../components/SettingGroup";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Loader2, ServerCog, Shield, Trash2 } from "lucide-react";
 import {
+  clearCloudCodexAccounts,
   getBrokerStatus,
   listCloudCodexAccounts,
-  clearCloudCodexAccounts,
   type BrokerPublicStatus,
   type CloudAccountPublic,
   type CodexAccountStatus,
-} from "../api/client";
+} from "../../api/private-cloud";
+import { SettingGroup, SettingRow } from "../../components/SettingGroup";
 
 const brokerKeys = {
   status: () => ["broker", "status"] as const,
@@ -119,8 +119,6 @@ export function SubscriptionCodexPool() {
     </div>
   );
 }
-
-/* ─── Status snapshot card ─────────────────────────────────────── */
 
 function StatusSnapshot({
   status,
@@ -226,8 +224,6 @@ function StatCard({
   );
 }
 
-/* ─── Account list section ─────────────────────────────────────── */
-
 function AccountListSection({
   accounts,
   isLoading,
@@ -245,6 +241,7 @@ function AccountListSection({
       </div>
     );
   }
+
   if (error) {
     return (
       <div
@@ -255,90 +252,86 @@ function AccountListSection({
           color: "var(--color-error)",
         }}
       >
-        加载账号失败：{error.message}
+        账号列表加载失败：{error.message}
       </div>
     );
   }
+
   if (!accounts || accounts.length === 0) {
     return (
-      <div className="rounded-md border border-border/50 bg-muted/10 px-3 py-4 text-center text-caption text-muted-foreground">
-        池中暂无 Codex 账号。订阅交付后会自动出现，30 秒内刷新。
+      <div className="rounded-md border border-dashed border-border px-3 py-4 text-caption text-muted-foreground">
+        当前没有已同步的订阅账号。
       </div>
     );
   }
 
   return (
-    <ul className="divide-y divide-border/40">
+    <div className="space-y-2">
       {accounts.map((account) => (
-        <li key={account.codex_user_id} className="py-2">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-caption text-muted-foreground">
-                  {account.codex_user_id}
-                </span>
-                <StatusPill status={account.status} />
-              </div>
-              <div className="mt-0.5 truncate text-body-sm font-medium text-foreground">
-                {account.alias}
-              </div>
-              <div className="mt-0.5 text-caption text-muted-foreground">
-                expires {formatEpochRelative(account.token_expires_at_epoch)}
-                {" · "}
-                {new Date(account.token_expires_at_epoch * 1000).toISOString()}
-              </div>
+        <div
+          key={`${account.codex_user_id}:${account.cloud_account_id ?? "none"}`}
+          className="flex items-center justify-between rounded-md border border-border bg-muted/10 px-3 py-2"
+        >
+          <div className="min-w-0">
+            <div className="truncate text-body-sm font-medium text-foreground">
+              {account.alias}
             </div>
-            {account.subscription_id != null && (
-              <div className="shrink-0 text-right text-caption text-muted-foreground">
-                <div>sub #{account.subscription_id}</div>
-                {account.cloud_account_id != null && (
-                  <div>acct #{account.cloud_account_id}</div>
-                )}
-              </div>
-            )}
+            <div className="text-caption text-muted-foreground">
+              user={account.codex_user_id}
+              {account.subscription_id ? ` · sub=${account.subscription_id}` : ""}
+            </div>
           </div>
-        </li>
+          <div className="ml-4 text-right">
+            <StatusBadge status={account.status} />
+            <div className="mt-1 text-caption text-muted-foreground">
+              过期于 {formatEpochRelative(account.token_expires_at_epoch)}
+            </div>
+          </div>
+        </div>
       ))}
-    </ul>
+    </div>
   );
 }
 
-function StatusPill({ status }: { status: CodexAccountStatus }) {
-  const config = {
-    fresh: { label: "fresh", color: "var(--color-success)" },
-    expiring: { label: "expiring", color: "var(--color-warning)" },
-    expired: { label: "expired", color: "var(--color-error)" },
-  }[status];
-
+function StatusBadge({ status }: { status: CodexAccountStatus }) {
+  const styles: Record<CodexAccountStatus, { label: string; color: string }> = {
+    fresh: { label: "可用", color: "var(--color-success)" },
+    expiring: { label: "即将过期", color: "var(--color-warning)" },
+    expired: { label: "已过期", color: "var(--color-error)" },
+  };
+  const meta = styles[status];
   return (
     <span
-      className="rounded-full border px-1.5 py-0.5 text-caption font-medium"
+      className="inline-flex rounded-full px-2 py-0.5 text-caption"
       style={{
-        borderColor: `color-mix(in srgb, ${config.color} 40%, transparent)`,
-        color: config.color,
+        color: meta.color,
+        backgroundColor: `color-mix(in srgb, ${meta.color} 10%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${meta.color} 25%, transparent)`,
       }}
     >
-      {config.label}
+      {meta.label}
     </span>
   );
 }
 
-/* ─── Time formatting ──────────────────────────────────────────── */
+function formatEpochRelative(epochSeconds: number): string {
+  const deltaMs = epochSeconds * 1000 - Date.now();
+  const absMinutes = Math.round(Math.abs(deltaMs) / 60_000);
 
-function formatEpochRelative(epochSecs: number): string {
-  const nowSecs = Math.floor(Date.now() / 1000);
-  const delta = epochSecs - nowSecs;
-
-  if (delta <= 0) {
-    const past = -delta;
-    if (past < 60) return `${past}s ago`;
-    if (past < 3600) return `${Math.floor(past / 60)}m ago`;
-    if (past < 86_400) return `${Math.floor(past / 3600)}h ago`;
-    return `${Math.floor(past / 86_400)}d ago`;
+  if (absMinutes < 1) return deltaMs >= 0 ? "不到 1 分钟后" : "刚刚过期";
+  if (absMinutes < 60) {
+    return deltaMs >= 0
+      ? `${absMinutes} 分钟后`
+      : `${absMinutes} 分钟前`;
   }
 
-  if (delta < 60) return `in ${delta}s`;
-  if (delta < 3600) return `in ${Math.floor(delta / 60)}m`;
-  if (delta < 86_400) return `in ${Math.floor(delta / 3600)}h`;
-  return `in ${Math.floor(delta / 86_400)}d`;
+  const absHours = Math.round(absMinutes / 60);
+  if (absHours < 48) {
+    return deltaMs >= 0
+      ? `${absHours} 小时后`
+      : `${absHours} 小时前`;
+  }
+
+  const absDays = Math.round(absHours / 24);
+  return deltaMs >= 0 ? `${absDays} 天后` : `${absDays} 天前`;
 }

@@ -1,9 +1,9 @@
 /**
- * Dashboard · 你的外脑主页 (wireframes.html §01)
+ * Dashboard · 你的外脑主页
  *
  * S3 real implementation. The canonical §5 wireframe shows six
- * regions: logo strip, today's ingest count, broker pool size,
- * maintainer "pages touched today", pending Inbox, and a QuickAsk
+ * regions: logo strip, today's ingest count, optional runtime-status
+ * card, maintainer "pages touched today", pending Inbox, and a QuickAsk
  * composer. S3 wires the first four to live data; QuickAsk is
  * reduced to a "Start a conversation" button that jumps to `/ask`
  * (MVP — the full inline composer lands after S4 when the Ask
@@ -11,7 +11,8 @@
  *
  * Data sources:
  *   GET /api/wiki/raw             — total ingest count + today's new
- *   GET /api/broker/status         — pool size + requests today
+ *   GET /api/desktop/bootstrap    — feature capabilities
+ *   GET /api/broker/status        — private-cloud pool stats (optional)
  *
  * The page is intentionally LIGHT on logic. Anything that looks like
  * a real statistic (maintenance digest, inbox unread, etc.) lights
@@ -32,9 +33,12 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { listRawEntries, listInboxEntries, listWikiPages } from "@/features/ingest/persist";
-import { getBrokerStatus } from "@/features/settings/api/client";
+import { getBootstrap } from "@/features/settings/api/client";
+import { getBrokerStatus } from "@/features/settings/api/private-cloud";
+import { cn } from "@/lib/utils";
 
 const dashboardKeys = {
+  bootstrap: () => ["desktop", "bootstrap"] as const,
   raw: () => ["wiki", "raw", "list"] as const,
   broker: () => ["broker", "status"] as const,
   inbox: () => ["wiki", "inbox", "list"] as const,
@@ -42,16 +46,25 @@ const dashboardKeys = {
 };
 
 export function DashboardPage() {
+  const bootstrapQuery = useQuery({
+    queryKey: dashboardKeys.bootstrap(),
+    queryFn: getBootstrap,
+    staleTime: 60_000,
+  });
   const rawQuery = useQuery({
     queryKey: dashboardKeys.raw(),
     queryFn: () => listRawEntries(),
     staleTime: 15_000,
   });
 
+  const privateCloudEnabled =
+    bootstrapQuery.data?.private_cloud_enabled === true;
+
   const brokerQuery = useQuery({
     queryKey: dashboardKeys.broker(),
     queryFn: () => getBrokerStatus(),
     staleTime: 15_000,
+    enabled: privateCloudEnabled,
   });
 
   const inboxQuery = useQuery({
@@ -76,9 +89,11 @@ export function DashboardPage() {
   const totalIngests = rawEntries.length;
   const todaysIngests = rawEntries.filter((e) => e.date === todayDate).length;
 
-  const brokerStatus = brokerQuery.data;
+  const brokerStatus = privateCloudEnabled ? brokerQuery.data : undefined;
   const brokerError =
-    brokerQuery.error instanceof Error ? brokerQuery.error.message : null;
+    privateCloudEnabled && brokerQuery.error instanceof Error
+      ? brokerQuery.error.message
+      : null;
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -96,7 +111,12 @@ export function DashboardPage() {
       </section>
 
       {/* Stat cards */}
-      <section className="grid grid-cols-2 gap-3 px-8 py-4 md:grid-cols-4">
+      <section
+        className={cn(
+          "grid grid-cols-2 gap-3 px-8 py-4",
+          privateCloudEnabled ? "md:grid-cols-4" : "md:grid-cols-3"
+        )}
+      >
         <StatCard
           icon={FileStack}
           label="今日入库"
@@ -105,26 +125,28 @@ export function DashboardPage() {
           tint="var(--color-success)"
           link="/raw"
         />
-        <StatCard
-          icon={ServerCog}
-          label="Codex 令牌池"
-          value={
-            brokerQuery.isLoading
-              ? "…"
-              : brokerStatus
-                ? String(brokerStatus.pool_size)
-                : "—"
-          }
-          hint={
-            brokerError
-              ? "代理不可达"
-              : brokerStatus
-                ? `${brokerStatus.fresh_count} 可用`
-                : "连接中…"
-          }
-          tint={brokerError ? "var(--color-error)" : "var(--claude-blue)"}
-          link="/settings"
-        />
+        {privateCloudEnabled && (
+          <StatCard
+            icon={ServerCog}
+            label="Codex 令牌池"
+            value={
+              brokerQuery.isLoading
+                ? "…"
+                : brokerStatus
+                  ? String(brokerStatus.pool_size)
+                  : "—"
+            }
+            hint={
+              brokerError
+                ? "代理不可达"
+                : brokerStatus
+                  ? `${brokerStatus.fresh_count} 可用`
+                  : "连接中…"
+            }
+            tint={brokerError ? "var(--color-error)" : "var(--claude-blue)"}
+            link="/settings"
+          />
+        )}
         <StatCard
           icon={Brain}
           label="已维护页面"

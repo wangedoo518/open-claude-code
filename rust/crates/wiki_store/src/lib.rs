@@ -1,7 +1,7 @@
 //! `wiki_store` — on-disk layout and lifecycle for `~/.clawwiki/`.
 //!
-//! ClawWiki canonical (`docs/clawwiki/product-design.md` §10) defines a
-//! three-layer file system rooted at `~/.clawwiki/`:
+//! The current desktop-shell product defines a three-layer file system
+//! rooted at `~/.clawwiki/`:
 //!
 //! ```text
 //! ~/.clawwiki/
@@ -2502,8 +2502,9 @@ mod tests {
         assert!(claude_md_path.is_file(), "schema/CLAUDE.md not seeded");
 
         let content = fs::read_to_string(&claude_md_path).unwrap();
-        // Hard-pin a few canonical landmarks. If the template ever
-        // drifts away from §8 of product-design.md, these break loudly.
+        // Hard-pin a few canonical landmarks. If the seeded template
+        // drifts away from the expected maintainer-rule structure,
+        // these break loudly.
         assert!(
             content.starts_with("# CLAUDE.md · wiki-maintainer agent rules"),
             "header missing or changed"

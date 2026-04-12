@@ -182,6 +182,7 @@ export function useAskSession(): UseAskSessionResult {
     enabled: activeId !== null,
     staleTime: 5_000,
     retry: false, // Don't retry 404s — let ensureMutation handle it
+    refetchOnMount: "always",
     refetchInterval: (q) => {
       const data = q.state.data as DesktopSessionDetail | undefined;
       const currentState = data?.turn_state;

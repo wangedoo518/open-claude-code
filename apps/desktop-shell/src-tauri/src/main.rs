@@ -8,6 +8,7 @@ use pipeline::PipelineStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -17,6 +18,7 @@ use tauri::State;
 
 const DEFAULT_DESKTOP_API_BASE: &str = "http://127.0.0.1:4357";
 const DEFAULT_DESKTOP_SERVER_ADDR: &str = "127.0.0.1:4357";
+const REQUIRED_DESKTOP_SERVER_ROUTE: &str = "/api/desktop/wechat-kefu/pipeline/status";
 const CLAUDE_CODE_CLI_TOOL: &str = "claude-code";
 const OPENAI_CODEX_CLI_TOOL: &str = "openai-codex";
 const CODEX_OPENAI_PROVIDER_ID: &str = "codex-openai";
@@ -934,6 +936,35 @@ fn is_desktop_server_available(address: &str) -> bool {
     TcpStream::connect_timeout(&socket, Duration::from_millis(200)).is_ok()
 }
 
+fn desktop_server_supports_required_route(address: &str) -> bool {
+    let socket = match address.parse::<SocketAddr>() {
+        Ok(socket) => socket,
+        Err(_) => return false,
+    };
+
+    let mut stream = match TcpStream::connect_timeout(&socket, Duration::from_millis(500)) {
+        Ok(stream) => stream,
+        Err(_) => return false,
+    };
+
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+
+    let request = format!(
+        "GET {REQUIRED_DESKTOP_SERVER_ROUTE} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+
+    response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
+}
+
 fn wait_for_desktop_server(address: &str, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -972,20 +1003,22 @@ fn spawn_desktop_server_process(address: &str) -> Result<Child, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_dir = manifest_dir.join("../../../rust");
     eprintln!("starting desktop-server for address {address}");
-    let mut command = if let Some(binary) = desktop_server_binary_candidates(&workspace_dir)
+    let mut command = if cfg!(debug_assertions) {
+        eprintln!(
+            "debug mode: launching desktop-server via `cargo run -p desktop-server` so Rust changes rebuild on every app restart"
+        );
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(&workspace_dir)
+            .args(["run", "-p", "desktop-server"]);
+        command
+    } else if let Some(binary) = desktop_server_binary_candidates(&workspace_dir)
         .into_iter()
         .find(|candidate| candidate.exists())
     {
         eprintln!("using desktop-server binary {}", binary.display());
         let mut command = Command::new(binary);
         command.current_dir(&workspace_dir);
-        command
-    } else if cfg!(debug_assertions) {
-        eprintln!("desktop-server binary missing, falling back to `cargo run -p desktop-server`");
-        let mut command = Command::new("cargo");
-        command
-            .current_dir(&workspace_dir)
-            .args(["run", "-p", "desktop-server"]);
         command
     } else {
         return Err(
@@ -1009,6 +1042,55 @@ fn spawn_desktop_server_process(address: &str) -> Result<Child, String> {
         .map_err(|error| format!("Failed to launch desktop-server: {error}"))
 }
 
+fn terminate_desktop_server_listeners(address: &str) {
+    let port = match address.parse::<SocketAddr>() {
+        Ok(socket) => socket.port(),
+        Err(_) => return,
+    };
+
+    let output = match Command::new("lsof")
+        .args([
+            "-nP",
+            &format!("-iTCP:{port}"),
+            "-sTCP:LISTEN",
+            "-t",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("failed to inspect existing desktop-server listener: {error}");
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        return;
+    }
+
+    let pids = String::from_utf8_lossy(&output.stdout);
+    for pid in pids.lines().filter_map(|line| line.trim().parse::<u32>().ok()) {
+        let ps_output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .output();
+        let command_line = ps_output
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !command_line.contains("desktop-server") {
+            eprintln!(
+                "refusing to terminate non desktop-server listener on {address}: pid={pid} cmd={command_line}"
+            );
+            continue;
+        }
+
+        eprintln!("terminating stale desktop-server listener on {address}: pid={pid}");
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+}
+
 fn shutdown_desktop_server(handle: &DesktopServerHandle) {
     let child = {
         let mut guard = handle.lock().expect("desktop server lock poisoned");
@@ -1029,8 +1111,33 @@ fn ensure_desktop_server(handle: &DesktopServerHandle) -> Result<(), String> {
     }
 
     let address = desired_desktop_server_addr();
-    if is_desktop_server_available(&address) {
-        return Ok(());
+    let mut server_available = is_desktop_server_available(&address);
+    let has_owned_child = handle
+        .lock()
+        .expect("desktop server lock poisoned")
+        .is_some();
+
+    if cfg!(debug_assertions) && server_available && !has_owned_child {
+        eprintln!(
+            "debug mode: restarting existing desktop-server on {address} to pick up fresh Rust changes"
+        );
+        shutdown_desktop_server(handle);
+        terminate_desktop_server_listeners(&address);
+        std::thread::sleep(Duration::from_millis(250));
+        server_available = false;
+    }
+
+    if server_available {
+        if desktop_server_supports_required_route(&address) {
+            return Ok(());
+        }
+
+        eprintln!(
+            "desktop-server on {address} is reachable but missing required route {REQUIRED_DESKTOP_SERVER_ROUTE}; restarting"
+        );
+        shutdown_desktop_server(handle);
+        terminate_desktop_server_listeners(&address);
+        std::thread::sleep(Duration::from_millis(250));
     }
 
     let child = spawn_desktop_server_process(&address)?;

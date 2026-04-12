@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+private-cloud = []
+
 [dependencies]
 aes-gcm = "0.10"
 api.workspace = true
@@ -12,6 +16,8 @@ async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
 pdf-extract = "0.7"
+qrcode = "0.14"
+mailparse = "0.15"
 plugins.workspace = true
 rand = "0.8"
 runtime.workspace = true
@@ -23,7 +29,10 @@ sha2 = "0.10"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 thiserror = "2"
 tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tokio-util = "0.7"
+regex-lite = "0.1"
+urlencoding = "2"
 toml_edit = "0.22"
 tools.workspace = true
 url = "2"
@@ -31,6 +40,7 @@ uuid = { version = "1", features = ["v4"] }
 wiki_ingest = { path = "../wiki_ingest" }
 wiki_maintainer = { path = "../wiki_maintainer" }
 wiki_store = { path = "../wiki_store" }
+wxkefu-rs = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

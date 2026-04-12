@@ -5,8 +5,8 @@ members = [
     "crates/desktop-cli",
     "crates/server",
     # ── ClawWiki S0+ new crates ─────────────────────────────────────
-    # Per `docs/clawwiki/product-design.md` §11.2. Added incrementally
-    # so each crate lands behind its own RED→GREEN→commit cycle.
+    # Added incrementally so each crate lands behind its own
+    # RED→GREEN→commit cycle.
     "crates/wiki_store",
     "crates/wiki_ingest",
     "crates/wiki_maintainer",

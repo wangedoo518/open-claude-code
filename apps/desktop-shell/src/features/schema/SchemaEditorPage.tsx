@@ -1,5 +1,5 @@
 /**
- * Schema Editor · Maintainer 的纪律 (wireframes.html §09)
+ * Schema Editor · Maintainer 的纪律
  *
  * S6 MVP shipped a read-only viewer; feat(M) adds write mode:
  * canonical §8 says "schema/ is human-curated", so the HUMAN write

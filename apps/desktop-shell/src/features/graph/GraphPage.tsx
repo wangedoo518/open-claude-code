@@ -1,5 +1,5 @@
 /**
- * Graph · 你的认知网络 (wireframes.html §08)
+ * Graph · 你的认知网络
  *
  * S6 MVP implementation. The canonical surface eventually shows a
  * force-directed node+edge render of ALL wiki pages colored by

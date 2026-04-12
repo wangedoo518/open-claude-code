@@ -11,8 +11,7 @@ import { listInboxEntries } from "@/features/ingest/persist";
 /**
  * ClawWiki canonical Sidebar (220px expanded / 56px collapsed).
  *
- * Per `docs/clawwiki/product-design.md` §5 and `wireframes.html` §01-10,
- * the sidebar is the single navigation surface for the shell:
+ * The sidebar is the single navigation surface for the shell:
  *
  *   ┌─ [Logo] ClawWiki · 你的外脑
  *   │
@@ -32,7 +31,8 @@ import { listInboxEntries } from "@/features/ingest/persist";
  *   └─ ⚙  Settings + collapse toggle foot
  *
  * Design decisions captured here (reviewers read this comment block):
- * - The 220px expanded width is hard-pinned from wireframes.html. Do
+ * - The 220px expanded width is hard-pinned from the approved shell
+ *   layout. Do
  *   not bump it without re-running the screenshots; downstream layouts
  *   assume `1400 - 220 = 1180` for the main pane.
  * - The 56px collapsed width shows only icons and a centered active

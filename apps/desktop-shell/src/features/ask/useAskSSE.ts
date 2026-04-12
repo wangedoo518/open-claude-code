@@ -91,6 +91,12 @@ export function useAskSSE(
       },
       (error) => {
         console.warn("[ask-sse] connection error, falling back to polling", error.message);
+        if (sessionId) {
+          void queryClient.invalidateQueries({
+            queryKey: ["clawwiki", "ask", "session", sessionId],
+          });
+        }
+        useStreamingStore.getState().clearStreamingContent();
         toast.warning("实时流式连接失败，已退化为轮询模式", { duration: 4000 });
         controllerRef.current = null;
       },

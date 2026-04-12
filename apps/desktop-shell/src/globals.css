@@ -314,8 +314,8 @@
    Coexists with shadcn and theme-warwolf; selected by the settings
    flag `clawwikiShell` which drives ThemeProvider to toggle the class.
 
-   Palette sourced verbatim from `docs/clawwiki/wireframes.html` :root
-   so the running shell matches the approved wireframes pixel-for-pixel.
+   Palette sourced from the approved DeepTutor warm-theme reference so
+   the running shell matches the intended visual direction closely.
    ═══════════════════════════════════════════════════════════════ */
 
 @layer base {

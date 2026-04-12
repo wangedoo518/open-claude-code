@@ -1,5 +1,5 @@
 /**
- * Wiki Pages Explorer (wireframes.html §04, §05)
+ * Wiki Pages Explorer
  *
  * Canonical §10 layer contract: `~/.clawwiki/wiki/concepts/` is where
  * the `wiki_maintainer` agent writes its output. After commit

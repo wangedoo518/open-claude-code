@@ -9,8 +9,8 @@
 
 这个库不是工具箱。它是你未来两年里提问、写作、决策时，AI 能直接调用的"长期记忆"。
 
-📖 完整 canonical 设计：[`docs/clawwiki/product-design.md`](docs/clawwiki/product-design.md)
-🎨 10 屏线框图：[`docs/clawwiki/wireframes.html`](docs/clawwiki/wireframes.html)
+📖 公共文档入口：[`docs/desktop-shell/README.md`](docs/desktop-shell/README.md)
+🧭 开源边界与 API Key gateway 设计：[`docs/desktop-shell/specs/2026-04-12-desktop-shell-open-source-gateway-design.md`](docs/desktop-shell/specs/2026-04-12-desktop-shell-open-source-gateway-design.md)
 
 ---
 
@@ -32,7 +32,7 @@
 
 这就是 **Karpathy 说的认知复利**：过去两周的微信随手转发 → 现在 30 秒就能调用。
 
-完整用户故事见 [`product-design.md §2`](docs/clawwiki/product-design.md)。
+当前公开文档入口见 [`docs/desktop-shell/README.md`](docs/desktop-shell/README.md)。
 
 ---
 
@@ -43,8 +43,8 @@
 > 用户买的不是"Codex 代理服务"，是"一个会替自己长大的外脑"。
 > Codex 账号是订阅附赠的燃料，不是产品本身。
 
-- 平台分配的 Codex 账号进入 `rust/desktop-core::managed_auth` 的 `CloudManaged` source
-- `CodexBroker` 是一个 **Rust struct**，**不是**一个 HTTP 服务
+- 受管账号能力只应作为私有扩展存在于控制平面，不应成为公开仓库的默认依赖
+- 任何 broker / pool 逻辑都应优先保持在 Rust 进程内，而不是暴露成公共 HTTP token 服务
 - 只有两个消费者：`AskSession`（用户提问）和 `WikiMaintainer`（后台自动维护）
 - 前端拿不到 `access_token`，只能看到"池子还剩多少配额"这个数字
 - 外部应用（Cursor / CLI / CCD / 第三方）**无法**从 127.0.0.1:4357 拿到任何 token
@@ -193,7 +193,7 @@ ClawWiki 桌面壳 (Tauri)
 | HTML → Markdown | **obsidian-clipper/api::clip()** | `src/api.ts` 零 chrome.* 依赖，已经把 defuddle 串起来 |
 | DOM Parser | Tauri WebView 原生 `DOMParser` | 不用 linkedom，不开 Node 子进程 |
 | ❌ obsidian-importer | 硬绑 Obsidian Vault API，抽出来成本 > 重写 | 不用 |
-| 维护 LLM | Codex GPT-5.4 via CloudManaged pool | prompt cache 能省 50-90% |
+| 维护 LLM | 兼容网关或直连模型提供方 | 公开仓库只承诺协议兼容，不承诺私有账号池能力 |
 | 维护范式 MVP | engram 式（单次 LLM 调用 + Pydantic 校验返回 JSON） | 代码量小；规模化后抄 sage-wiki 5-pass |
 
 ---
@@ -226,22 +226,15 @@ ClawWiki 桌面壳 (Tauri)
 
 ---
 
-## 10 屏线框图
+## Public Docs
 
-`docs/clawwiki/wireframes.html` · 1400×900 · 全 DeepTutor 暖色 · 单侧栏 · CCD 4 件套灵魂可见于 #06 + #07
+The repository no longer treats `docs/clawwiki/` as public
+source-of-truth. Public readers should use:
 
-| # | 屏 | 展示 | CCD 灵魂 |
-|---|---|---|---|
-| 01 | Dashboard · 你的外脑主页 | 认知资产复利指标 + 今日微信进账 + QuickAsk | — |
-| 02 | WeChat Bridge · 唯一漏斗 | Bot 绑定 + 5 步 pipeline 状态灯 + 今日收件箱 | — |
-| 03 | Raw Library · 不可变事实层 | 1326 源 · 92% 来自微信 | — |
-| 04 | Wiki Pages · LLM 主笔层 | Concepts/People/Topics/Compare/Changelog | — |
-| 05 | Wiki Page Detail · Lora 衬线 | 正文 + backlinks 追溯到微信 | — |
-| **06** | **Ask · CCD 工作台 + 流式会话** | 流式消息流 + Composer + PermissionDialog 预览 | **① 工作台 ② 流式** |
-| **07** | **Inbox · CCD 权限确认 + 任务审阅** | 任务列表 + 完整 TaskTree + diff 预览 | **③ 权限 ④ 审阅** |
-| 08 | Graph · 你的认知网络 | 节点=页面 · 颜色=fresh/stale/conflict | — |
-| 09 | Schema Editor · Maintainer 的纪律 | CLAUDE.md + Maintainer proposal diff | — |
-| 10 | Settings · Subscription & Codex Pool | 订阅状态 + 账号池（只读）· 无外部 hookup | — |
+- [`docs/desktop-shell/README.md`](docs/desktop-shell/README.md)
+- [`docs/desktop-shell/architecture/overview.md`](docs/desktop-shell/architecture/overview.md)
+- [`docs/desktop-shell/specs/README.md`](docs/desktop-shell/specs/README.md)
+- [`docs/desktop-shell/plans/README.md`](docs/desktop-shell/plans/README.md)
 
 ---
 
@@ -251,7 +244,7 @@ ClawWiki 桌面壳 (Tauri)
 |---|---|---|---|
 | **S0 · 斩断** | W1 前半 | 一次性删除 `shell/TabBar.tsx`、`features/{apps,code,code-tools,workbench,session-workbench}/` 六个目录 · 建 `~/.clawwiki/` + `CLAUDE.md` + `Sidebar.tsx` + 7 路由 stub | Wiki-first 壳跑起来不编译错 |
 | **S1 · 漏斗** | W1 后半 + W2 | fork defuddle + 写 `wechat.ts` extractor + `features/ingest/` + `RawLibraryPage` + 手动 paste URL | 粘贴 mp.weixin URL，10s 内 raw 多一份格式良好 md |
-| **S2 · Broker** | W3 | `codex_broker` Rust 模块 + `CloudManaged` source + Settings > Subscription & Codex Pool 只读面板 | Dashboard 显示 "pool: 5 · 今日 0 req · ¥0" |
+| **S2 · Broker** | W3 | Rust 内部 broker 与受管账号边界方案 | 私有扩展可用，但不成为公开仓库默认 contract |
 | **S3 · CCD 4 件套提取** | W4 | 拆 `session-workbench` → 7 个新组件 · AskPage 通 Broker · InboxPage 空壳 | 能 Ask 对话、看流式、mock write_page 触发 PermissionDialog |
 | **S4 · 维护 Agent** | W5 | `wiki_maintainer` (engram 式单次调用) · JSON 校验 · Inbox 显 MaintainerTaskTree | ingest 后自动生成 1-3 wiki page + log.md + 能审阅 |
 | **S5 · 微信主入口** | W6 | `wechat-ingest` 云服务 · Rust `wechat_bridge` · WeChatBridgePage + WS | 微信给 bot 发 mp 链接，3s 内 Inbox 卡片出现并走完 pipeline |
@@ -284,7 +277,7 @@ claudewiki/
 │       │   └── src/
 │       │       ├── wechat_ilink/     # ✅ Phase 6B/6C: WeChat 账号接入（10 个文件）
 │       │       ├── providers_config.rs
-│       │       ├── managed_auth.rs   # 🔨 S2 加 CloudManaged source
+│       │       ├── managed_auth.rs   # 认证与兼容 provider runtime
 │       │       ├── codex_auth.rs
 │       │       └── agentic_loop.rs
 │       ├── desktop-server/           # 本地 HTTP (127.0.0.1:4357)
@@ -293,10 +286,11 @@ claudewiki/
 ├── vendor/
 │   └── api/                          # LLM provider 抽象（Anthropic / OpenAI 兼容）
 ├── docs/
-│   ├── clawwiki/                     # ⭐ canonical 产品设计 + 线框图
-│   │   ├── product-design.md         # 769 行
-│   │   ├── wireframes.html           # 10 屏
-│   │   └── _archive/                 # v1 / middle-path / v2 / v3 全部历史
+│   ├── clawwiki/                     # legacy placeholders; not public source of truth
+│   │   ├── README.md
+│   │   ├── product-design.md         # public-safe placeholder
+│   │   ├── wireframes.html           # public-safe placeholder
+│   │   └── _archive/README.md        # legacy archive placeholder
 │   └── desktop-shell/
 └── assets/
 ```
@@ -346,10 +340,10 @@ cd src-tauri && cargo check
 
 | 文档 | 内容 |
 |---|---|
-| ⭐ [`docs/clawwiki/product-design.md`](docs/clawwiki/product-design.md) | **canonical 产品设计**。手术刀哲学、11 条断腕、7 个一级导航、CCD 4 件套提取精确映射、WeChat pipeline、`CodexBroker` Rust 草图、7 周 MVP 路线、D1-D20 团队评审投票表 |
-| ⭐ [`docs/clawwiki/wireframes.html`](docs/clawwiki/wireframes.html) | 10 屏 canonical 线框图，暖色 DeepTutor 风格，CCD 4 件套灵魂可见于 #06 Ask + #07 Inbox |
-| [`docs/clawwiki/_archive/`](docs/clawwiki/_archive/) | 前 4 代设计演进（v1 → middle-path → v2 → v3），供 diff review |
-| [`docs/desktop-shell/cloud-managed-integration.md`](docs/desktop-shell/cloud-managed-integration.md) | 历史 spec：trade-service Codex 账号 → Rust `CloudManaged` 的早期规划 |
+| ⭐ [`docs/desktop-shell/README.md`](docs/desktop-shell/README.md) | **公共文档入口**。当前架构、tokens、operations、specs、plans 的正式入口 |
+| ⭐ [`docs/desktop-shell/specs/2026-04-12-desktop-shell-open-source-gateway-design.md`](docs/desktop-shell/specs/2026-04-12-desktop-shell-open-source-gateway-design.md) | **开源边界 + API Key gateway 评审稿**。定义什么可以公开、什么必须保持私有，以及用户如何通过 `base_url + api_key` 接入兼容网关 |
+| [`docs/clawwiki/README.md`](docs/clawwiki/README.md) | 兼容路径说明。该目录中的旧设计稿已退出公共 source-of-truth |
+| [`docs/desktop-shell/cloud-managed-integration.md`](docs/desktop-shell/cloud-managed-integration.md) | 历史占位。原私有 cloud-managed 方案已退出公共 source-of-truth |
 | [`CLAW.md`](CLAW.md) · [`AGENTS.md`](AGENTS.md) | 仓库级 Claude Code 使用约定 · 多 agent 分工 |
 | [`rust/README.md`](rust/README.md) | Rust workspace 结构 |
 
@@ -376,5 +370,5 @@ cd src-tauri && cargo check
 
 <sub>
 <b>ClawWiki</b> · 产品哲学："放弃做瑞士军刀，打造一把手术刀。" ·
-canonical design <code>docs/clawwiki/product-design.md</code>
+public docs <code>docs/desktop-shell/README.md</code>
 </sub>

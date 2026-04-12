@@ -83,6 +83,9 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // deletes a WeChat account from the frontend (Phase 6C).
     state.spawn_wechat_monitors_for_all_accounts().await;
 
+    // Channel B: auto-start kefu monitor if configured
+    state.auto_start_kefu_monitor().await;
+
     serve(AppState::new(state), address).await?;
     Ok(())
 }

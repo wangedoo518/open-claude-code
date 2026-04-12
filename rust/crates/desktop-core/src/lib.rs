@@ -40,21 +40,21 @@ use tools::GlobalToolRegistry;
 pub mod agentic_loop;
 pub mod attachments;
 mod codex_auth;
-// ClawWiki S2: internal Codex subscription account pool per
-// canonical §9.2. Owns the cloud-managed accounts in-process with
-// AES-GCM at-rest persistence; chat_completion() is stubbed until
-// ask_runtime wires it in S3. NEVER exposed through any HTTP /v1/*.
+// Optional private-cloud account pool. OSS builds keep this feature
+// off by default and use the generic provider registry path instead.
+#[cfg(feature = "private-cloud")]
 pub mod codex_broker;
 mod managed_auth;
 mod oauth_runtime;
 pub mod protocol_codegen;
 // S0.4 cut day note: providers_config was removed but restored for
-// ClawWiki Cloud gateway integration — users need to configure
-// claude-wiki-api as an Anthropic-compatible provider via the UI.
+// generic compatible-gateway support. Users configure Anthropic-
+// compatible and OpenAI-compatible providers via the settings UI.
 pub mod providers_config;
 pub mod secure_storage;
 pub mod system_prompt;
 pub mod wechat_ilink;
+pub mod wechat_kefu;
 // ClawWiki S4: adapter bridging codex_broker::CodexBroker to
 // wiki_maintainer::BrokerSender. Implements the maintainer's trait
 // for a wrapper struct (orphan rule forbids impl on foreign types)
@@ -153,6 +153,8 @@ pub struct DesktopBootstrap {
     pub top_tabs: Vec<DesktopTopTab>,
     pub launchpad_items: Vec<DesktopLaunchpadItem>,
     pub settings_groups: Vec<DesktopSettingsGroup>,
+    #[serde(default)]
+    pub private_cloud_enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -1231,6 +1233,12 @@ pub struct DesktopState {
     /// Resolved at `DesktopState::live()` from
     /// `WECHAT_DEFAULT_PROJECT_PATH` → current dir → ".".
     wechat_default_project_path: Arc<RwLock<String>>,
+
+    // --- Channel B: Official WeChat Customer Service (kefu) ---
+    kefu_monitor: Arc<RwLock<Option<WeChatMonitorHandle>>>,
+    kefu_callback_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<wechat_kefu::CallbackEvent>>>>,
+    kefu_pipeline_state: Arc<RwLock<Option<tokio::sync::watch::Receiver<wechat_kefu::PipelineState>>>>,
+    kefu_pipeline_cancel: Arc<RwLock<Option<CancellationToken>>>,
 }
 
 /// Handle to a running WeChat iLink monitor. Held inside
@@ -1407,6 +1415,10 @@ impl DesktopState {
             wechat_default_project_path: Arc::new(RwLock::new(
                 resolve_wechat_default_project_path(),
             )),
+            kefu_monitor: Arc::new(RwLock::new(None)),
+            kefu_callback_tx: Arc::new(RwLock::new(None)),
+            kefu_pipeline_state: Arc::new(RwLock::new(None)),
+            kefu_pipeline_cancel: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -1477,6 +1489,7 @@ impl DesktopState {
                     "Managed provider routing and OpenClaw integration.",
                 ),
             ],
+            private_cloud_enabled: cfg!(feature = "private-cloud"),
         }
     }
 
@@ -3108,7 +3121,8 @@ impl DesktopState {
                 // Use the new agentic loop with real tool execution.
                 //
                 // This path is for AnthropicCompat providers ONLY (e.g.
-                // ClawWiki Cloud, direct Anthropic API key). OpenAiCompat
+                // a compatible gateway or a direct Anthropic API key).
+                // OpenAiCompat
                 // providers are routed to execute_live_turn above.
                 let bridge_base_url = client.base_url.clone();
                 let model_override = client
@@ -4221,6 +4235,257 @@ impl DesktopState {
         Ok(())
     }
 
+    // ===================================================================
+    // Channel B: Official WeChat Customer Service (kefu)
+    // ===================================================================
+
+    pub async fn save_kefu_config(
+        &self,
+        config: wechat_kefu::KefuConfig,
+    ) -> Result<(), String> {
+        wechat_kefu::save_config(&config)
+            .map_err(|e| format!("save_config failed: {e}"))
+    }
+
+    pub async fn load_kefu_config(
+        &self,
+    ) -> Result<Option<wechat_kefu::KefuConfig>, String> {
+        wechat_kefu::load_config().map_err(|e| format!("load_config failed: {e}"))
+    }
+
+    pub async fn create_kefu_account(&self, name: &str) -> Result<String, String> {
+        let config = self
+            .load_kefu_config()
+            .await?
+            .ok_or_else(|| "kefu config not found — save config first".to_string())?;
+        let client = wechat_kefu::KefuClient::new(&config.corpid, &config.secret);
+        let open_kfid = client
+            .create_account(name)
+            .await
+            .map_err(|e| format!("create_account failed: {e}"))?;
+
+        // Persist the open_kfid back into config
+        let mut updated = config;
+        updated.open_kfid = Some(open_kfid.clone());
+        updated.account_name = Some(name.to_string());
+        self.save_kefu_config(updated).await?;
+        Ok(open_kfid)
+    }
+
+    pub async fn get_kefu_contact_url(&self) -> Result<String, String> {
+        let config = self
+            .load_kefu_config()
+            .await?
+            .ok_or_else(|| "kefu config not found".to_string())?;
+        let open_kfid = config
+            .open_kfid
+            .as_deref()
+            .ok_or_else(|| "no open_kfid — create account first".to_string())?;
+        let client = wechat_kefu::KefuClient::new(&config.corpid, &config.secret);
+        let url = client
+            .get_contact_url(open_kfid)
+            .await
+            .map_err(|e| format!("get_contact_url failed: {e}"))?;
+
+        // Persist the contact URL
+        let mut updated = config;
+        updated.contact_url = Some(url.clone());
+        self.save_kefu_config(updated).await?;
+        Ok(url)
+    }
+
+    pub async fn spawn_kefu_monitor(&self) -> Result<(), String> {
+        // Stop existing monitor
+        self.stop_kefu_monitor().await;
+
+        let config = self
+            .load_kefu_config()
+            .await?
+            .ok_or_else(|| "kefu config not found".to_string())?;
+        let open_kfid = config
+            .open_kfid
+            .clone()
+            .ok_or_else(|| "no open_kfid — create account first".to_string())?;
+
+        let client = wechat_kefu::KefuClient::new(&config.corpid, &config.secret);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (status_tx, status_rx) =
+            tokio::sync::watch::channel(wechat_ilink::MonitorStatus::default());
+
+        let (callback_tx, callback_rx) = tokio::sync::mpsc::channel(64);
+
+        // Store callback sender for the HTTP callback handler
+        *self.kefu_callback_tx.write().await = Some(callback_tx);
+
+        let project_path = self.wechat_default_project_path.read().await.clone();
+        let wiki_root = wiki_store::default_root();
+        let _ = wiki_store::init_wiki(&wiki_root);
+        let wiki_paths = wiki_store::WikiPaths::resolve(&wiki_root);
+
+        let handler: Arc<dyn wechat_kefu::monitor::KefuMessageHandler> = Arc::new(
+            wechat_kefu::desktop_handler::KefuDesktopHandler::new(
+                self.clone(),
+                project_path,
+            )
+            .with_wiki_paths(wiki_paths),
+        );
+
+        let monitor_config = wechat_kefu::monitor::KefuMonitorConfig {
+            client,
+            open_kfid,
+            handler,
+            cancel: cancel.clone(),
+            callback_rx,
+        };
+
+        eprintln!("[kefu] spawning monitor");
+        tokio::spawn(async move {
+            wechat_kefu::monitor::run_kefu_monitor(monitor_config, status_tx).await;
+        });
+
+        *self.kefu_monitor.write().await = Some(WeChatMonitorHandle { cancel, status_rx });
+        Ok(())
+    }
+
+    pub async fn stop_kefu_monitor(&self) {
+        if let Some(handle) = self.kefu_monitor.write().await.take() {
+            handle.cancel.cancel();
+            *self.kefu_callback_tx.write().await = None;
+            eprintln!("[kefu] monitor stopped");
+        }
+    }
+
+    pub async fn kefu_status(&self) -> wechat_kefu::KefuStatus {
+        let config = wechat_kefu::load_config().ok().flatten();
+        let monitor = self.kefu_monitor.read().await;
+        let monitor_status = monitor
+            .as_ref()
+            .and_then(|h| h.status_rx.borrow().clone().into());
+
+        wechat_kefu::KefuStatus {
+            configured: config.is_some(),
+            account_created: config
+                .as_ref()
+                .and_then(|c| c.open_kfid.as_ref())
+                .is_some(),
+            monitor_running: monitor_status
+                .as_ref()
+                .map(|s: &wechat_ilink::MonitorStatus| s.running)
+                .unwrap_or(false),
+            last_poll_unix_ms: monitor_status
+                .as_ref()
+                .and_then(|s| s.last_poll_unix_ms),
+            last_inbound_unix_ms: monitor_status
+                .as_ref()
+                .and_then(|s| s.last_inbound_unix_ms),
+            consecutive_failures: monitor_status
+                .as_ref()
+                .map(|s| s.consecutive_failures)
+                .unwrap_or(0),
+            last_error: monitor_status
+                .as_ref()
+                .and_then(|s| s.last_error.clone()),
+        }
+    }
+
+    /// Forward a callback event to the kefu monitor.
+    pub async fn dispatch_kefu_callback(
+        &self,
+        event: wechat_kefu::CallbackEvent,
+    ) -> bool {
+        let tx = self.kefu_callback_tx.read().await;
+        if let Some(sender) = tx.as_ref() {
+            sender.send(event).await.is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Start kefu monitor if config exists. Called at server startup.
+    pub async fn auto_start_kefu_monitor(&self) {
+        if let Ok(Some(config)) = wechat_kefu::load_config() {
+            if config.open_kfid.is_some() {
+                if let Err(e) = self.spawn_kefu_monitor().await {
+                    eprintln!("[kefu] auto-start failed: {e}");
+                }
+            } else {
+                eprintln!("[kefu] config exists but no open_kfid — skipping auto-start");
+            }
+        }
+    }
+
+    // --- Pipeline ---
+
+    /// Start the one-scan kefu pipeline.
+    pub async fn start_kefu_pipeline(
+        &self,
+        skip_cf: bool,
+        cf_token: Option<String>,
+        skip_callback: bool,
+        corpid: Option<String>,
+        secret: Option<String>,
+    ) -> Result<(), String> {
+        if let Some(cancel) = self.kefu_pipeline_cancel.write().await.take() {
+            cancel.cancel();
+            eprintln!("[kefu pipeline] cancelled previous run before restart");
+        }
+
+        let cancel = CancellationToken::new();
+        let (mut pipeline, state_rx) =
+            wechat_kefu::pipeline::KefuPipeline::new(cancel.clone());
+
+        if skip_cf {
+            if let Some(token) = cf_token {
+                pipeline.skip_cf_register(token);
+            }
+        }
+        if skip_callback {
+            if let (Some(c), Some(s)) = (corpid, secret) {
+                pipeline.skip_callback_config(c, s);
+            }
+        }
+
+        *self.kefu_pipeline_state.write().await = Some(state_rx);
+        *self.kefu_pipeline_cancel.write().await = Some(cancel);
+
+        let state = self.clone();
+        tokio::spawn(async move {
+            match pipeline.run().await {
+                Ok(result) => {
+                    eprintln!(
+                        "[kefu pipeline] success! contact_url={}",
+                        result.contact_url
+                    );
+                    // Auto-start monitor after pipeline completes
+                    if let Err(e) = state.spawn_kefu_monitor().await {
+                        eprintln!("[kefu pipeline] auto-start monitor failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[kefu pipeline] failed: {e}");
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Get current pipeline state.
+    pub async fn kefu_pipeline_status(
+        &self,
+    ) -> Option<wechat_kefu::PipelineState> {
+        let guard = self.kefu_pipeline_state.read().await;
+        guard.as_ref().map(|rx| rx.borrow().clone())
+    }
+
+    /// Cancel running pipeline.
+    pub async fn cancel_kefu_pipeline(&self) {
+        if let Some(cancel) = self.kefu_pipeline_cancel.write().await.take() {
+            cancel.cancel();
+            eprintln!("[kefu pipeline] cancelled");
+        }
+    }
+
     /// Start a new QR login flow. Fetches the QR code synchronously
     /// from the iLink endpoint, stores a [`PendingLoginSlot`] in the
     /// in-memory map, and spawns a background task that waits for the
@@ -4247,13 +4512,27 @@ impl DesktopState {
             .await
             .map_err(|e| format!("fetch_qr_code failed: {e}"))?;
 
+        // The iLink server returns a plain https URL in `qrcode_img_content`
+        // (an HTML page, not a raw image). The frontend expects a
+        // `data:image/…` data URI, so generate the QR code image locally
+        // from the URL that the user needs to scan.
+        let qr_data_uri = {
+            use qrcode::QrCode;
+            let code = QrCode::new(qr.qrcode_img_content.as_bytes())
+                .map_err(|e| format!("QR code generation failed: {e}"))?;
+            let image = code.render::<qrcode::render::svg::Color>().build();
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(image.as_bytes());
+            format!("data:image/svg+xml;base64,{b64}")
+        };
+
         let handle = generate_login_handle();
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
         let slot = Arc::new(Mutex::new(wechat_ilink::PendingLoginSlot {
             handle: handle.clone(),
             created_at: std::time::Instant::now(),
-            qr_image_content: qr.qrcode_img_content.clone(),
+            qr_image_content: qr_data_uri.clone(),
             state: wechat_ilink::PendingLoginState::Waiting,
             cancel_tx: Some(cancel_tx),
         }));
@@ -4371,7 +4650,7 @@ impl DesktopState {
             .map(|d| format!("{}s", d.as_secs()))
             .unwrap_or_default();
 
-        Ok((handle, qr.qrcode_img_content, expires_at))
+        Ok((handle, qr_data_uri, expires_at))
     }
 
     /// Poll the current status of a QR login flow.
@@ -4619,7 +4898,7 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
     //
     // 1. providers.json active provider (highest — user explicitly
     //    configured this in Settings > LLM Gateway)
-    // 2. codex_broker pool (Codex subscription accounts)
+    // 2. optional private-cloud broker pool
     // 3. default_auth_source (env vars, managed auth, etc.)
     //
     // providers.json is checked FIRST because when a user configures
@@ -4717,41 +4996,58 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
     };
 
     // Step 2: if providers.json gave us a client, use it directly.
-    // Otherwise fall through to codex_broker and default_auth_source.
+    // Otherwise fall through to the optional private-cloud broker and
+    // finally to the default auth chain.
     let (default_auth, client_override, resolved_model) = if let Some((provider_client, provider_model)) = providers_override {
         eprintln!("[runtime] using providers.json override for this turn (model={provider_model:?})");
         (None, Some(provider_client), provider_model)
     } else {
-        // Step 3: codex_broker pool
-        match codex_broker::global() {
-            Some(broker) => match broker.build_provider_client() {
-                Ok(client) => {
-                    eprintln!(
-                        "[runtime] using codex_broker pool for turn (model={resolved_model})"
-                    );
-                    (None, Some(client), resolved_model)
-                }
-                Err(err) => {
-                    eprintln!(
-                        "[runtime] codex_broker has no usable account ({err}); \
-                         falling back to env-var credential chain"
-                    );
-                    match default_auth_source(&resolved_model, &runtime_config) {
-                        Ok(auth) => (auth, None, resolved_model),
-                        Err(error) => {
-                            return fallback_turn_result(
-                                session,
-                                &request.message,
-                                model_label.clone(),
-                                format!(
-                                    "failed to resolve model authentication: {error}"
-                                ),
-                            )
+        #[cfg(feature = "private-cloud")]
+        {
+            match codex_broker::global() {
+                Some(broker) => match broker.build_provider_client() {
+                    Ok(client) => {
+                        eprintln!(
+                            "[runtime] using private-cloud broker for turn (model={resolved_model})"
+                        );
+                        (None, Some(client), resolved_model)
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "[runtime] private-cloud broker has no usable account ({err}); \
+                             falling back to env-var credential chain"
+                        );
+                        match default_auth_source(&resolved_model, &runtime_config) {
+                            Ok(auth) => (auth, None, resolved_model),
+                            Err(error) => {
+                                return fallback_turn_result(
+                                    session,
+                                    &request.message,
+                                    model_label.clone(),
+                                    format!(
+                                        "failed to resolve model authentication: {error}"
+                                    ),
+                                )
+                            }
                         }
                     }
-                }
-            },
-            None => match default_auth_source(&resolved_model, &runtime_config) {
+                },
+                None => match default_auth_source(&resolved_model, &runtime_config) {
+                    Ok(auth) => (auth, None, resolved_model),
+                    Err(error) => {
+                        return fallback_turn_result(
+                            session,
+                            &request.message,
+                            model_label.clone(),
+                            format!("failed to resolve model authentication: {error}"),
+                        )
+                    }
+                },
+            }
+        }
+        #[cfg(not(feature = "private-cloud"))]
+        {
+            match default_auth_source(&resolved_model, &runtime_config) {
                 Ok(auth) => (auth, None, resolved_model),
                 Err(error) => {
                     return fallback_turn_result(
@@ -4761,7 +5057,7 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
                         format!("failed to resolve model authentication: {error}"),
                     )
                 }
-            },
+            }
         }
     };
 
@@ -4990,9 +5286,9 @@ async fn resolve_runtime_credentials(
     }
 
     // 4. .claw/providers.json — user-configured providers from the
-    //    settings UI. For Anthropic-compatible gateways (e.g. ClawWiki
-    //    Cloud / claude-wiki-api) the agentic loop can call the gateway
-    //    directly since it already speaks native Anthropic Messages API.
+    //    settings UI. For Anthropic-compatible gateways the agentic
+    //    loop can call the gateway directly since it already speaks the
+    //    native Anthropic Messages API.
     //
     //    The providers_config module was removed in S0.4 (codex_broker
     //    owns this surface now), but we still support the on-disk JSON

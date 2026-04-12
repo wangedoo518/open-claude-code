@@ -43,6 +43,7 @@ export interface DesktopBootstrap {
   top_tabs: DesktopTopTab[];
   launchpad_items: DesktopLaunchpadItem[];
   settings_groups: DesktopSettingsGroup[];
+  private_cloud_enabled?: boolean;
 }
 
 export interface DesktopSidebarAction {

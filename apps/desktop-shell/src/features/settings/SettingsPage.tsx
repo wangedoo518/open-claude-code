@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { GeneralSettings } from "./sections/GeneralSettings";
 import { ProviderSettings } from "./sections/ProviderSettings";
 import { MultiProviderSettings } from "./sections/MultiProviderSettings";
-import { SubscriptionCodexPool } from "./sections/SubscriptionCodexPool";
+import { SubscriptionCodexPool } from "./sections/private-cloud/SubscriptionCodexPool";
 import { WeChatSettings } from "./sections/WeChatSettings";
 import { McpSettings } from "./sections/McpSettings";
 import { PermissionSettings } from "./sections/PermissionSettings";
@@ -123,6 +123,18 @@ export function SettingsPage() {
     queryFn: getCustomize,
   });
 
+  const privateCloudEnabled =
+    bootstrapQuery.data?.private_cloud_enabled === true;
+  const menuItems = MENU_ITEMS.filter(
+    (item) => privateCloudEnabled || item.id !== "codex-pool"
+  );
+
+  useEffect(() => {
+    if (!privateCloudEnabled && active === "codex-pool") {
+      setActive("general");
+    }
+  }, [active, privateCloudEnabled]);
+
   // Treat error states as "loaded with null data" — pages have fallback values
   const isLoading =
     (bootstrapQuery.isLoading && !bootstrapQuery.isError) ||
@@ -142,7 +154,7 @@ export function SettingsPage() {
         </div>
         <Separator className="opacity-50" />
         <nav className="flex-1 px-1.5 py-1.5">
-          {MENU_ITEMS.map((item) => (
+          {menuItems.map((item) => (
             <button
               key={item.id}
               className={cn(
@@ -170,7 +182,8 @@ export function SettingsPage() {
         >
           <h2 className="mb-4 text-foreground" style={{ fontSize: 18, fontWeight: 600 }}>
             {(() => {
-              const current = MENU_ITEMS.find((m) => m.id === active);
+              const current =
+                menuItems.find((m) => m.id === active) ?? menuItems[0];
               return current?.labelOverride ?? t(current?.i18nKey ?? "");
             })()}
           </h2>
@@ -220,6 +233,13 @@ function SettingsContent({
   if (section === "shortcuts") return <ShortcutsSettings />;
   // S2 Codex pool has its own React Query hooks (broker status +
   // account list + clear mutation) and is not blocked by bootstrap.
+  if (section === "codex-pool" && !bootstrap?.private_cloud_enabled) {
+    return (
+      <div className="rounded-md border border-border/40 px-4 py-3 text-muted-foreground/70" style={{ fontSize: 13 }}>
+        当前构建未启用私有订阅池能力。公开版本默认使用 LLM Gateway 配置。
+      </div>
+    );
+  }
   if (section === "codex-pool") return <SubscriptionCodexPool />;
   if (section === "multi-provider") return <MultiProviderSettings />;
   // Same story for WeChat accounts — fully self-contained React Query +
