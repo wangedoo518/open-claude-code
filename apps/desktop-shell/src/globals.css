@@ -598,6 +598,27 @@
   animation: dt-border-pulse 2s ease-in-out infinite;
 }
 
+/* Shimmer text effect — CodePilot style flowing gradient */
+@keyframes ask-shimmer-flow {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+.ask-shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted-foreground) 0%,
+    var(--deeptutor-primary, var(--claude-orange)) 40%,
+    var(--color-foreground) 50%,
+    var(--deeptutor-primary, var(--claude-orange)) 60%,
+    var(--color-muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ask-shimmer-flow 1.5s linear infinite;
+}
+
 /* Blinking block cursor for streaming */
 @keyframes ask-blink {
   0%, 100% { opacity: 1; }

@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   AlertCircle,
 } from "lucide-react";
+import { Shimmer } from "./Shimmer";
 import { getToolMeta, isContextTool } from "./tool-meta";
 import { Message } from "./Message";
 import type { ConversationMessage } from "@/features/common/message-types";
@@ -118,7 +119,7 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
           {stats.running > 0 && (
             <span className="flex items-center gap-0.5">
               <Loader2 className="size-3 animate-spin" style={{ color: "var(--deeptutor-primary, var(--claude-orange))" }} />
-              {stats.running} 执行中
+              <Shimmer className="text-[11px] font-medium">{stats.running} 执行中</Shimmer>
             </span>
           )}
           {stats.completed > 0 && stats.errors === 0 && (
