@@ -428,7 +428,7 @@ export function Composer({
 
           // Check if content is valid (not a CAPTCHA page)
           if (preview.body.length < 200 || preview.body.includes("环境异常") || preview.body.includes("完成验证")) {
-            void onSend(`用户发送了链接 ${detectedUrl}，但抓取到的内容无效（可能被反爬拦截）。请告诉用户手动复制内容粘贴。不要给出代码。`);
+            void onSend(`用户想将链接 ${detectedUrl} 的内容入库到知识库，但抓取到的内容被反爬拦截。请告诉用户：去 Raw Library 页面，选择 URL 标签，粘贴链接后点击 Ingest 入库；或手动复制文章内容粘贴到输入框。不要给出代码示例。`);
             return;
           }
 
@@ -443,7 +443,8 @@ export function Composer({
           void onSend(enriched);
         } catch (err) {
           console.warn("[composer] URL fetch failed:", err);
-          void onSend(finalMessage); // Fallback: send original message
+          // Don't send raw URL — AI will just say "I can't access links"
+          void onSend(`用户想将链接 ${detectedUrl} 的内容入库到知识库，但系统自动抓取失败。请告诉用户：去 Raw Library 页面，选择 URL 标签，粘贴链接后点击 Ingest 入库。不要给出代码示例。`);
         }
       })();
       return;

@@ -273,7 +273,7 @@ function SessionItem({
       <MessageSquare className="size-3 shrink-0 opacity-40" />
       <span className="min-w-0 flex-1 truncate">{session.title || "新对话"}</span>
 
-      {showActions && !isActive && (
+      {showActions && (
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             onClick={(e) => {
