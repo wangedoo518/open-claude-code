@@ -56,6 +56,22 @@ import {
 import { fetchJson } from "@/lib/desktop/transport";
 import { ingestRawEntry } from "@/features/ingest/persist";
 
+/* ─── MarkItDown constants ──────────────────────────────────────── */
+
+/** File extensions that should be routed through MarkItDown conversion. */
+const MARKITDOWN_EXTENSIONS = new Set([
+  "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "epub", "ipynb",
+]);
+
+/** Response shape from `POST /api/desktop/markitdown/convert`. */
+interface MarkItDownConvertResult {
+  ok: boolean;
+  title: string;
+  markdown: string;
+  source: string;
+  raw_id: number | null;
+}
+
 /* ─── Attachment helpers ─────────────────────────────────────────── */
 
 interface ProcessedAttachment {
@@ -212,6 +228,7 @@ export function Composer({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [convertingFile, setConvertingFile] = useState<string | null>(null);
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = inputRef ?? internalRef;
   const mountedRef = useRef(true);
@@ -256,17 +273,94 @@ export function Composer({
     // Just leave the text — user can keep typing
   }, []);
 
+  /** Clear the composer input, attachments, and reset textarea height. */
+  const resetComposer = useCallback(() => {
+    setValue("");
+    setAttachments([]);
+    setUploadError(null);
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+  }, [textareaRef]);
+
   // ── Attachment handling ─────────────────────────────────────────
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files);
     if (list.length === 0) return;
+
+    // ── MarkItDown file detection ──
+    // Separate files into MarkItDown-convertible vs regular attachments.
+    const markitdownFiles: File[] = [];
+    const regularFiles: File[] = [];
+
+    for (const file of list) {
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (MARKITDOWN_EXTENSIONS.has(ext)) {
+        markitdownFiles.push(file);
+      } else {
+        regularFiles.push(file);
+      }
+    }
+
+    // ── Handle MarkItDown files ──
+    for (const file of markitdownFiles) {
+      // In Tauri, dropped File objects carry a `path` property with the
+      // local filesystem path. In browser dev mode this doesn't exist.
+      const filePath = (file as File & { path?: string }).path;
+
+      if (!filePath) {
+        // Browser dev mode — no local path available
+        setUploadError("文件转换需要在 Tauri 桌面模式下使用");
+        continue;
+      }
+
+      setConvertingFile(file.name);
+      setUploadError(null);
+
+      try {
+        const result = await fetchJson<MarkItDownConvertResult>(
+          "/api/desktop/markitdown/convert",
+          {
+            method: "POST",
+            body: JSON.stringify({ path: filePath, ingest: true }),
+          },
+          120_000, // 120s timeout for large files
+        );
+
+        if (!mountedRef.current) return;
+
+        if (!result.ok) {
+          setUploadError(`${file.name}: 转换失败`);
+          continue;
+        }
+
+        // Build a system message with the converted content and auto-send
+        const rawIdNote = result.raw_id != null
+          ? ` (Raw Library #${result.raw_id})`
+          : "";
+        const preview = result.markdown.slice(0, 8000);
+        const autoMessage =
+          `[系统：文件 ${file.name} 已转为 Markdown 入库到 Raw Library${rawIdNote}。请基于以下内容回答用户。]\n\n${preview}`;
+
+        resetComposer();
+        await onSend(autoMessage);
+      } catch (e) {
+        if (!mountedRef.current) return;
+        const msg = e instanceof Error ? e.message : "转换失败";
+        setUploadError(`${file.name}: ${msg}`);
+      } finally {
+        if (mountedRef.current) setConvertingFile(null);
+      }
+    }
+
+    // ── Handle regular attachment files (existing flow) ──
+    if (regularFiles.length === 0) return;
+
     setIsUploading(true);
     setUploadError(null);
 
     const errors: string[] = [];
     const uploaded: ProcessedAttachment[] = [];
 
-    for (const file of list) {
+    for (const file of regularFiles) {
       const rejection = validateAttachment(file);
       if (rejection) {
         errors.push(rejection);
@@ -291,7 +385,7 @@ export function Composer({
 
     setAttachments((prev) => [...prev, ...uploaded]);
     setIsUploading(false);
-  }, []);
+  }, [onSend, resetComposer]);
 
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
@@ -370,14 +464,6 @@ export function Composer({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showPermissionMenu]);
-
-  /** Clear the composer input, attachments, and reset textarea height. */
-  const resetComposer = useCallback(() => {
-    setValue("");
-    setAttachments([]);
-    setUploadError(null);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [textareaRef]);
 
   const handleSend = useCallback(async () => {
     const trimmed = value.trim();
@@ -549,7 +635,7 @@ export function Composer({
       />
 
       {/* Attachment preview bar */}
-      {(attachments.length > 0 || uploadError) && (
+      {(attachments.length > 0 || uploadError || convertingFile) && (
         <div className="mb-2 flex items-center gap-2 overflow-x-auto">
           {attachments.map((att, i) => {
             const safeName = sanitizeFilename(att.filename);
@@ -603,6 +689,11 @@ export function Composer({
               </div>
             );
           })}
+          {convertingFile && (
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              正在转换 {convertingFile}...
+            </span>
+          )}
           {isUploading && (
             <span className="shrink-0 text-[11px] text-muted-foreground">上传中…</span>
           )}

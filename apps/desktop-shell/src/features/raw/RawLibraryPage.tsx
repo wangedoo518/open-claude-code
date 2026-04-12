@@ -35,12 +35,13 @@
  *     Voice / image / PDF / PPT / video adapters land in S6.
  */
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, FileText, Link2, Copy, Check } from "lucide-react";
+import { Loader2, FileText, Link2, Upload, Copy, Check } from "lucide-react";
 import { listRawEntries, getRawEntry } from "@/features/ingest/persist";
 import { ingestText } from "@/features/ingest/adapters/text";
 import { ingestUrl } from "@/features/ingest/adapters/url";
+import { fetchJson } from "@/lib/desktop/transport";
 import type { RawEntry } from "@/features/ingest/types";
 
 const rawKeys = {
@@ -55,6 +56,10 @@ function translateSource(source: string): string {
     "wechat-text": "微信消息",
     "paste-text": "粘贴文本",
     "paste-url": "粘贴链接",
+    pdf: "PDF 文件",
+    docx: "Word 文件",
+    pptx: "PPT 文件",
+    image: "图片",
   };
   return map[source] ?? source;
 }
@@ -80,7 +85,7 @@ export function RawLibraryPage() {
             原始素材库
           </h1>
           <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-            微信转发、粘贴文本、链接 -- 全部以 <code>~/.clawwiki/raw/</code> 下的 markdown 落盘
+            微信转发、粘贴文本、链接、文件上传 -- 全部以 <code>~/.clawwiki/raw/</code> 下的 markdown 落盘
           </p>
         </div>
         <div className="text-muted-foreground/40" style={{ fontSize: 11 }}>
@@ -125,13 +130,31 @@ interface PasteFormProps {
   onIngested: (entry: RawEntry) => void;
 }
 
+/** Response shape from the MarkItDown convert endpoint. */
+interface MarkItDownResponse {
+  ok: boolean;
+  title: string;
+  markdown: string;
+  source: string;
+  raw_id: number;
+}
+
 function PasteForm({ onIngested }: PasteFormProps) {
-  const [mode, setMode] = useState<"text" | "url">("text");
+  const [mode, setMode] = useState<"text" | "url" | "file">("text");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [url, setUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  const tabCls = (active: boolean) =>
+    "flex-1 rounded-md border px-2 py-1 text-caption font-medium transition-colors " +
+    (active
+      ? "border-primary bg-primary/10 text-primary"
+      : "border-border text-muted-foreground hover:bg-accent");
 
   const ingestMutation = useMutation({
     mutationFn: async () => {
@@ -152,6 +175,7 @@ function PasteForm({ onIngested }: PasteFormProps) {
       setBody("");
       setUrl("");
       setErrorMessage(null);
+      setSuccessMessage(null);
       onIngested(entry);
     },
     onError: (err) => {
@@ -159,63 +183,202 @@ function PasteForm({ onIngested }: PasteFormProps) {
     },
   });
 
+  /* ── File conversion via MarkItDown ────────────────────────────── */
+
+  const convertMutation = useMutation({
+    mutationFn: async (filePath: string) => {
+      return fetchJson<MarkItDownResponse>(
+        "/api/desktop/markitdown/convert",
+        {
+          method: "POST",
+          body: JSON.stringify({ path: filePath, ingest: true }),
+        },
+        120_000, // file conversion can be slow
+      );
+    },
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
+      setErrorMessage(null);
+      setSuccessMessage(`已入库: ${data.title}`);
+      // Build a minimal RawEntry so the list selects it
+      onIngested({
+        id: data.raw_id,
+        filename: "",
+        source: data.source,
+        slug: data.title,
+        date: new Date().toISOString().slice(0, 10),
+        ingested_at: new Date().toISOString(),
+        byte_size: 0,
+      });
+    },
+    onError: (err) => {
+      setSuccessMessage(null);
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    },
+  });
+
+  const pickAndConvert = useCallback(async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    let filePath: string | null = null;
+
+    // Try Tauri native dialog first
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ multiple: false, title: "选择文件" });
+      if (selected && typeof selected === "string") {
+        filePath = selected;
+      }
+    } catch {
+      // Not in Tauri — fall back to browser file input
+      fileInputRef.current?.click();
+      return; // the <input onChange> handler will take over
+    }
+
+    if (filePath) {
+      convertMutation.mutate(filePath);
+    }
+  }, [convertMutation]);
+
+  /** Handle browser <input type="file"> selection (non-Tauri fallback). */
+  const handleBrowserFile = useCallback(
+    (file: File) => {
+      setErrorMessage(null);
+      setSuccessMessage(null);
+      // For browser mode we read an absolute-ish path from webkitRelativePath
+      // or fall back to the file name. The backend may reject if it
+      // cannot resolve the path — this is the best we can do outside Tauri.
+      const path = (file as { path?: string }).path || file.name;
+      convertMutation.mutate(path);
+    },
+    [convertMutation],
+  );
+
+  /* ── Drag-and-drop handlers ─────────────────────────────────────── */
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        handleBrowserFile(file);
+      }
+    },
+    [handleBrowserFile],
+  );
+
   return (
     <div className="border-b border-border/50 px-3 py-3">
       <div className="mb-2 flex items-center gap-1">
-        <button
-          type="button"
-          className={
-            "flex-1 rounded-md border px-2 py-1 text-caption font-medium transition-colors " +
-            (mode === "text"
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border text-muted-foreground hover:bg-accent")
-          }
-          onClick={() => setMode("text")}
-        >
+        <button type="button" className={tabCls(mode === "text")} onClick={() => { setMode("text"); setSuccessMessage(null); }}>
           <FileText className="mr-1 inline size-3" />
           文本
         </button>
-        <button
-          type="button"
-          className={
-            "flex-1 rounded-md border px-2 py-1 text-caption font-medium transition-colors " +
-            (mode === "url"
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border text-muted-foreground hover:bg-accent")
-          }
-          onClick={() => setMode("url")}
-        >
+        <button type="button" className={tabCls(mode === "url")} onClick={() => { setMode("url"); setSuccessMessage(null); }}>
           <Link2 className="mr-1 inline size-3" />
           链接
         </button>
+        <button type="button" className={tabCls(mode === "file")} onClick={() => { setMode("file"); setSuccessMessage(null); }}>
+          <Upload className="mr-1 inline size-3" />
+          文件
+        </button>
       </div>
 
-      <input
-        type="text"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="标题（可选）"
-        className="mb-1.5 w-full rounded-md border border-input bg-background px-2 py-1 text-body-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
-      />
+      {/* ── Text / URL modes ─────────────────────────────────────── */}
+      {mode !== "file" && (
+        <>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="标题（可选）"
+            className="mb-1.5 w-full rounded-md border border-input bg-background px-2 py-1 text-body-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
+          />
 
-      {mode === "text" ? (
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="粘贴 markdown 或文本..."
-          rows={5}
-          className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
-        />
-      ) : (
-        <input
-          type="url"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://…"
-          className="w-full rounded-md border border-input bg-background px-2 py-1 text-body-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
-        />
+          {mode === "text" ? (
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="粘贴 markdown 或文本..."
+              rows={5}
+              className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
+            />
+          ) : (
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://…"
+              className="w-full rounded-md border border-input bg-background px-2 py-1 text-body-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
+            />
+          )}
+        </>
       )}
 
+      {/* ── File upload mode ─────────────────────────────────────── */}
+      {mode === "file" && (
+        <>
+          {/* Hidden browser file input (non-Tauri fallback) */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleBrowserFile(file);
+              e.target.value = ""; // reset so same file can be re-selected
+            }}
+          />
+
+          {convertMutation.isPending ? (
+            /* Loading state */
+            <div className="flex flex-col items-center justify-center rounded-md border-2 border-dashed border-primary/40 bg-primary/5 px-3 py-6">
+              <Loader2 className="mb-2 size-6 animate-spin text-primary" />
+              <p className="text-body-sm text-primary">转换中，请稍候…</p>
+            </div>
+          ) : (
+            /* Drop zone */
+            <button
+              type="button"
+              onClick={pickAndConvert}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={
+                "flex w-full cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed px-3 py-6 transition-colors " +
+                (isDragOver
+                  ? "border-primary bg-primary/10"
+                  : "border-border hover:border-primary/50 hover:bg-accent/30")
+              }
+            >
+              <Upload className="mb-2 size-6 text-muted-foreground/50" />
+              <p className="text-body-sm text-muted-foreground">
+                拖放文件到这里，或点击选择文件
+              </p>
+              <p className="mt-1.5 text-muted-foreground/40" style={{ fontSize: 11 }}>
+                PDF · Word · Excel · PPT · 图片 · 音频 等
+              </p>
+            </button>
+          )}
+        </>
+      )}
+
+      {/* ── Feedback messages ────────────────────────────────────── */}
       {errorMessage && (
         <div
           className="mt-1.5 rounded-md border px-2 py-1 text-caption"
@@ -229,15 +392,31 @@ function PasteForm({ onIngested }: PasteFormProps) {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => ingestMutation.mutate()}
-        disabled={ingestMutation.isPending}
-        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-      >
-        {ingestMutation.isPending && <Loader2 className="size-3 animate-spin" />}
-        {ingestMutation.isPending ? "入库中…" : "入库"}
-      </button>
+      {successMessage && (
+        <div
+          className="mt-1.5 rounded-md border px-2 py-1 text-caption"
+          style={{
+            borderColor: "color-mix(in srgb, var(--color-primary) 30%, transparent)",
+            backgroundColor: "color-mix(in srgb, var(--color-primary) 5%, transparent)",
+            color: "var(--color-primary)",
+          }}
+        >
+          {successMessage}
+        </div>
+      )}
+
+      {/* ── Ingest button (text / url modes only) ────────────────── */}
+      {mode !== "file" && (
+        <button
+          type="button"
+          onClick={() => ingestMutation.mutate()}
+          disabled={ingestMutation.isPending}
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          {ingestMutation.isPending && <Loader2 className="size-3 animate-spin" />}
+          {ingestMutation.isPending ? "入库中…" : "入库"}
+        </button>
+      )}
     </div>
   );
 }

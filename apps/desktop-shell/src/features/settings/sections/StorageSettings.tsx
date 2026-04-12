@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { FolderOpen, X, AlertTriangle, Copy, Check, Loader2, CheckCircle2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { FolderOpen, X, AlertTriangle, Copy, Check, Loader2, CheckCircle2, XCircle, Terminal } from "lucide-react";
 import { SettingGroup, SettingRow } from "../components/SettingGroup";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,6 +140,9 @@ export function StorageSettings({ settings, error }: StorageSettingsProps) {
         </SettingRow>
       </SettingGroup>
 
+      {/* ---- MarkItDown file conversion ---- */}
+      <MarkItDownSection />
+
       {/* ---- Warnings ---- */}
       {error && (
         <SettingGroup title="警告">
@@ -162,6 +166,143 @@ export function StorageSettings({ settings, error }: StorageSettingsProps) {
         onCopyEnv={handleCopyEnv}
       />
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  MarkItDown environment detection                                   */
+/* ------------------------------------------------------------------ */
+
+interface MarkItDownCheckResult {
+  available: boolean;
+  version?: string;
+  supported_formats?: string[];
+  error?: string;
+}
+
+function MarkItDownSection() {
+  const [showInstallHint, setShowInstallHint] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const checkQuery = useQuery<MarkItDownCheckResult>({
+    queryKey: ["markitdown", "check"],
+    queryFn: () => fetchJson<MarkItDownCheckResult>("/api/desktop/markitdown/check"),
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+
+  const data = checkQuery.data;
+  const isLoading = checkQuery.isLoading;
+
+  const handleCopyInstallCmd = async () => {
+    try {
+      await navigator.clipboard.writeText("pip install 'markitdown[all]'");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API may be unavailable
+    }
+  };
+
+  return (
+    <SettingGroup
+      title="MarkItDown 文件转换"
+      description="使用微软 MarkItDown 将 PDF/Word/Excel/PPT 等文件转为 Markdown 入库"
+    >
+      {/* Status row */}
+      <SettingRow
+        label="环境状态"
+        description="检测 MarkItDown Python 包是否可用"
+      >
+        <div className="flex items-center gap-2">
+          {isLoading ? (
+            <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>检测中...</span>
+            </div>
+          ) : data?.available ? (
+            <div className="flex items-center gap-1.5 text-caption text-green-600">
+              <CheckCircle2 className="size-3.5" />
+              <span>
+                v{data.version} &middot; 支持 {data.supported_formats?.length ?? 0} 种格式
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-caption text-red-500">
+              <XCircle className="size-3.5" />
+              <span>{data?.error ?? "markitdown 未安装"}</span>
+            </div>
+          )}
+        </div>
+      </SettingRow>
+
+      {/* Install hint */}
+      {!isLoading && !data?.available && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <div className="text-body-sm text-foreground">一键安装</div>
+              <div className="text-caption text-muted-foreground">
+                在终端中运行以下命令安装 MarkItDown
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-body-sm"
+              onClick={() => setShowInstallHint((v) => !v)}
+            >
+              <Terminal className="mr-1.5 size-3.5" />
+              {showInstallHint ? "收起" : "安装指引"}
+            </Button>
+          </div>
+
+          {showInstallHint && (
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <code className="flex-1 text-caption text-muted-foreground">
+                  pip install &apos;markitdown[all]&apos;
+                </code>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0"
+                  onClick={handleCopyInstallCmd}
+                >
+                  {copied ? (
+                    <Check className="size-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="size-3.5" />
+                  )}
+                </Button>
+              </div>
+              <p className="mt-1.5 text-caption text-muted-foreground">
+                安装完成后请点击右上角刷新按钮重新检测。
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Supported formats */}
+      {!isLoading && data?.available && data.supported_formats && data.supported_formats.length > 0 && (
+        <SettingRow
+          label="支持格式"
+          description="可转换为 Markdown 的文件类型"
+        >
+          <div className="flex flex-wrap justify-end gap-1">
+            {data.supported_formats.map((fmt) => (
+              <span
+                key={fmt}
+                className="inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground"
+              >
+                .{fmt}
+              </span>
+            ))}
+          </div>
+        </SettingRow>
+      )}
+    </SettingGroup>
   );
 }
 
