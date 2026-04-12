@@ -46,10 +46,6 @@ import { Link } from "react-router-dom";
 import {
   BookOpen,
   Brain,
-  Users,
-  Tag,
-  GitCompare,
-  History,
   ArrowRight,
   Loader2,
   RefreshCw,
@@ -86,49 +82,7 @@ function selectionKey(sel: Selection): string {
   return sel.kind;
 }
 
-const CATEGORIES = [
-  {
-    key: "concept",
-    icon: Brain,
-    label: "概念",
-    description:
-      "每个核心想法一页 · 由 raw 层的 WeChat 素材自动汇总成 canonical 状态",
-    tint: "var(--claude-orange)",
-    ready: true,
-  },
-  {
-    key: "people",
-    icon: Users,
-    label: "人物",
-    description: "你引用过的作者 / 研究者 / 同事 · 自动汇总所有相关 raw",
-    tint: "var(--claude-blue)",
-    ready: false,
-  },
-  {
-    key: "topic",
-    icon: Tag,
-    label: "主题",
-    description: "主题聚合页 · 跨多个 concept 汇总某一领域的结构化综述",
-    tint: "var(--agent-purple)",
-    ready: false,
-  },
-  {
-    key: "compare",
-    icon: GitCompare,
-    label: "对比",
-    description: "A vs B 结构化对比 · 自动维护论据栏",
-    tint: "var(--color-warning)",
-    ready: false,
-  },
-  {
-    key: "changelog",
-    icon: History,
-    label: "变更日志",
-    description: "每天的维护动作日志 · append-only",
-    tint: "var(--color-success)",
-    ready: false,
-  },
-] as const;
+/* Categories removed — navigation is fully in left sidebar */
 
 const wikiKeys = {
   list: () => ["wiki", "pages", "list"] as const,
@@ -207,70 +161,46 @@ export function WikiExplorerPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Page head */}
-      <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <div className="flex items-start gap-3">
-          <div className="text-xl">📖</div>
-          <div className="flex-1">
-            <h1
-              className="text-head font-semibold text-foreground"
-              style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
-            >
-              Wiki Pages · LLM 主笔层
-            </h1>
-            <p className="mt-0.5 text-label text-muted-foreground">
-              AI 帮我长出了什么 · concept pages 由 wiki_maintainer 从 raw 层自动维护 · Lora 衬线正文
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
-            <span
-              className="rounded-md border border-border bg-background px-1.5 py-0.5"
-              style={{ color: "var(--claude-orange)" }}
-            >
-              {totalCount} 页
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                void queryClient.invalidateQueries({ queryKey: wikiKeys.list() })
-              }
-              className="flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-caption text-muted-foreground transition-colors hover:bg-muted/30"
-              title="刷新"
-            >
-              <RefreshCw
-                className={
-                  "size-3 " + (listQuery.isFetching ? "animate-spin" : "")
-                }
-              />
-            </button>
-          </div>
-        </div>
-
-        {/* Search bar — always visible in the head. Empty input
-            falls back to the normal list; non-empty triggers the
-            debounced search and swaps the left pane. */}
-        <div className="relative mt-3">
+      {/* Compact header: title + search inline */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-border/30 px-4 py-2.5">
+        <h1 className="shrink-0 text-foreground" style={{ fontSize: 14, fontWeight: 600 }}>
+          Wiki Pages
+        </h1>
+        <span className="text-muted-foreground/40" style={{ fontSize: 11 }}>
+          {totalCount} 页
+        </span>
+        <div className="relative min-w-0 flex-1">
           <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/40"
             aria-hidden="true"
           />
           <input
             type="search"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="搜索知识页面——标题、摘要或正文…"
-            className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-8 text-body-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
+            placeholder="搜索知识页面..."
+            className="h-7 w-full rounded-md border border-border/30 bg-background pl-7 pr-7 text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none"
+            style={{ fontSize: 12 }}
           />
           {searchInput && (
             <button
               type="button"
               onClick={() => setSearchInput("")}
-              className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-              title="清除搜索"
+              className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+              title="清除"
             >
               <XIcon className="size-3" />
             </button>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => void queryClient.invalidateQueries({ queryKey: wikiKeys.list() })}
+          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-colors hover:text-foreground"
+          title="刷新"
+        >
+          <RefreshCw className={"size-3 " + (listQuery.isFetching ? "animate-spin" : "")} />
+        </button>
       </div>
 
       {/* Body: split pane. Pinned index/log are always visible even
@@ -279,7 +209,7 @@ export function WikiExplorerPage() {
           rather than staring at a generic empty state. When searching,
           the left pane swaps to search results ranked by score. */}
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-r border-border/50">
+        <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-r border-border/30">
           {isSearching ? (
             <SearchResultsList
               query={debouncedQuery}
@@ -317,45 +247,7 @@ export function WikiExplorerPage() {
         <EmptyHeroStrip />
       ) : null}
 
-      {/* Planned layers strip (always visible as signposting) */}
-      <section className="shrink-0 border-t border-border/50 px-6 py-4">
-        <h2 className="mb-2 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
-          知识层级
-        </h2>
-        <ul className="grid gap-2 md:grid-cols-5">
-          {CATEGORIES.map((cat) => {
-            const Icon = cat.icon;
-            const count = cat.key === "concept" ? totalCount : 0;
-            return (
-              <li
-                key={cat.key}
-                className={
-                  "rounded-md border px-3 py-2 " +
-                  (cat.ready
-                    ? "border-border bg-background"
-                    : "border-border/40 bg-muted/5")
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <Icon className="size-3" style={{ color: cat.tint }} />
-                  <span
-                    className="text-caption font-semibold"
-                    style={{ color: cat.tint }}
-                  >
-                    {cat.label}
-                  </span>
-                  <span className="ml-auto font-mono text-caption text-muted-foreground">
-                    {count}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-caption text-muted-foreground/80">
-                  {cat.description}
-                </p>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
+      {/* Categories integrated into left sidebar — no separate bottom strip */}
     </div>
   );
 }
@@ -423,8 +315,8 @@ function PageList({
     <div className="flex-1 overflow-y-auto">
       {/* Pinned section: the two special files from Karpathy's
           "Indexing and logging" — always present, always at the top. */}
-      <div className="border-b border-border/40 bg-muted/10 pb-1 pt-2">
-        <div className="px-4 py-1 text-caption font-semibold uppercase tracking-wide text-muted-foreground/70">
+      <div className="border-b border-border/30 pb-2 pt-3">
+        <div className="px-4 pb-1 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: "11px", fontWeight: 500 }}>
           置顶
         </div>
         <PinnedItem
@@ -444,8 +336,13 @@ function PageList({
       </div>
 
       {/* Concept pages */}
-      <div className="px-4 pb-1 pt-2 text-caption font-semibold uppercase tracking-wide text-muted-foreground/70">
-        概念 {pages.length > 0 ? `(${pages.length})` : ""}
+      <div className="flex items-center gap-2 px-4 pb-1 pt-4 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: "11px", fontWeight: 500 }}>
+        <span>概念</span>
+        {pages.length > 0 && (
+          <span className="rounded-full bg-muted/30 px-1.5 text-muted-foreground/50" style={{ fontSize: "10px", fontWeight: 400 }}>
+            {pages.length}
+          </span>
+        )}
       </div>
       {isLoading ? (
         <div className="px-3 py-6 text-center text-caption text-muted-foreground">
@@ -470,7 +367,7 @@ function PageList({
           暂无内容。
         </div>
       ) : (
-        <ul className="divide-y divide-border/40">
+        <ul>
           {sorted.map((page) => {
             const isActive = selectedKey === `concept:${page.slug}`;
             return (
@@ -479,33 +376,30 @@ function PageList({
                   type="button"
                   onClick={() => onSelect({ kind: "concept", slug: page.slug })}
                   className={
-                    "w-full px-4 py-2.5 text-left transition-colors " +
-                    (isActive ? "bg-primary/10" : "hover:bg-accent/40")
+                    "w-full py-2.5 text-left transition-colors " +
+                    (isActive
+                      ? "border-l-[3px] border-primary pl-[13px]"
+                      : "border-l-[3px] border-transparent pl-[13px] hover:bg-accent/20")
                   }
+                  style={{ paddingRight: "16px" }}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <Brain
                       className="size-3 shrink-0"
-                      style={{ color: "var(--claude-orange)" }}
+                      style={{ color: isActive ? "var(--primary)" : "var(--claude-orange)" }}
                     />
                     <span
-                      className="flex-1 truncate text-body-sm font-medium text-foreground"
+                      className="flex-1 truncate text-foreground"
                       style={{
-                        fontFamily: "var(--font-serif, Lora, serif)",
+                        fontSize: "13px",
+                        fontWeight: isActive ? 500 : 400,
+                        lineHeight: "1.4",
                       }}
                     >
                       {page.title || page.slug}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate pl-5 font-mono text-caption text-muted-foreground/70">
-                    {page.slug}
-                  </div>
-                  {page.summary ? (
-                    <div className="mt-0.5 line-clamp-2 pl-5 text-caption text-muted-foreground/80">
-                      {page.summary}
-                    </div>
-                  ) : null}
-                  <div className="mt-0.5 flex items-center gap-2 pl-5 text-caption text-muted-foreground/60">
+                  <div className="mt-0.5 flex items-center gap-2 pl-5 text-muted-foreground/40" style={{ fontSize: "10px" }}>
                     {page.source_raw_id != null && (
                       <span className="font-mono">
                         raw #{String(page.source_raw_id).padStart(5, "0")}
@@ -546,8 +440,8 @@ function SearchResultsList({
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="flex items-center gap-2 border-b border-border/40 bg-muted/10 px-4 py-2">
-        <Search className="size-3 text-muted-foreground" />
+      <div className="flex items-center gap-2 border-b border-border/30 px-4 py-2">
+        <Search className="size-3 text-muted-foreground/50" />
         <span className="flex-1 truncate text-caption text-muted-foreground">
           {isLoading ? (
             "搜索中…"
@@ -589,7 +483,7 @@ function SearchResultsList({
           </div>
         </div>
       ) : (
-        <ul className="divide-y divide-border/40">
+        <ul>
           {hits.map((hit) => {
             const isActive =
               selectedKey === `concept:${hit.page.slug}`;
@@ -601,42 +495,38 @@ function SearchResultsList({
                     onSelect({ kind: "concept", slug: hit.page.slug })
                   }
                   className={
-                    "w-full px-4 py-2.5 text-left transition-colors " +
-                    (isActive ? "bg-primary/10" : "hover:bg-accent/40")
+                    "w-full py-2.5 text-left transition-colors " +
+                    (isActive
+                      ? "border-l-[3px] border-primary pl-[13px]"
+                      : "border-l-[3px] border-transparent pl-[13px] hover:bg-accent/20")
                   }
+                  style={{ paddingRight: "16px" }}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <Brain
                       className="size-3 shrink-0"
-                      style={{ color: "var(--claude-orange)" }}
+                      style={{ color: isActive ? "var(--primary)" : "var(--claude-orange)" }}
                     />
                     <span
-                      className="flex-1 truncate text-body-sm font-medium text-foreground"
-                      style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+                      className="flex-1 truncate text-foreground"
+                      style={{ fontSize: "13px", fontWeight: isActive ? 500 : 400, lineHeight: "1.4" }}
                     >
                       {hit.page.title || hit.page.slug}
                     </span>
                     <span
-                      className="shrink-0 rounded-sm px-1 font-mono text-caption"
-                      style={{
-                        color: "var(--claude-orange)",
-                        backgroundColor:
-                          "color-mix(in srgb, var(--claude-orange) 10%, transparent)",
-                      }}
+                      className="shrink-0 rounded-sm px-1 font-mono text-muted-foreground/50"
+                      style={{ fontSize: "10px" }}
                       title={`Relevance score: ${hit.score}`}
                     >
                       {hit.score}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate pl-5 font-mono text-caption text-muted-foreground/70">
-                    {hit.page.slug}
-                  </div>
                   {hit.snippet ? (
-                    <div className="mt-0.5 line-clamp-2 pl-5 text-caption text-muted-foreground/80">
+                    <div className="mt-0.5 line-clamp-2 pl-5 text-muted-foreground/70" style={{ fontSize: "11px" }}>
                       {hit.snippet}
                     </div>
                   ) : hit.page.summary ? (
-                    <div className="mt-0.5 line-clamp-2 pl-5 text-caption text-muted-foreground/80">
+                    <div className="mt-0.5 line-clamp-2 pl-5 text-muted-foreground/70" style={{ fontSize: "11px" }}>
                       {hit.page.summary}
                     </div>
                   ) : null}
@@ -668,21 +558,22 @@ function PinnedItem({
       type="button"
       onClick={onClick}
       className={
-        "flex w-full items-center gap-2 px-4 py-1.5 text-left transition-colors " +
-        (active ? "bg-primary/10" : "hover:bg-accent/40")
+        "flex w-full items-center gap-2 py-2 text-left transition-colors " +
+        (active ? "border-l-[3px] border-primary pl-[13px]" : "border-l-[3px] border-transparent pl-[13px] hover:bg-accent/20")
       }
+      style={{ paddingRight: "16px" }}
     >
       <Icon
         className="size-3 shrink-0"
-        style={{ color: "var(--claude-orange)" }}
+        style={{ color: active ? "var(--primary)" : "var(--claude-orange)" }}
       />
       <span
-        className="text-body-sm font-semibold text-foreground"
-        style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+        className="text-foreground"
+        style={{ fontSize: "13px", fontWeight: active ? 500 : 400, lineHeight: "1.4" }}
       >
         {label}
       </span>
-      <span className="ml-auto truncate text-caption text-muted-foreground/70">
+      <span className="ml-auto truncate text-muted-foreground/50" style={{ fontSize: "11px" }}>
         {hint}
       </span>
     </button>
@@ -733,39 +624,32 @@ function PageDetail({ slug }: { slug: string }) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Head */}
-      <div className="shrink-0 border-b border-border/50 bg-muted/10 px-6 py-4">
+      <div className="shrink-0 border-b border-border/30 px-6 py-5">
         <div className="flex items-center gap-2">
-          <Brain
-            className="size-3"
-            style={{ color: "var(--claude-orange)" }}
-          />
-          <span className="font-mono text-caption text-muted-foreground">
-            {summary.slug}
-          </span>
           <StatusPill label="concept" tint="var(--claude-orange)" />
           <StatusPill label="draft" tint="var(--color-warning)" />
         </div>
         <h2
-          className="mt-1.5 text-subhead font-semibold text-foreground"
-          style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+          className="mt-2 text-foreground"
+          style={{ fontFamily: "var(--font-serif, Lora, serif)", fontSize: "20px", fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "1.3" }}
         >
           {summary.title || summary.slug}
         </h2>
         {summary.summary ? (
-          <p className="mt-1 text-caption text-muted-foreground">
+          <p className="mt-1.5 text-muted-foreground" style={{ fontSize: "13px", lineHeight: "1.5" }}>
             {summary.summary}
           </p>
         ) : null}
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-caption text-muted-foreground">
-          <span>created: {summary.created_at}</span>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground/50" style={{ fontSize: "11px" }}>
+          <span>{summary.created_at}</span>
           <span>{summary.byte_size} B</span>
           {summary.source_raw_id != null && (
             <Link
               to="/raw"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
+              className="inline-flex items-center gap-1 text-primary/70 hover:text-primary hover:underline"
             >
               <FileText className="size-3" />
-              from raw #{String(summary.source_raw_id).padStart(5, "0")}
+              raw #{String(summary.source_raw_id).padStart(5, "0")}
               <ArrowRight className="size-3" />
             </Link>
           )}
@@ -773,50 +657,56 @@ function PageDetail({ slug }: { slug: string }) {
       </div>
 
       {/* Body: markdown-rendered */}
-      <div className="flex-1 overflow-auto px-6 py-5">
+      <div className="flex-1 overflow-auto px-6 py-6">
         <article
           className="prose prose-sm max-w-none text-foreground/90"
           style={{
             fontFamily: "var(--font-serif, Lora, serif)",
+            fontSize: "14px",
+            lineHeight: "1.6",
           }}
         >
           <ReactMarkdown
             components={{
               h1: (props) => (
                 <h1
-                  className="mb-3 mt-0 text-head font-semibold text-foreground"
-                  style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+                  className="mb-3 mt-0 text-foreground"
+                  style={{ fontFamily: "var(--font-serif, Lora, serif)", fontSize: "18px", fontWeight: 600, letterSpacing: "-0.01em" }}
                   {...props}
                 />
               ),
               h2: (props) => (
                 <h2
-                  className="mb-2 mt-5 text-subhead font-semibold text-foreground"
-                  style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+                  className="mb-2 mt-6 uppercase tracking-wide text-foreground"
+                  style={{ fontSize: "13px", fontWeight: 600 }}
                   {...props}
                 />
               ),
               h3: (props) => (
                 <h3
-                  className="mb-1.5 mt-4 text-body font-semibold text-foreground"
+                  className="mb-1.5 mt-5 text-foreground"
+                  style={{ fontSize: "13px", fontWeight: 600 }}
                   {...props}
                 />
               ),
               p: (props) => (
                 <p
-                  className="my-2 text-body leading-relaxed text-foreground/90"
+                  className="my-2.5 text-foreground/90"
+                  style={{ fontSize: "14px", lineHeight: "1.6" }}
                   {...props}
                 />
               ),
               ul: (props) => (
                 <ul
-                  className="my-2 list-disc pl-6 text-body text-foreground/90"
+                  className="my-2.5 list-disc pl-6 text-foreground/90"
+                  style={{ fontSize: "14px", lineHeight: "1.6" }}
                   {...props}
                 />
               ),
               ol: (props) => (
                 <ol
-                  className="my-2 list-decimal pl-6 text-body text-foreground/90"
+                  className="my-2.5 list-decimal pl-6 text-foreground/90"
+                  style={{ fontSize: "14px", lineHeight: "1.6" }}
                   {...props}
                 />
               ),
@@ -951,19 +841,19 @@ function SpecialFilePanel({ kind }: { kind: "index" | "log" }) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Head */}
-      <div className="shrink-0 border-b border-border/50 bg-muted/10 px-6 py-4">
+      <div className="shrink-0 border-b border-border/30 border-l-[3px] border-l-primary px-6 py-5">
         <div className="flex items-center gap-2">
           <Icon
             className="size-4"
-            style={{ color: "var(--claude-orange)" }}
+            style={{ color: "var(--primary)" }}
           />
           <h2
-            className="text-subhead font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+            className="text-foreground"
+            style={{ fontFamily: "var(--font-serif, Lora, serif)", fontSize: "20px", fontWeight: 600, letterSpacing: "-0.01em" }}
           >
             {meta.label}
           </h2>
-          <span className="ml-auto font-mono text-caption text-muted-foreground">
+          <span className="ml-auto font-mono text-muted-foreground/50" style={{ fontSize: "11px" }}>
             {data.byte_size} B
           </span>
           <button
@@ -973,7 +863,8 @@ function SpecialFilePanel({ kind }: { kind: "index" | "log" }) {
                 queryKey: kind === "index" ? wikiKeys.index() : wikiKeys.log(),
               })
             }
-            className="flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-caption text-muted-foreground transition-colors hover:bg-muted/30"
+            className="flex items-center gap-1 rounded-md border border-border/40 bg-background px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted/30"
+            style={{ fontSize: "11px" }}
             title="刷新"
           >
             <RefreshCw
@@ -983,26 +874,26 @@ function SpecialFilePanel({ kind }: { kind: "index" | "log" }) {
             />
           </button>
         </div>
-        <p className="mt-1 text-caption text-muted-foreground">
+        <p className="mt-1.5 text-muted-foreground" style={{ fontSize: "12px", lineHeight: "1.5" }}>
           {meta.description}
         </p>
-        <div className="mt-1 font-mono text-caption text-muted-foreground/60">
+        <div className="mt-1 font-mono text-muted-foreground/40" style={{ fontSize: "11px" }}>
           {data.path}
         </div>
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-auto px-6 py-5">
+      <div className="flex-1 overflow-auto px-6 py-6">
         {!data.exists || data.content.length === 0 ? (
-          <div className="rounded-md border border-border/40 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
+          <div className="rounded-md border border-border/30 px-4 py-6 text-center">
             <BookOpen
-              className="mx-auto mb-1.5 size-6 opacity-40"
+              className="mx-auto mb-1.5 size-6 opacity-30"
               style={{ color: "var(--claude-orange)" }}
             />
-            <div className="text-body-sm text-foreground/90">
+            <div className="text-foreground/80" style={{ fontSize: "13px" }}>
               暂无内容。
             </div>
-            <div className="mt-1 text-caption text-muted-foreground/70">
+            <div className="mt-1 text-muted-foreground/60" style={{ fontSize: "11px" }}>
               {kind === "index"
                 ? "在 Inbox 中审批维护提案后，目录会在此自动重建。"
                 : "在 Inbox 中审批维护提案后，第一条日志会出现在这里。"}
@@ -1011,43 +902,47 @@ function SpecialFilePanel({ kind }: { kind: "index" | "log" }) {
         ) : (
           <article
             className="prose prose-sm max-w-none text-foreground/90"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+            style={{ fontFamily: "var(--font-serif, Lora, serif)", fontSize: "14px", lineHeight: "1.6" }}
           >
             <ReactMarkdown
               components={{
                 h1: (props) => (
                   <h1
-                    className="mb-3 mt-0 text-head font-semibold text-foreground"
+                    className="mb-3 mt-0 text-foreground"
                     style={{
                       fontFamily: "var(--font-serif, Lora, serif)",
+                      fontSize: "18px",
+                      fontWeight: 600,
+                      letterSpacing: "-0.01em",
                     }}
                     {...props}
                   />
                 ),
                 h2: (props) => (
                   <h2
-                    className="mb-2 mt-5 text-subhead font-semibold text-foreground"
-                    style={{
-                      fontFamily: "var(--font-serif, Lora, serif)",
-                    }}
+                    className="mb-2 mt-6 uppercase tracking-wide text-foreground"
+                    style={{ fontSize: "13px", fontWeight: 600 }}
                     {...props}
                   />
                 ),
                 p: (props) => (
                   <p
-                    className="my-2 text-body leading-relaxed text-foreground/90"
+                    className="my-2.5 text-foreground/90"
+                    style={{ fontSize: "14px", lineHeight: "1.6" }}
                     {...props}
                   />
                 ),
                 ul: (props) => (
                   <ul
-                    className="my-2 list-disc pl-6 text-body text-foreground/90"
+                    className="my-2.5 list-disc pl-6 text-foreground/90"
+                    style={{ fontSize: "14px", lineHeight: "1.6" }}
                     {...props}
                   />
                 ),
                 li: (props) => (
                   <li
-                    className="my-0.5 text-body text-foreground/90"
+                    className="my-0.5 text-foreground/90"
+                    style={{ fontSize: "14px", lineHeight: "1.6" }}
                     {...props}
                   />
                 ),

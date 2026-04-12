@@ -1,18 +1,16 @@
 /**
- * Message list — renders conversation messages as flex children inside the
- * ConversationScroller.  Replaces the previous @tanstack/react-virtual
- * approach with simple DOM rendering + use-stick-to-bottom auto-scroll.
- *
- * Key behavior:
- *   - Groups consecutive tool_use/tool_result messages into a single
- *     <ToolActionsGroup> node for collapse/lazy-render.
- *   - Appends a <StreamingMessage> at the tail when the turn is active.
+ * MessageList — virtualized message list using @tanstack/react-virtual.
+ * Groups consecutive tool_use/tool_result into ToolActionsGroup.
+ * Appends StreamingMessage when turn is active.
+ * Auto-scrolls to bottom when user was at bottom.
  */
 
-import { memo, useMemo } from "react";
+import { memo, useMemo, useEffect } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Message } from "./Message";
 import { ToolActionsGroup } from "./ToolActionsGroup";
 import { StreamingMessage } from "./StreamingMessage";
+import { useStickToBottomContext } from "./ConversationScroller";
 import type { ConversationMessage } from "@/features/common/message-types";
 
 interface MessageListProps {
@@ -21,30 +19,40 @@ interface MessageListProps {
   isStreaming?: boolean;
 }
 
-interface MessageGroup {
+interface SingleGroup {
   kind: "single";
   message: ConversationMessage;
+  key: string;
 }
 
-interface ToolGroup {
+interface ToolGroupItem {
   kind: "tool-group";
   messages: ConversationMessage[];
   key: string;
 }
 
-type RenderGroup = MessageGroup | ToolGroup;
+interface StreamingItem {
+  kind: "streaming";
+  content: string;
+  key: string;
+}
 
-/** Group consecutive tool_use/tool_result messages together. */
-function groupMessages(messages: ConversationMessage[]): RenderGroup[] {
-  const groups: RenderGroup[] = [];
+type RenderItem = SingleGroup | ToolGroupItem | StreamingItem;
+
+function buildItems(
+  messages: ConversationMessage[],
+  streamingContent: string | undefined,
+  isStreaming: boolean,
+): RenderItem[] {
+  const items: RenderItem[] = [];
   let toolBuf: ConversationMessage[] = [];
 
   const flushToolBuf = () => {
     if (toolBuf.length > 0) {
-      groups.push({
+      items.push({
         kind: "tool-group",
         messages: [...toolBuf],
-        key: toolBuf.map((m) => m.id).join("+"),
+        key: `tg-${toolBuf[0].id}`,
       });
       toolBuf = [];
     }
@@ -55,12 +63,16 @@ function groupMessages(messages: ConversationMessage[]): RenderGroup[] {
       toolBuf.push(msg);
     } else {
       flushToolBuf();
-      groups.push({ kind: "single", message: msg });
+      items.push({ kind: "single", message: msg, key: msg.id });
     }
   }
   flushToolBuf();
 
-  return groups;
+  if (isStreaming) {
+    items.push({ kind: "streaming", content: streamingContent ?? "", key: "streaming" });
+  }
+
+  return items;
 }
 
 export const MessageList = memo(function MessageList({
@@ -68,26 +80,66 @@ export const MessageList = memo(function MessageList({
   streamingContent,
   isStreaming = false,
 }: MessageListProps) {
-  const groups = useMemo(() => groupMessages(messages), [messages]);
+  const { scrollElement, isAtBottom } = useStickToBottomContext();
+  const items = useMemo(
+    () => buildItems(messages, streamingContent, isStreaming),
+    [messages, streamingContent, isStreaming],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollElement,
+    estimateSize: () => 80,
+    overscan: 5,
+  });
+
+  // Auto-scroll to bottom when new items arrive
+  useEffect(() => {
+    if (items.length > 0 && isAtBottom) {
+      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    }
+  }, [items.length, virtualizer, isAtBottom]);
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
 
   return (
-    <>
-      {groups.map((group) => {
-        if (group.kind === "tool-group") {
-          return (
-            <ToolActionsGroup
-              key={group.key}
-              messages={group.messages}
-              isStreaming={isStreaming && group === groups[groups.length - 1]}
-            />
-          );
-        }
-        return <Message key={group.message.id} message={group.message} />;
+    <div
+      style={{
+        height: `${totalSize}px`,
+        width: "100%",
+        position: "relative",
+      }}
+    >
+      {virtualItems.map((virtualItem) => {
+        const item = items[virtualItem.index];
+        return (
+          <div
+            key={item.key}
+            data-index={virtualItem.index}
+            ref={virtualizer.measureElement}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualItem.start}px)`,
+              padding: "4px 16px",
+            }}
+          >
+            {item.kind === "tool-group" ? (
+              <ToolActionsGroup
+                messages={item.messages}
+                isStreaming={isStreaming && virtualItem.index === items.length - 2}
+              />
+            ) : item.kind === "streaming" ? (
+              <StreamingMessage content={item.content} />
+            ) : (
+              <Message message={item.message} />
+            )}
+          </div>
+        );
       })}
-
-      {isStreaming && (
-        <StreamingMessage content={streamingContent ?? ""} />
-      )}
-    </>
+    </div>
   );
 });

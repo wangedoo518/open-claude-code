@@ -60,26 +60,20 @@ export function RawLibraryPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* ── Page head ───────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-start gap-3 border-b border-border/50 px-6 py-4">
-        <div className="text-xl">📥</div>
-        <div className="flex-1">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-6 py-4">
+        <div>
           <h1
-            className="text-head font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+            className="text-foreground"
+            style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
           >
-            Raw Library · 不可变事实层
+            Raw Library
           </h1>
-          <p className="mt-0.5 text-label text-muted-foreground">
-            微信转发、粘贴文本、URL — 全部以 <code>~/.clawwiki/raw/</code> 下的 markdown 落盘 · 永不修改
+          <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
+            微信转发、粘贴文本、URL -- 全部以 <code>~/.clawwiki/raw/</code> 下的 markdown 落盘
           </p>
         </div>
-        <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
-          <span className="rounded-md border border-border bg-background px-1.5 py-0.5">
-            S1
-          </span>
-          <span className="rounded-md border border-border bg-background px-1.5 py-0.5">
-            {listQuery.data?.entries.length ?? 0} entries
-          </span>
+        <div className="text-muted-foreground/40" style={{ fontSize: 11 }}>
+          {listQuery.data?.entries.length ?? 0} entries
         </div>
       </div>
 
@@ -286,7 +280,7 @@ function EntryList({
   }
 
   return (
-    <ul className="flex-1 divide-y divide-border/40 overflow-y-auto">
+    <ul className="flex-1 divide-y divide-border/30 overflow-y-auto">
       {entries.map((entry) => {
         const isActive = entry.id === selectedId;
         return (
@@ -295,24 +289,27 @@ function EntryList({
               type="button"
               onClick={() => onSelect(entry.id)}
               className={
-                "w-full px-3 py-2 text-left transition-colors " +
+                "w-full px-3 py-2.5 text-left transition-colors hover:bg-accent/30 " +
                 (isActive
-                  ? "bg-primary/10"
-                  : "hover:bg-accent/40")
+                  ? "border-l-[3px] border-l-primary"
+                  : "border-l-[3px] border-l-transparent")
               }
             >
               <div className="flex items-center justify-between">
-                <span className="font-mono text-caption text-muted-foreground">
+                <span className="font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>
                   #{String(entry.id).padStart(5, "0")}
                 </span>
-                <span className="rounded-sm bg-muted/40 px-1 text-caption text-muted-foreground">
+                <span className="text-muted-foreground/50" style={{ fontSize: 11 }}>
                   {entry.source}
                 </span>
               </div>
-              <div className="mt-0.5 truncate text-body-sm font-medium text-foreground">
+              <div
+                className="mt-0.5 truncate text-foreground"
+                style={{ fontSize: 13, fontWeight: isActive ? 500 : 400 }}
+              >
                 {entry.slug}
               </div>
-              <div className="mt-0.5 flex items-center gap-2 text-caption text-muted-foreground/70">
+              <div className="mt-0.5 flex items-center gap-2 text-muted-foreground/40" style={{ fontSize: 11 }}>
                 <span>{entry.date}</span>
                 <span>·</span>
                 <span>{entry.byte_size} B</span>
@@ -331,12 +328,12 @@ function DetailPlaceholder() {
   return (
     <div className="flex flex-1 items-center justify-center p-6 text-center">
       <div className="max-w-sm">
-        <div className="mb-2 text-3xl opacity-30">📄</div>
-        <p className="text-body text-muted-foreground">
+        <div className="mb-3 text-2xl opacity-20">📄</div>
+        <p className="text-muted-foreground/60" style={{ fontSize: 13 }}>
           Select an entry on the left, or paste new text to add the first
           one.
         </p>
-        <p className="mt-1 text-caption text-muted-foreground/60">
+        <p className="mt-1.5 text-muted-foreground/40" style={{ fontSize: 11 }}>
           Files live under <code>~/.clawwiki/raw/</code> and are read-only
           by contract.
         </p>
@@ -391,26 +388,26 @@ function DetailView({ id }: { id: number }) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Frontmatter strip */}
-      <div className="shrink-0 border-b border-border/50 bg-muted/10 px-6 py-3">
+      <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-caption text-muted-foreground">
+            <div className="flex items-baseline gap-2 text-muted-foreground/40" style={{ fontSize: 11 }}>
+              <span className="font-mono">
                 #{String(entry.id).padStart(5, "0")}
               </span>
-              <span className="rounded-sm bg-muted/40 px-1 text-caption text-muted-foreground">
+              <span>
                 {entry.source}
               </span>
             </div>
             <h2
-              className="mt-0.5 truncate text-subhead font-semibold text-foreground"
-              style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+              className="mt-1.5 truncate text-foreground"
+              style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
             >
               {entry.slug}
             </h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-caption text-muted-foreground">
-              <span>filename: {entry.filename}</span>
-              <span>ingested: {entry.ingested_at}</span>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground/40" style={{ fontSize: 11 }}>
+              <span>{entry.filename}</span>
+              <span>{entry.ingested_at}</span>
               <span>{entry.byte_size} bytes</span>
             </div>
             {entry.source_url && (
@@ -436,7 +433,7 @@ function DetailView({ id }: { id: number }) {
       </div>
 
       {/* Body */}
-      <pre className="flex-1 overflow-auto whitespace-pre-wrap px-6 py-4 font-mono text-body-sm leading-relaxed text-foreground/90">
+      <pre className="flex-1 overflow-auto whitespace-pre-wrap px-6 py-5 font-mono text-foreground/90" style={{ fontSize: 13, lineHeight: 1.6 }}>
         {body}
       </pre>
     </div>

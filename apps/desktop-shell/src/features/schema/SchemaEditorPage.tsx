@@ -94,17 +94,14 @@ export function SchemaEditorPage() {
     <div className="flex h-full flex-col overflow-hidden">
       {/* Hero */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <div className="flex items-baseline gap-3">
-          <span className="text-xl">📐</span>
-          <h1
-            className="text-head font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
-          >
-            Schema Editor · Maintainer 的纪律
-          </h1>
-        </div>
-        <p className="mt-1 text-label text-muted-foreground">
-          AI 的纪律是什么 — <code>schema/CLAUDE.md</code> 是维护 agent 的唯一行为契约 · 人写优先 · feat(M) 后支持直接编辑保存
+        <h1
+          className="text-foreground"
+          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
+        >
+          Schema Editor
+        </h1>
+        <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
+          <code>schema/CLAUDE.md</code> 是维护 agent 的唯一行为契约 -- 人写优先
         </p>
       </div>
 
@@ -186,16 +183,16 @@ function SchemaBody({
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       {/* Path card */}
-      <div className="rounded-md border border-border bg-muted/10 px-4 py-3">
-        <div className="mb-1 flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
+      <div className="rounded-md border border-border/40 px-4 py-3">
+        <div className="mb-1.5 flex items-center gap-2 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
           <FileText className="size-3" />
           Source
         </div>
         <div className="flex items-center justify-between gap-3">
-          <code className="break-all font-mono text-body-sm text-foreground">
+          <code className="break-all font-mono text-foreground/80" style={{ fontSize: 12 }}>
             {path}
           </code>
-          <div className="shrink-0 text-caption text-muted-foreground">
+          <div className="shrink-0 text-muted-foreground/40" style={{ fontSize: 11 }}>
             {byteSize} bytes · {source === "disk" ? "on disk" : source}
           </div>
         </div>
@@ -257,12 +254,12 @@ function SchemaBody({
 
       {/* Content pane */}
       <div className="rounded-md border border-border bg-background">
-        <div className="flex items-center gap-2 border-b border-border/50 bg-muted/5 px-4 py-2">
+        <div className="flex items-center gap-2 border-b border-border/40 px-4 py-2">
           <Ruler
             className="size-3.5"
             style={{ color: "var(--claude-orange)" }}
           />
-          <span className="font-mono text-caption text-muted-foreground">
+          <span className="font-mono text-muted-foreground/50" style={{ fontSize: 11 }}>
             CLAUDE.md
           </span>
           {justSaved ? (

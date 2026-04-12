@@ -172,25 +172,22 @@ export function WeChatBridgePage() {
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Hero */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <div className="flex items-baseline gap-3">
-          <span className="text-xl">🔗</span>
-          <h1
-            className="text-head font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
-          >
-            WeChat Bridge · 个微 iLink 漏斗
-          </h1>
-        </div>
-        <p className="mt-1 text-label text-muted-foreground">
-          微信怎么接进来的 — 个微 iLink 登录 · 长轮询监听 · 文本消息自动入{" "}
-          <code>~/.clawwiki/raw/</code> · D2 override (保留 Phase 1-2)
+        <h1
+          className="text-foreground"
+          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
+        >
+          WeChat Bridge
+        </h1>
+        <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
+          个微 iLink 登录 -- 长轮询监听 -- 文本消息自动入{" "}
+          <code>~/.clawwiki/raw/</code>
         </p>
       </div>
 
       {/* Connected accounts */}
       <section className="border-b border-border/50 px-6 py-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-subhead font-semibold text-foreground">
+          <h2 className="uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
             Connected accounts
           </h2>
           <div className="flex items-center gap-2">
@@ -267,7 +264,7 @@ export function WeChatBridgePage() {
       {/* QR login flow card */}
       {loginHandle && loginStatus && (
         <section className="border-b border-border/50 px-6 py-5">
-          <h2 className="mb-3 text-subhead font-semibold text-foreground">
+          <h2 className="mb-3 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
             QR login
           </h2>
           <QrLoginCard
@@ -281,14 +278,14 @@ export function WeChatBridgePage() {
 
       {/* Pipeline info */}
       <section className="px-6 py-5">
-        <h2 className="mb-3 text-subhead font-semibold text-foreground">
+        <h2 className="mb-3 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
           Pipeline (D2 override)
         </h2>
-        <div className="rounded-md border border-border/50 bg-muted/10 p-4 text-caption text-muted-foreground">
-          <div className="mb-1 text-body-sm font-semibold text-foreground">
+        <div className="rounded-md border border-border/40 p-4">
+          <div className="mb-2 text-foreground" style={{ fontSize: 14, fontWeight: 500 }}>
             Personal WeChat → Raw → Inbox → Ask
           </div>
-          <ol className="ml-5 list-decimal space-y-1">
+          <ol className="ml-5 list-decimal space-y-1.5 text-muted-foreground/70" style={{ fontSize: 13, lineHeight: 1.6 }}>
             <li>
               Add an account above — scan the QR code in the WeChat ClawBot
               plugin.
@@ -310,7 +307,7 @@ export function WeChatBridgePage() {
               chat response from the existing DesktopState agent.
             </li>
           </ol>
-          <div className="mt-3 text-caption text-muted-foreground/70">
+          <div className="mt-3 text-muted-foreground/40" style={{ fontSize: 11 }}>
             S6 will layer adapters on top (voice → whisper, image → Vision
             caption, PPT → slides-per-section). S5 only ships the text path.
           </div>
@@ -361,28 +358,28 @@ function AccountList({
   }
   if (accounts.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border/50 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
-        <Link2 className="mx-auto mb-1.5 size-5 opacity-40" />
+      <div className="rounded-md border border-dashed border-border/40 px-4 py-6 text-center text-muted-foreground/60" style={{ fontSize: 12 }}>
+        <Link2 className="mx-auto mb-2 size-5 opacity-30" />
         No WeChat accounts connected yet. Click <b>Add account</b> to begin.
       </div>
     );
   }
 
   return (
-    <ul className="divide-y divide-border/40 overflow-hidden rounded-md border border-border bg-muted/5">
+    <ul className="divide-y divide-border/30 overflow-hidden rounded-md border border-border/40">
       {accounts.map((account) => (
         <li key={account.id} className="flex items-center gap-3 px-4 py-3">
           <StatusIndicator status={account.status} />
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
-              <span className="truncate text-body-sm font-medium text-foreground">
+              <span className="truncate text-foreground" style={{ fontSize: 14 }}>
                 {account.display_name || account.id}
               </span>
-              <span className="shrink-0 font-mono text-caption text-muted-foreground">
+              <span className="shrink-0 font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>
                 {account.id}
               </span>
             </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-caption text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground/40" style={{ fontSize: 11 }}>
               <span className="font-mono">
                 token: {account.bot_token_preview}
               </span>
@@ -479,11 +476,11 @@ function QrLoginCard({
     : null;
 
   return (
-    <div className="rounded-lg border border-border bg-muted/5 p-5">
+    <div className="rounded-md border border-border/40 p-5">
       <div className="flex items-start gap-5">
         {/* QR image */}
         <div className="shrink-0">
-          <div className="relative rounded-md border border-border bg-background p-2">
+          <div className="relative rounded-md border border-border/40 bg-background p-2">
             {safeQrSrc ? (
               <img
                 src={safeQrSrc}
@@ -509,7 +506,7 @@ function QrLoginCard({
               </div>
             )}
           </div>
-          <div className="mt-2 text-center text-caption text-muted-foreground">
+          <div className="mt-2 text-center text-muted-foreground/40" style={{ fontSize: 11 }}>
             expires {handle.expires_at}
           </div>
         </div>
@@ -518,16 +515,16 @@ function QrLoginCard({
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <QrCode
-              className="size-4"
+              className="size-3.5"
               style={{ color: "var(--claude-orange)" }}
             />
-            <span className="text-body-sm font-semibold text-foreground">
+            <span className="text-foreground" style={{ fontSize: 14, fontWeight: 500 }}>
               {statusLabel(status.status)}
             </span>
           </div>
-          <p className="mt-1 text-body text-foreground/90">{helpText}</p>
+          <p className="mt-1.5 text-foreground/80" style={{ fontSize: 14, lineHeight: 1.6 }}>{helpText}</p>
           {status.account_id && (
-            <p className="mt-1 font-mono text-caption text-muted-foreground">
+            <p className="mt-1.5 font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>
               account_id: {status.account_id}
             </p>
           )}

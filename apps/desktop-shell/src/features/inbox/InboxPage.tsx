@@ -56,6 +56,26 @@ const inboxKeys = {
   list: () => ["wiki", "inbox", "list"] as const,
 };
 
+/** 翻译 inbox entry kind */
+function translateKind(kind: string): string {
+  const map: Record<string, string> = {
+    "new-raw": "新素材",
+    "stale": "待更新",
+    "conflict": "冲突",
+  };
+  return map[kind] ?? kind;
+}
+
+/** 翻译 inbox entry status */
+function translateStatus(status: string): string {
+  const map: Record<string, string> = {
+    "pending": "待处理",
+    "approved": "已批准",
+    "rejected": "已拒绝",
+  };
+  return map[status] ?? status;
+}
+
 export function InboxPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
@@ -92,28 +112,26 @@ export function InboxPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Page head */}
-      <div className="flex shrink-0 items-start gap-3 border-b border-border/50 px-6 py-4">
-        <div className="text-xl">📨</div>
-        <div className="flex-1">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-6 py-4">
+        <div>
           <h1
-            className="text-head font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+            className="text-foreground"
+            style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
           >
-            Inbox · Maintenance Inbox
+            Inbox
           </h1>
-          <p className="mt-0.5 text-label text-muted-foreground">
-            CCD 灵魂 ③+④ · Maintainer 提的待审任务 · approve / reject · S4 MVP：
-            新 raw 自动入队；完整 TaskTree + LLM 写回 delay 到 codex_broker 接通后
+          <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
+            新素材自动入队 -- AI 生成知识页面 -- 审批后写入 Wiki
           </p>
         </div>
-        <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
+        <div className="flex items-center gap-2" style={{ fontSize: 11 }}>
           <span
-            className="rounded-md border border-border bg-background px-1.5 py-0.5"
+            className="rounded-full border border-border/40 px-2 py-0.5 text-muted-foreground"
             style={{ color: "var(--color-warning)" }}
           >
             {listQuery.data?.pending_count ?? 0} 待处理
           </span>
-          <span className="rounded-md border border-border bg-background px-1.5 py-0.5">
+          <span className="text-muted-foreground/40">
             {listQuery.data?.total_count ?? 0} 总计
           </span>
         </div>
@@ -212,7 +230,7 @@ function EntryList({
   );
 
   return (
-    <ul className="flex-1 divide-y divide-border/40 overflow-y-auto">
+    <ul className="flex-1 divide-y divide-border/30 overflow-y-auto">
       {sorted.map((entry) => {
         const isActive = entry.id === selectedId;
         return (
@@ -221,23 +239,26 @@ function EntryList({
               type="button"
               onClick={() => onSelect(entry.id)}
               className={
-                "w-full px-4 py-2.5 text-left transition-colors " +
-                (isActive ? "bg-primary/10" : "hover:bg-accent/40")
+                "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/30 " +
+                (isActive ? "border-l-[3px] border-l-primary" : "border-l-[3px] border-l-transparent")
               }
             >
               <div className="flex items-center justify-between gap-2">
                 <StatusIcon status={entry.status} />
-                <span className="flex-1 truncate text-body-sm font-medium text-foreground">
-                  {entry.title}
+                <span
+                  className="flex-1 truncate text-foreground"
+                  style={{ fontSize: 13, fontWeight: isActive ? 500 : 400 }}
+                >
+                  {entry.title.replace(/^New raw entry/, "新素材")}
                 </span>
-                <span className="shrink-0 rounded-sm bg-muted/40 px-1 text-caption text-muted-foreground">
-                  {entry.kind}
+                <span className="shrink-0 text-muted-foreground/50" style={{ fontSize: 11 }}>
+                  {translateKind(entry.kind)}
                 </span>
               </div>
-              <div className="mt-1 truncate pl-6 text-caption text-muted-foreground/80">
+              <div className="mt-1 truncate pl-6 text-muted-foreground/60" style={{ fontSize: 11 }}>
                 {entry.description}
               </div>
-              <div className="mt-0.5 flex items-center gap-2 pl-6 text-caption text-muted-foreground/60">
+              <div className="mt-0.5 flex items-center gap-2 pl-6 text-muted-foreground/40" style={{ fontSize: 11 }}>
                 <Clock className="size-3" />
                 {formatRelative(entry.created_at)}
               </div>
@@ -330,30 +351,31 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/50 bg-muted/10 px-6 py-4">
+      <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <div className="flex items-center gap-2">
           <StatusIcon status={entry.status} />
-          <span className="font-mono text-caption text-muted-foreground">
+          <span className="font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>
             #{String(entry.id).padStart(5, "0")}
           </span>
-          <span className="rounded-sm bg-muted/40 px-1 text-caption text-muted-foreground">
+          <span className="text-muted-foreground/50" style={{ fontSize: 11 }}>
             {entry.kind}
           </span>
           <StatusPill status={entry.status} />
         </div>
         <h2
-          className="mt-1.5 text-subhead font-semibold text-foreground"
-          style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+          className="mt-2 text-foreground"
+          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
         >
           {entry.title}
         </h2>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-caption text-muted-foreground">
-          <span>created: {entry.created_at}</span>
-          {entry.resolved_at && <span>resolved: {entry.resolved_at}</span>}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground/40" style={{ fontSize: 11 }}>
+          <span>创建于: {entry.created_at}</span>
+          {entry.resolved_at && <span>处理于: {entry.resolved_at}</span>}
           {entry.source_raw_id != null && (
             <Link
               to="/raw"
               className="inline-flex items-center gap-1 text-primary hover:underline"
+              style={{ fontSize: 11 }}
             >
               <FileText className="size-3" />
               raw #{String(entry.source_raw_id).padStart(5, "0")}
@@ -363,32 +385,36 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-6 py-4">
-        <h3 className="mb-2 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex-1 overflow-auto px-6 py-5">
+        <h3 className="mb-2 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
           描述
         </h3>
-        <p className="whitespace-pre-wrap text-body text-foreground/90">
-          {entry.description}
+        <p className="whitespace-pre-wrap text-foreground/90" style={{ fontSize: 14, lineHeight: 1.6 }}>
+          {entry.description
+            .replace(/^Raw entry/, "素材")
+            .replace("was ingested from WeChat user", "由微信用户")
+            .replace("Proposed action: summarise into a concept page.", "转发入库。建议操作：总结为概念知识页面。")
+          }
         </p>
 
         {/* ── Maintainer proposal preview ───────────────────────── */}
         {proposal ? (
           <>
-            <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="mb-2 mt-6 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
               生成的知识页面
             </h3>
             <ProposalPreview proposal={proposal} />
           </>
         ) : canMaintain ? (
           <>
-            <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="mb-2 mt-6 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
               维护器
             </h3>
-            <div className="rounded-md border border-border/50 bg-muted/10 px-4 py-6">
-              <div className="mb-2 text-body-sm text-foreground/90">
+            <div className="rounded-md border border-border/40 px-4 py-5">
+              <div className="mb-2 text-foreground/90" style={{ fontSize: 14, lineHeight: 1.6 }}>
                 让维护 AI 将这条素材总结为概念知识页面。
               </div>
-              <div className="mb-3 text-caption text-muted-foreground">
+              <div className="mb-3 text-muted-foreground/50" style={{ fontSize: 11 }}>
                 调用一次 AI 总结（≤200 词）。在你批准之前不会写入磁盘。
               </div>
               <button
@@ -408,17 +434,15 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
           </>
         ) : (
           <>
-            <h3 className="mb-2 mt-5 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
-              Maintainer Task Tree
+            <h3 className="mb-2 mt-6 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
+              维护任务树
             </h3>
-            <div className="rounded-md border border-border/50 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
-              <div className="mb-1 text-body-sm text-muted-foreground">
-                🌲 TaskTree visualization lands once codex_broker wires
-                chat_completion.
+            <div className="rounded-md border border-border/40 px-4 py-5 text-center">
+              <div className="mb-1 text-muted-foreground/60" style={{ fontSize: 13 }}>
+                任务树可视化即将上线。
               </div>
-              <div className="text-caption text-muted-foreground/60">
-                For now the task is approved/rejected at the entry level —
-                one button per task, not per tool call.
+              <div className="text-muted-foreground/40" style={{ fontSize: 11 }}>
+                目前支持按条目级别批准或拒绝。
               </div>
             </div>
           </>
@@ -449,11 +473,11 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border/50 bg-muted/5 px-6 py-3">
+      <div className="shrink-0 border-t border-border/50 px-6 py-3">
         {isResolved ? (
           <div className="flex items-center justify-between gap-3">
             <div className="text-caption text-muted-foreground">
-              该任务已{entry.status}。
+              该任务已{translateStatus(entry.status)}。
             </div>
           </div>
         ) : (
@@ -512,24 +536,24 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
  */
 function ProposalPreview({ proposal }: { proposal: WikiPageProposal }) {
   return (
-    <div className="rounded-md border border-border/50 bg-background">
-      <div className="flex items-start justify-between gap-2 border-b border-border/40 px-4 py-2.5">
+    <div className="rounded-md border border-border/40 bg-background">
+      <div className="flex items-start justify-between gap-2 border-b border-border/30 px-4 py-3">
         <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="rounded-sm bg-muted/40 px-1 font-mono text-caption text-muted-foreground">
+          <div className="flex items-center gap-2 text-muted-foreground/40" style={{ fontSize: 11 }}>
+            <span className="font-mono">
               {proposal.slug}
             </span>
-            <span className="text-caption text-muted-foreground">
+            <span>
               from raw #{String(proposal.source_raw_id).padStart(5, "0")}
             </span>
           </div>
           <div
-            className="mt-1 text-body font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
+            className="mt-1.5 text-foreground"
+            style={{ fontSize: 16, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
           >
             {proposal.title}
           </div>
-          <div className="mt-1 text-caption text-muted-foreground">
+          <div className="mt-1 text-muted-foreground/60" style={{ fontSize: 12 }}>
             {proposal.summary}
           </div>
         </div>
@@ -545,9 +569,9 @@ function ProposalPreview({ proposal }: { proposal: WikiPageProposal }) {
 
 function StatusPill({ status }: { status: InboxEntry["status"] }) {
   const config = {
-    pending: { label: "pending", color: "var(--color-warning)" },
-    approved: { label: "approved", color: "var(--color-success)" },
-    rejected: { label: "rejected", color: "var(--color-error)" },
+    pending: { label: "待处理", color: "var(--color-warning)" },
+    approved: { label: "已批准", color: "var(--color-success)" },
+    rejected: { label: "已拒绝", color: "var(--color-error)" },
   }[status];
   return (
     <span

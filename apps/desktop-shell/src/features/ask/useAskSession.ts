@@ -92,6 +92,8 @@ export interface UseAskSessionResult {
    * render. Clears the persisted active id.
    */
   onResetSession: () => void;
+  /** Switch to an existing session by id. */
+  onSwitchSession: (id: string) => void;
 }
 
 /**
@@ -225,6 +227,13 @@ export function useAskSession(): UseAskSessionResult {
     queryClient.removeQueries({ queryKey: askSessionKeys.all });
   }, [queryClient]);
 
+  /** Switch to an existing session by id. */
+  const onSwitchSession = useCallback((id: string) => {
+    writeActiveSessionId(id);
+    setActiveId(id);
+    setErrorMessage(undefined);
+  }, []);
+
   const session = detailQuery.data ?? null;
   const isLoadingSession =
     ensureMutation.isPending ||
@@ -242,6 +251,7 @@ export function useAskSession(): UseAskSessionResult {
       errorMessage,
       onSend,
       onResetSession,
+      onSwitchSession,
     }),
     [
       activeId,
@@ -252,6 +262,7 @@ export function useAskSession(): UseAskSessionResult {
       errorMessage,
       onSend,
       onResetSession,
+      onSwitchSession,
     ]
   );
 }

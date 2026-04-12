@@ -57,17 +57,14 @@ export function GraphPage() {
     <div className="flex h-full flex-col overflow-hidden">
       {/* Hero */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <div className="flex items-baseline gap-3">
-          <span className="text-xl">🕸</span>
-          <h1
-            className="text-head font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
-          >
-            Graph · 你的认知网络
-          </h1>
-        </div>
-        <p className="mt-1 text-label text-muted-foreground">
-          知识图谱 — 拖拽节点、滚轮缩放、悬停高亮关联
+        <h1
+          className="text-foreground"
+          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
+        >
+          Graph
+        </h1>
+        <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
+          知识图谱 -- 拖拽节点、滚轮缩放、悬停高亮关联
         </p>
       </div>
 
@@ -120,14 +117,14 @@ function ConceptConnectionsSidebar({
   onNavigateWiki: () => void;
 }) {
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-border/50 bg-muted/5">
+    <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-border/50">
       <div className="shrink-0 border-b border-border/50 px-4 py-3">
-        <div className="mb-1 flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
+        <div className="mb-1.5 flex items-center gap-2 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
           <Network className="size-3" />
           概念关联
         </div>
         {data ? (
-          <div className="text-caption text-muted-foreground">
+          <div className="text-muted-foreground/40" style={{ fontSize: 11 }}>
             {data.concept_count} 概念 ·{" "}
             {data.edge_count} 关联 ·{" "}
             {data.raw_count} 素材
@@ -178,13 +175,15 @@ function ConceptConnectionsSidebar({
               return (
                 <li
                   key={`${edge.from}->${edge.to}-${idx}`}
-                  className="rounded-md border border-border/40 bg-background px-2.5 py-1.5"
+                  className="rounded-md border border-border/30 px-2.5 py-2"
                 >
                   <button
                     type="button"
                     onClick={onNavigateWiki}
-                    className="block w-full truncate text-left text-body-sm font-medium text-foreground hover:underline"
+                    className="block w-full truncate text-left text-foreground hover:underline"
                     style={{
+                      fontSize: 13,
+                      fontWeight: 400,
                       fontFamily: "var(--font-serif, Lora, serif)",
                     }}
                   >
@@ -197,7 +196,8 @@ function ConceptConnectionsSidebar({
                   <button
                     type="button"
                     onClick={onNavigateRaw}
-                    className="mt-0.5 flex w-full items-center gap-1 text-left text-caption text-muted-foreground hover:text-foreground"
+                    className="mt-0.5 flex w-full items-center gap-1 text-left text-muted-foreground/50 hover:text-foreground"
+                    style={{ fontSize: 11 }}
                   >
                     <ArrowRight className="size-3 shrink-0" />
                     <span className="truncate">{toLabel}</span>

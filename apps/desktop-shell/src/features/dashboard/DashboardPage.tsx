@@ -84,22 +84,19 @@ export function DashboardPage() {
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Hero */}
       <section className="border-b border-border/50 px-8 py-6">
-        <div className="flex items-baseline gap-3">
-          <span className="text-2xl">📊</span>
-          <h1
-            className="text-head font-semibold text-foreground"
-            style={{ fontFamily: "var(--font-serif, Lora, serif)" }}
-          >
-            Dashboard · 你的外脑主页
-          </h1>
-        </div>
-        <p className="mt-1 text-label text-muted-foreground">
-          我的外脑今天长了多少 — 粘贴 / 转发一份新素材，微信漏斗自动进 Raw Library · 维护任务进 Inbox 等你审阅
+        <h1
+          className="text-foreground"
+          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
+        >
+          Dashboard
+        </h1>
+        <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
+          我的外脑今天长了多少 -- 粘贴 / 转发一份新素材，微信漏斗自动进 Raw Library
         </p>
       </section>
 
       {/* Stat cards */}
-      <section className="grid grid-cols-2 gap-3 px-8 py-5 md:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 px-8 py-4 md:grid-cols-4">
         <StatCard
           icon={FileStack}
           label="今日入库"
@@ -147,24 +144,25 @@ export function DashboardPage() {
       </section>
 
       {/* QuickAsk CTA */}
-      <section className="px-8 py-2">
-        <div className="rounded-lg border border-border bg-muted/10 px-5 py-4">
+      <section className="px-8 py-3">
+        <div className="rounded-md border border-border/40 px-5 py-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <div className="mb-0.5 flex items-center gap-2 text-body font-semibold text-foreground">
+              <div className="mb-0.5 flex items-center gap-2 text-foreground" style={{ fontSize: 14, fontWeight: 500 }}>
                 <MessageCircle
-                  className="size-4"
+                  className="size-3.5"
                   style={{ color: "var(--claude-orange)" }}
                 />
                 问问你的外脑
               </div>
-              <p className="text-caption text-muted-foreground">
+              <p className="text-muted-foreground/60" style={{ fontSize: 11 }}>
                 与 AI 对话，探索你的素材库。支持 @raw/ 引用和多轮问答。
               </p>
             </div>
             <Link
               to="/ask"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90"
+              style={{ fontSize: 13, fontWeight: 500 }}
             >
               开始对话
               <ArrowRight className="size-3" />
@@ -175,13 +173,14 @@ export function DashboardPage() {
 
       {/* Recent raw entries */}
       <section className="min-h-0 flex-1 px-8 pb-6 pt-4">
-        <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="text-subhead font-semibold text-foreground">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
             最近入库
           </h2>
           <Link
             to="/raw"
-            className="text-caption text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground/50 hover:text-foreground"
+            style={{ fontSize: 11 }}
           >
             查看全部 →
           </Link>
@@ -212,19 +211,22 @@ function StatCard({
   link?: string;
 }) {
   const body = (
-    <div className="h-full rounded-lg border border-border bg-muted/10 px-4 py-3 transition-colors group-hover:bg-muted/20">
-      <div className="mb-1.5 flex items-center gap-1.5 text-caption text-muted-foreground">
+    <div
+      className="h-full rounded-md border border-border/40 px-4 py-3 transition-colors group-hover:border-border"
+      style={{ borderLeft: `3px solid ${tint ?? "var(--color-border)"}` }}
+    >
+      <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground/60" style={{ fontSize: 11, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
         <Icon className="size-3" style={tint ? { color: tint } : undefined} />
         {label}
       </div>
       <div
-        className="text-head font-semibold tabular-nums leading-none"
-        style={tint ? { color: tint } : { color: "var(--color-foreground)" }}
+        className="tabular-nums leading-none"
+        style={{ fontSize: 18, fontWeight: 600, color: tint ?? "var(--color-foreground)" }}
       >
         {value}
       </div>
       {hint && (
-        <div className="mt-1.5 truncate text-caption text-muted-foreground/70">
+        <div className="mt-1.5 truncate text-muted-foreground/50" style={{ fontSize: 11 }}>
           {hint}
         </div>
       )}
@@ -282,7 +284,7 @@ function RecentEntries({
   }
   if (entries.length === 0) {
     return (
-      <div className="rounded-md border border-border/50 bg-muted/10 px-4 py-6 text-center text-caption text-muted-foreground">
+      <div className="px-1 py-6 text-center text-muted-foreground/60" style={{ fontSize: 11 }}>
         还没有素材。{" "}
         <Link to="/raw" className="text-primary hover:underline">
           粘贴第一条 →
@@ -292,25 +294,25 @@ function RecentEntries({
   }
 
   return (
-    <ul className="divide-y divide-border/40 overflow-hidden rounded-md border border-border bg-muted/5">
+    <ul className="divide-y divide-border/30">
       {entries.map((entry) => (
         <li key={entry.id}>
           <Link
             to="/raw"
-            className="flex items-center justify-between px-4 py-2 transition-colors hover:bg-muted/20"
+            className="flex items-center justify-between px-1 py-2.5 transition-colors hover:bg-accent/30"
           >
             <div className="flex min-w-0 items-baseline gap-3">
-              <span className="shrink-0 font-mono text-caption text-muted-foreground">
+              <span className="shrink-0 font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>
                 #{String(entry.id).padStart(5, "0")}
               </span>
-              <span className="truncate text-body-sm font-medium text-foreground">
+              <span className="truncate text-foreground" style={{ fontSize: 14 }}>
                 {entry.slug}
               </span>
-              <span className="shrink-0 rounded-sm bg-muted/40 px-1 text-caption text-muted-foreground">
+              <span className="shrink-0 text-muted-foreground/50" style={{ fontSize: 11 }}>
                 {entry.source}
               </span>
             </div>
-            <div className="shrink-0 text-caption text-muted-foreground">
+            <div className="shrink-0 text-muted-foreground/40" style={{ fontSize: 11 }}>
               {entry.date} · {entry.byte_size} B
             </div>
           </Link>

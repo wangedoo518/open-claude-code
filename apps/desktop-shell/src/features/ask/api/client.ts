@@ -24,7 +24,12 @@ import type {
   AppendDesktopMessageResponse,
   CreateDesktopSessionResponse,
   DesktopSessionDetail,
+  DesktopSessionsResponse,
 } from "@/lib/tauri";
+
+export async function listSessions(): Promise<DesktopSessionsResponse> {
+  return fetchJson<DesktopSessionsResponse>("/api/desktop/sessions");
+}
 
 export async function getSession(
   sessionId: string,

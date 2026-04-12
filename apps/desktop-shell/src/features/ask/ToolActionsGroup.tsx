@@ -114,23 +114,23 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
         <span className="font-medium text-foreground">{label}</span>
 
         {/* Status badges */}
-        <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {stats.running > 0 && (
             <span className="flex items-center gap-0.5">
               <Loader2 className="size-3 animate-spin" style={{ color: "var(--deeptutor-primary, var(--claude-orange))" }} />
-              {statusParts[0]}
+              {stats.running} 执行中
             </span>
           )}
           {stats.completed > 0 && stats.errors === 0 && (
             <span className="flex items-center gap-0.5">
               <CheckCircle2 className="size-3" style={{ color: "var(--color-success)" }} />
-              {stats.completed} done
+              {stats.completed} 完成
             </span>
           )}
           {stats.errors > 0 && (
             <span className="flex items-center gap-0.5">
               <AlertCircle className="size-3" style={{ color: "var(--color-error)" }} />
-              {stats.errors} failed
+              {stats.errors} 失败
             </span>
           )}
         </span>

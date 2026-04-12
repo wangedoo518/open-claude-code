@@ -1,6 +1,6 @@
 /**
- * Conversation scroll container — messages start from top, input stays
- * at bottom. Auto-scrolls to bottom on new messages.
+ * Conversation scroll container — provides scroll element ref for
+ * virtualized message list + auto-scroll context.
  */
 
 import {
@@ -16,11 +16,13 @@ import {
 interface ScrollCtx {
   isAtBottom: boolean;
   scrollToBottom: () => void;
+  scrollElement: HTMLDivElement | null;
 }
 
 const ScrollContext = createContext<ScrollCtx>({
   isAtBottom: true,
   scrollToBottom: () => {},
+  scrollElement: null,
 });
 
 export function useStickToBottomContext() {
@@ -30,6 +32,11 @@ export function useStickToBottomContext() {
 export function ConversationScroller({ children }: { children: ReactNode }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setScrollElement(scrollRef.current);
+  }, []);
 
   const checkBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -57,14 +64,12 @@ export function ConversationScroller({ children }: { children: ReactNode }) {
   }, [checkBottom]);
 
   return (
-    <ScrollContext.Provider value={{ isAtBottom, scrollToBottom }}>
+    <ScrollContext.Provider value={{ isAtBottom, scrollToBottom, scrollElement }}>
       <div
         ref={scrollRef}
         style={{ flex: "1 1 0%", overflowY: "auto", minHeight: 0 }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "16px" }}>
-          {children}
-        </div>
+        {children}
       </div>
     </ScrollContext.Provider>
   );

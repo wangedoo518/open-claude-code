@@ -1,13 +1,15 @@
 /**
- * Ask · CCD 工作台 + 流式会话
+ * Ask · CCD 工作台 + 流式会话 + 会话侧边栏
  */
 
+import { useState, useCallback } from "react";
 import { Loader2, AlertTriangle, RefreshCw } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AskWorkbench } from "./AskWorkbench";
+import { SessionSidebar } from "./SessionSidebar";
 import { useAskSession } from "./useAskSession";
 import { useAskSSE } from "./useAskSSE";
-import { listProviders } from "@/features/settings/api/client";
+import { listProviders, activateProvider } from "@/features/settings/api/client";
 
 export function AskPage() {
   const {
@@ -19,7 +21,10 @@ export function AskPage() {
     errorMessage,
     onSend,
     onResetSession,
+    onSwitchSession,
   } = useAskSession();
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Wire SSE subscription for real-time streaming + permission requests
   useAskSSE(sessionId, isTurnActive);
@@ -31,6 +36,8 @@ export function AskPage() {
     staleTime: 30_000,
   });
 
+  const queryClient = useQueryClient();
+
   // Derive real model label from active provider
   const activeProvider = providersQuery.data
     ? providersQuery.data.providers.find((p) => p.id === providersQuery.data.active)
@@ -39,8 +46,28 @@ export function AskPage() {
     ? (activeProvider.display_name || activeProvider.model || activeProvider.id)
     : session?.model_label;
 
+  // Build provider options for model selector
+  const providerOptions = (providersQuery.data?.providers ?? []).map((p) => ({
+    id: p.id,
+    label: p.display_name || p.id,
+    model: p.model,
+    isActive: p.id === providersQuery.data?.active,
+  }));
+
+  const handleSwitchProvider = useCallback(async (id: string) => {
+    try {
+      await activateProvider(id);
+      void queryClient.invalidateQueries({ queryKey: ["desktop", "providers"] });
+    } catch (err) {
+      console.error("[ask] failed to switch provider:", err);
+    }
+  }, [queryClient]);
+
+  // Main content area (workbench or loading/error states)
+  let content: React.ReactNode;
+
   if (isLoadingSession && !session) {
-    return (
+    content = (
       <div className="flex h-full items-center justify-center">
         <div className="flex items-center gap-2 text-caption text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
@@ -48,10 +75,8 @@ export function AskPage() {
         </div>
       </div>
     );
-  }
-
-  if (errorMessage && !session) {
-    return (
+  } else if (errorMessage && !session) {
+    content = (
       <div className="flex h-full items-center justify-center">
         <div
           className="max-w-md rounded-lg border px-6 py-5 text-center"
@@ -76,18 +101,35 @@ export function AskPage() {
         </div>
       </div>
     );
+  } else {
+    content = (
+      <AskWorkbench
+        session={session}
+        isLoadingSession={isLoadingSession}
+        isSending={isSending}
+        errorMessage={errorMessage}
+        onSend={onSend}
+        onCreateSession={onResetSession}
+        modelLabel={realModelLabel}
+        environmentLabel={session?.environment_label}
+        providers={providerOptions}
+        onSwitchProvider={handleSwitchProvider}
+      />
+    );
   }
 
   return (
-    <AskWorkbench
-      session={session}
-      isLoadingSession={isLoadingSession}
-      isSending={isSending}
-      errorMessage={errorMessage}
-      onSend={onSend}
-      onCreateSession={onResetSession}
-      modelLabel={realModelLabel}
-      environmentLabel={session?.environment_label}
-    />
+    <div className="flex h-full overflow-hidden">
+      <SessionSidebar
+        activeSessionId={sessionId}
+        onSelectSession={onSwitchSession}
+        onNewSession={onResetSession}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+      />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {content}
+      </div>
+    </div>
   );
 }

@@ -499,6 +499,10 @@ export interface DesktopSearchHit {
   updated_at: number;
 }
 
+export interface DesktopSessionsResponse {
+  sessions: DesktopSessionSummary[];
+}
+
 export interface SearchDesktopSessionsResponse {
   results: DesktopSearchHit[];
 }

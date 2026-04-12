@@ -47,8 +47,54 @@ import {
   type RuntimeConversationMessage,
 } from "@/lib/tauri";
 import { compactSession } from "./api/client";
+import { fetchJson } from "@/lib/desktop/transport";
+import { ingestRawEntry } from "@/features/ingest/persist";
 import type { ConversationMessage } from "@/features/common/message-types";
 import { MOCK_DEMO_MESSAGES } from "./mockDemoMessages";
+
+/** Detect URLs in text and return the first one. */
+function extractUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/[^\s，。！？]+/);
+  return match ? match[0] : null;
+}
+
+/** Check if fetched content is valid (not a CAPTCHA/block page). */
+function isValidContent(body: string): boolean {
+  if (body.length < 200) return false;
+  if (body.includes("环境异常") || body.includes("完成验证") || body.includes("去验证")) return false;
+  if (body.includes("请完成安全验证") || body.includes("访问频繁")) return false;
+  return true;
+}
+
+/** Fetch a URL's content via backend proxy, ingest to raw, and return markdown body. */
+async function fetchAndIngestUrl(url: string): Promise<{ body: string | null; blocked: boolean }> {
+  try {
+    const preview = await fetchJson<{ title: string; body: string; source_url: string; source: string }>(
+      "/api/wiki/fetch",
+      { method: "POST", body: JSON.stringify({ url }) },
+    );
+
+    if (!isValidContent(preview.body)) {
+      return { body: null, blocked: true };
+    }
+
+    // Ingest to raw library (non-fatal)
+    try {
+      await ingestRawEntry({ source: "url", title: preview.title || url, body: preview.body });
+    } catch { /* ok */ }
+
+    return { body: preview.body, blocked: false };
+  } catch {
+    return { body: null, blocked: false };
+  }
+}
+
+interface ProviderOption {
+  id: string;
+  label: string;
+  model: string;
+  isActive: boolean;
+}
 
 interface AskWorkbenchProps {
   session: DesktopSessionDetail | null;
@@ -61,6 +107,8 @@ interface AskWorkbenchProps {
   modelLabel?: string;
   environmentLabel?: string;
   projectPath?: string;
+  providers?: ProviderOption[];
+  onSwitchProvider?: (id: string) => void;
 }
 
 export function AskWorkbench({
@@ -71,9 +119,11 @@ export function AskWorkbench({
   onSend,
   onStop,
   onCreateSession,
-  modelLabel = "Codex GPT-5.4",
-  environmentLabel = "内置代理",
+  modelLabel = "AI",
+  environmentLabel = "Local",
   projectPath,
+  providers,
+  onSwitchProvider,
 }: AskWorkbenchProps) {
   const pendingPermission = usePermissionsStore(
     (state) => state.pendingRequest
@@ -172,6 +222,39 @@ export function AskWorkbench({
   // Input ref for focus shortcut
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Wrap onSend: detect URLs → fetch content → prepend to message → send
+  const handleSendWithUrlFetch = useCallback(async (message: string) => {
+    const url = extractUrl(message);
+    console.log("[ask-url] message:", message.slice(0, 100), "extracted url:", url);
+    if (url) {
+      // WeChat links always blocked by anti-scraping — intercept immediately
+      if (url.includes("mp.weixin.qq.com") || url.includes("weixin.qq.com")) {
+        console.log("[ask-url] WeChat URL blocked, not sending to LLM");
+        addSystemMessage("⚠️ 微信公众号文章无法直接抓取（反爬验证）。\n\n请通过以下方式入库：\n1. 在微信中将文章转发给 ClawBot\n2. 或手动复制文章内容粘贴到输入框");
+        return;
+      }
+      // Non-WeChat URLs: try to fetch
+      addSystemMessage(`正在抓取 ${url} ...`);
+      try {
+        const result = await fetchAndIngestUrl(url);
+        if (result.body) {
+          addSystemMessage("✅ 文章已抓取并入库。");
+          const enriched = `以下是从 ${url} 抓取的文章内容（已入库）：\n\n${result.body.slice(0, 8000)}\n\n---\n\n用户的问题：${message}`;
+          await onSend(enriched);
+          return;
+        }
+        if (result.blocked) {
+          addSystemMessage("⚠️ 该链接被反爬拦截，无法抓取。请手动复制内容粘贴。");
+          return;
+        }
+      } catch (err) {
+        console.warn("[ask] URL fetch failed:", err);
+      }
+      addSystemMessage("URL 抓取失败，发送原始消息。");
+    }
+    await onSend(message);
+  }, [onSend, addSystemMessage]);
+
   return (
     <div className="flex flex-1 overflow-hidden">
      <div className="flex flex-1 flex-col overflow-hidden">
@@ -263,11 +346,13 @@ export function AskWorkbench({
       )}
 
       <Composer
-        onSend={onSend}
+        onSend={handleSendWithUrlFetch}
         onStop={onStop}
         isBusy={isRunning || !!pendingPermission}
         modelLabel={modelLabel}
         environmentLabel={environmentLabel}
+        providers={providers}
+        onSwitchProvider={onSwitchProvider}
         inputRef={inputRef}
         onClear={handleClear}
         onNewSession={handleNewSession}

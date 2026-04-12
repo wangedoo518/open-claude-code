@@ -38,10 +38,13 @@ import {
   Image as ImageIcon,
   AlertCircle,
   Monitor,
+  Code2,
+  FileSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { sanitizeFilename } from "@/lib/security";
 import { useSettingsStore } from "@/state/settings-store";
+import { useStreamingStore } from "@/state/streaming-store";
 import {
   PERMISSION_MODES,
   getPermissionConfig,
@@ -157,12 +160,21 @@ function validateAttachment(file: File): string | null {
 
 /* ─── Composer component ─────────────────────────────────────────── */
 
+interface ProviderOption {
+  id: string;
+  label: string;
+  model: string;
+  isActive: boolean;
+}
+
 interface ComposerProps {
   onSend: (message: string) => void | Promise<void>;
   onStop?: () => void;
   isBusy?: boolean;
   modelLabel?: string;
   environmentLabel?: string;
+  providers?: ProviderOption[];
+  onSwitchProvider?: (id: string) => void;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   onClear?: () => void;
   onNewSession?: () => void;
@@ -176,6 +188,8 @@ export function Composer({
   isBusy = false,
   modelLabel,
   environmentLabel = "Local",
+  providers,
+  onSwitchProvider,
   inputRef,
   onClear,
   onNewSession,
@@ -185,6 +199,8 @@ export function Composer({
   const permissionMode = useSettingsStore((state) => state.permissionMode);
   const setPermissionMode = useSettingsStore((state) => state.setPermissionMode);
   const modeConfig = getPermissionConfig(permissionMode);
+  const isPlanMode = useStreamingStore((s) => s.isPlanMode);
+  const setPlanMode = useStreamingStore((s) => s.setPlanMode);
 
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
@@ -379,6 +395,58 @@ export function Composer({
         })
         .join("\n");
       finalMessage = `# Attached files\n\n${attachmentBlock}\n${trimmed}`;
+    }
+
+    // URL detection: fetch content → ingest to Raw Library → send to AI with context
+    const urlMatch = finalMessage.match(/https?:\/\/[^\s，。！？]+/);
+    if (urlMatch) {
+      const detectedUrl = urlMatch[0];
+
+      // WeChat links blocked by anti-scraping
+      if (detectedUrl.includes("mp.weixin.qq.com") || detectedUrl.includes("weixin.qq.com")) {
+        void onSend("用户发送了一个微信公众号链接，但由于微信反爬机制无法直接抓取。请告诉用户：1. 在微信中将文章转发给 ClawBot 自动入库；2. 或手动复制文章内容粘贴到输入框。不要给出代码示例。");
+        setValue("");
+        setAttachments([]);
+        setUploadError(null);
+        if (textareaRef.current) textareaRef.current.style.height = "auto";
+        return;
+      }
+
+      // Non-WeChat URL: fetch → ingest → send content to AI
+      setValue("");
+      setAttachments([]);
+      setUploadError(null);
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+
+      void (async () => {
+        try {
+          const { fetchJson: fj } = await import("@/lib/desktop/transport");
+          const preview = await fj<{ title: string; body: string; source_url: string }>("/api/wiki/fetch", {
+            method: "POST",
+            body: JSON.stringify({ url: detectedUrl }),
+          });
+
+          // Check if content is valid (not a CAPTCHA page)
+          if (preview.body.length < 200 || preview.body.includes("环境异常") || preview.body.includes("完成验证")) {
+            void onSend(`用户发送了链接 ${detectedUrl}，但抓取到的内容无效（可能被反爬拦截）。请告诉用户手动复制内容粘贴。不要给出代码。`);
+            return;
+          }
+
+          // Ingest to Raw Library
+          try {
+            const { ingestRawEntry } = await import("@/features/ingest/persist");
+            await ingestRawEntry({ source: "url", title: preview.title || detectedUrl, body: preview.body });
+          } catch { /* non-fatal */ }
+
+          // Send fetched content + user's question to AI
+          const enriched = `以下是从 ${detectedUrl} 抓取的文章内容（已自动入库到知识库）：\n\n标题：${preview.title}\n\n${preview.body.slice(0, 8000)}\n\n---\n\n用户的消息：${finalMessage}`;
+          void onSend(enriched);
+        } catch (err) {
+          console.warn("[composer] URL fetch failed:", err);
+          void onSend(finalMessage); // Fallback: send original message
+        }
+      })();
+      return;
     }
 
     void onSend(finalMessage);
@@ -584,7 +652,7 @@ export function Composer({
               ? "等待回复中..."
               : permissionMode === "plan"
                 ? "描述你的计划..."
-                : "Message Claude..."
+                : "问点什么…    Enter 发送 · Shift+Enter 换行 · / 命令"
           }
           disabled={isBusy}
           rows={1}
@@ -618,10 +686,8 @@ export function Composer({
               <ChevronDown className="size-3.5 rotate-[-90deg]" />
             </button>
 
-            {/* Separator */}
+            {/* Separator + model label (selector is in bottom bar) */}
             <div className="mx-1 h-4 w-px bg-border" />
-
-            {/* Model label (display only) */}
             <span className="text-[11px] text-muted-foreground/60">
               {modelLabel || "AI"}
             </span>
@@ -656,6 +722,30 @@ export function Composer({
 
       {/* Bottom mode bar — CodePilot style */}
       <div className="mt-1.5 flex items-center gap-3">
+        {/* Code / Plan mode toggle — like CodePilot */}
+        <div className="flex items-center rounded-md border border-border/50">
+          <button
+            className={cn(
+              "flex items-center gap-1 rounded-l-md px-2 py-1 text-[11px] transition-colors",
+              !isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setPlanMode(false)}
+          >
+            <Code2 className="size-3" />
+            代码
+          </button>
+          <button
+            className={cn(
+              "flex items-center gap-1 rounded-r-md px-2 py-1 text-[11px] transition-colors",
+              isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setPlanMode(true)}
+          >
+            <FileSearch className="size-3" />
+            计划
+          </button>
+        </div>
+
         {/* Permission mode selector */}
         <div className="relative" ref={permMenuRef}>
           <button
@@ -700,12 +790,96 @@ export function Composer({
           )}
         </div>
 
+        {/* Model selector — in bottom bar so no overflow clip */}
+        <ModelSelector
+          currentLabel={modelLabel || "AI"}
+          providers={providers}
+          onSwitch={onSwitchProvider}
+        />
+
         {/* Environment */}
         <span className="text-[11px] text-muted-foreground/50">
           <Monitor className="mr-0.5 inline size-3 align-[-2px]" />
           {environmentLabel}
         </span>
       </div>
+    </div>
+  );
+}
+
+/* ─── Model selector dropdown ──────────────────────────────────── */
+
+function ModelSelector({
+  currentLabel,
+  providers,
+  onSwitch,
+}: {
+  currentLabel: string;
+  providers?: ProviderOption[];
+  onSwitch?: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  if (!providers || providers.length === 0 || !onSwitch) {
+    return (
+      <span className="text-[11px] text-muted-foreground/60">
+        {currentLabel}
+      </span>
+    );
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="flex items-center gap-0.5 text-[11px] text-muted-foreground/60 transition-colors hover:text-foreground"
+        onClick={() => setOpen(!open)}
+      >
+        {currentLabel}
+        <ChevronDown className="size-2.5 opacity-40" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-50 mb-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+          <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            切换模型
+          </div>
+          {providers.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors",
+                p.isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/50"
+              )}
+              onClick={() => {
+                onSwitch(p.id);
+                setOpen(false);
+              }}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{p.label}</div>
+                <div className="text-[10px] text-muted-foreground">{p.model}</div>
+              </div>
+              {p.isActive && (
+                <div className="size-1.5 shrink-0 rounded-full bg-primary" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -10,6 +10,9 @@
  */
 
 import { memo, useState, useMemo } from "react";
+
+/* Typewriter animation removed — causes replay bugs on refresh/HMR/page switch.
+   Real streaming is handled by StreamingMessage component via SSE text_delta events. */
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -21,6 +24,8 @@ import {
   Copy,
   Check,
   Brain,
+  User,
+  Bot,
   File,
   Folder,
   Globe,
@@ -212,10 +217,31 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 /* ─── User message ───────────────────────────────────────────────── */
 
 function UserMessage({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-foreground px-4 py-2.5 text-[14px] leading-relaxed text-background">
-        {content}
+    <div className="group/user flex items-start justify-end gap-2">
+      <div className="flex max-w-[75%] flex-col items-end gap-1">
+        <div className="whitespace-pre-wrap rounded-2xl bg-foreground px-4 py-2.5 text-[14px] leading-relaxed text-background">
+          {content}
+        </div>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(content);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
+          >
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
+      </div>
+      {/* User avatar */}
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
+        <User className="size-3.5 text-muted-foreground" />
       </div>
     </div>
   );
@@ -232,45 +258,48 @@ function AssistantMessage({ content, usage }: { content: string; usage?: { input
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Format token counts
   const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
-  const tokenLabel = useMemo(() => {
-    if (usage) return fmt(usage.inputTokens + usage.outputTokens);
-    const words = content.split(/\s+/).filter(Boolean).length;
-    const est = Math.round(words * 1.3);
-    return est > 0 ? `~${fmt(est)}` : null;
-  }, [content, usage]);
-
   return (
-    <div className="w-full pb-3">
-      {/* Message body — 15px, generous line height, no border */}
-      <div className="text-[15px] leading-[1.8] text-foreground">
-        <MarkdownContent content={content} />
+    <div className="flex items-start gap-2.5 pb-3">
+      {/* Claw avatar */}
+      <div
+        className="flex size-7 shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: "var(--deeptutor-primary, var(--claude-orange))" }}
+      >
+        <Bot className="size-3.5 text-white" />
       </div>
 
-      {/* Action row: Copy + cost footer */}
-      <div className="mt-2 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex items-center gap-1 text-[12px] text-muted-foreground/50 transition-colors hover:text-foreground"
-        >
-          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-          {copied ? "已复制" : "复制"}
-        </button>
-
-        {tokenLabel && (
-          <div className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground/40">
-            <span>{tokenLabel} tokens</span>
-            {usage && (
-              <>
-                <span className="opacity-40">·</span>
-                <span>{fmt(usage.outputTokens)} 输出</span>
-              </>
-            )}
+      <div className="min-w-0 flex-1">
+        {/* Input tokens label — next to avatar, like "Assistant · 输入 7.3k" */}
+        {usage && (
+          <div className="mb-1 text-[11px] text-muted-foreground/40">
+            Assistant · 输入 {fmt(usage.inputTokens)}
           </div>
         )}
+
+        {/* Message body — 15px, generous line height */}
+        <div className="text-[15px] leading-[1.8] text-foreground">
+          <MarkdownContent content={content} />
+        </div>
+
+        {/* Action row: Copy + output tokens */}
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1 text-[12px] text-muted-foreground/50 transition-colors hover:text-foreground"
+          >
+            {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+            {copied ? "已复制" : "复制"}
+          </button>
+
+          {usage && usage.outputTokens > 0 && (
+            <div className="ml-auto text-[11px] text-muted-foreground/40">
+              输出 {fmt(usage.outputTokens)}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -280,17 +309,16 @@ function AssistantMessage({ content, usage }: { content: string; usage?: { input
 
 function SystemMessage({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
+  const timeStr = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
-    <div>
+    <div className="flex justify-center">
       <button
-        className="flex w-full items-center gap-2 rounded-lg border border-border/30 px-3 py-1.5 text-label text-muted-foreground transition-colors hover:bg-muted/30"
-        style={{ backgroundColor: "var(--deeptutor-purple-soft, var(--color-muted))" }}
+        className="flex items-center gap-2 rounded-full border border-border/20 px-3 py-1 text-[11px] text-muted-foreground/60 transition-colors hover:bg-muted/20"
         onClick={() => setExpanded(!expanded)}
       >
-        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <Brain className="size-3" style={{ color: "var(--deeptutor-purple, var(--agent-purple))" }} />
-        <span className="font-medium">系统</span>
+        {expanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />}
+        <span>── 系统 · {timeStr} ──</span>
         {!expanded && (
           <span className="flex-1 truncate text-left opacity-60">
             {content.slice(0, 80)}
@@ -298,8 +326,8 @@ function SystemMessage({ content }: { content: string }) {
         )}
       </button>
       {expanded && (
-        <div className="mt-1 rounded-b-lg border border-t-0 border-border/30 bg-muted/10 p-3">
-          <pre className="whitespace-pre-wrap font-mono text-label text-muted-foreground">
+        <div className="mx-auto mt-1 max-w-lg rounded-lg border border-border/20 bg-muted/10 p-3">
+          <pre className="whitespace-pre-wrap text-center font-mono text-[11px] text-muted-foreground/60">
             {content}
           </pre>
         </div>
@@ -396,6 +424,16 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
           </span>
         )}
       </button>
+      {/* Running output placeholder for Bash tools */}
+      {!expanded && toolName.toLowerCase() === "bash" && parsedInput && "command" in parsedInput && (
+        <div className="mt-0.5 rounded-b-lg border border-t-0 border-border/40 bg-muted/30 px-3 py-2 font-mono text-[11px] text-muted-foreground/60">
+          <div className="text-foreground/50">$ {String(parsedInput.command).slice(0, 80)}</div>
+          <div className="mt-1 flex items-center gap-1.5">
+            <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
+            <span>执行中…</span>
+          </div>
+        </div>
+      )}
       {expanded && (
         <div
           className="mt-0.5 overflow-hidden rounded-b-lg border border-t-0 border-border/40"

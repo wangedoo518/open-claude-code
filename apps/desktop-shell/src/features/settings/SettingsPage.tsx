@@ -127,21 +127,22 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full">
-      <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar-background">
-        <div className="px-3 py-2.5">
-          <h2 className="text-body font-semibold text-foreground">{t("settings.title")}</h2>
+      <div className="flex w-[200px] shrink-0 flex-col border-r border-border/50">
+        <div className="px-4 py-3">
+          <h2 className="uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>{t("settings.title")}</h2>
         </div>
-        <Separator />
+        <Separator className="opacity-50" />
         <nav className="flex-1 px-1.5 py-1.5">
           {MENU_ITEMS.map((item) => (
             <button
               key={item.id}
               className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-body-sm transition-colors",
+                "flex w-full items-center gap-2 rounded-none px-3 py-1.5 transition-colors",
                 active === item.id
-                  ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                  ? "border-l-[3px] border-l-primary text-foreground"
+                  : "border-l-[3px] border-l-transparent text-muted-foreground hover:text-foreground"
               )}
+              style={{ fontSize: 13, fontWeight: active === item.id ? 500 : 400 }}
               onClick={() => setActive(item.id)}
             >
               <item.icon className="size-3.5" />
@@ -158,7 +159,7 @@ export function SettingsPage() {
             active === "provider" ? "max-w-none px-5" : "mx-auto max-w-3xl"
           )}
         >
-          <h2 className="mb-3 text-head font-semibold text-foreground">
+          <h2 className="mb-4 text-foreground" style={{ fontSize: 18, fontWeight: 600 }}>
             {(() => {
               const current = MENU_ITEMS.find((m) => m.id === active);
               return current?.labelOverride ?? t(current?.i18nKey ?? "");
@@ -183,7 +184,7 @@ export function SettingsPage() {
 function SectionLoading() {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-4 py-3 text-body-sm text-muted-foreground">
+    <div className="flex items-center gap-2 rounded-md border border-border/40 px-4 py-3 text-muted-foreground/60" style={{ fontSize: 13 }}>
       <Loader2 className="size-4 animate-spin" />
       <span>{t("settings.loading")}</span>
     </div>
