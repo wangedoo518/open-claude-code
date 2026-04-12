@@ -2876,11 +2876,82 @@ impl DesktopState {
         Ok(detail)
     }
 
+    /// If the message contains a URL, try to fetch its content and
+    /// return an enriched message with the article text prepended.
+    async fn maybe_enrich_url(message: String) -> String {
+        // Quick check: does the message contain a URL?
+        let url = match message.split_whitespace()
+            .find(|w| w.starts_with("http://") || w.starts_with("https://"))
+        {
+            Some(u) => u.trim_end_matches(|c: char| !c.is_ascii() || matches!(c, '.' | ',' | ')' | ']')).to_string(),
+            None => return message,
+        };
+
+        eprintln!("[enrich_url] detected: {url}");
+
+        // Try simple HTTP fetch first (fast, works for most sites)
+        if let Ok(result) = wiki_ingest::url::fetch_and_body(&url).await {
+            if result.body.len() > 200
+                && !result.body.contains("环境异常")
+                && !result.body.contains("完成验证")
+            {
+                eprintln!("[enrich_url] simple fetch OK: {} chars", result.body.len());
+                // Ingest to raw
+                if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
+            let root = wiki_store::default_root();
+            wiki_store::init_wiki(&root)?;
+            Ok(wiki_store::WikiPaths::resolve(&root))
+        })() {
+                    let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
+                    if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
+                        let _ = wiki_store::append_new_raw_task(&paths, &entry, "url-fetch");
+                        eprintln!("[enrich_url] ingested as raw #{}", entry.id);
+                    }
+                }
+                return format!(
+                    "[系统：用户发送了链接，已抓取内容并入库。请基于以下内容回答用户。]\n\n\
+                     标题：{}\n\n{}\n\n---\n用户原始消息：{}",
+                    result.title, &result.body[..result.body.len().min(6000)], message
+                );
+            }
+        }
+
+        // Try Playwright fetch (for protected pages like WeChat)
+        eprintln!("[enrich_url] trying Playwright for {url}");
+        if let Ok(result) = wiki_ingest::wechat_fetch::fetch_wechat_article(&url).await {
+            if result.body.len() > 100 {
+                eprintln!("[enrich_url] Playwright OK: {} chars", result.body.len());
+                if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
+            let root = wiki_store::default_root();
+            wiki_store::init_wiki(&root)?;
+            Ok(wiki_store::WikiPaths::resolve(&root))
+        })() {
+                    let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
+                    if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
+                        let _ = wiki_store::append_new_raw_task(&paths, &entry, "playwright-fetch");
+                        eprintln!("[enrich_url] ingested as raw #{}", entry.id);
+                    }
+                }
+                return format!(
+                    "[系统：用户发送了链接，已通过浏览器抓取内容并入库。请基于以下内容回答用户。]\n\n\
+                     标题：{}\n\n{}\n\n---\n用户原始消息：{}",
+                    result.title, &result.body[..result.body.len().min(6000)], message
+                );
+            }
+        }
+
+        eprintln!("[enrich_url] all fetch methods failed for {url}");
+        message
+    }
+
     pub async fn append_user_message(
         &self,
         session_id: &str,
         message: String,
     ) -> Result<DesktopSessionDetail, DesktopStateError> {
+        // URL interception at the core level — works regardless of caller
+        let message = Self::maybe_enrich_url(message).await;
+
         let user_message = ConversationMessage::user_text(message.clone());
         let session_id = session_id.to_string();
 
