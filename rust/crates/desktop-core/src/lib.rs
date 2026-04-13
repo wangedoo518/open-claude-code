@@ -2991,14 +2991,15 @@ impl DesktopState {
         session_id: &str,
         message: String,
     ) -> Result<DesktopSessionDetail, DesktopStateError> {
-        // URL interception: fetch content and prepend to user message for LLM
-        // The enriched message IS the user message — but we strip the meta prefix
-        // so it reads naturally as article content + user's question
+        // URL interception: fetch content for LLM context.
+        // CRITICAL: only the original URL goes into session history.
+        // Enriched content is injected as a temporary system message for
+        // the current turn only — it does NOT persist in the session,
+        // preventing context pollution and LLM hallucination.
         let enriched = Self::maybe_enrich_url(message.clone()).await;
-        let user_message = ConversationMessage::user_text(enriched);
+        let has_enrichment = enriched != message;
+        let user_message = ConversationMessage::user_text(message.clone());
         let session_id = session_id.to_string();
-        // message variable is still used for preview/title below
-        let message = message;
 
         let (detail, sender, session, previous_message_count, project_path) = {
             let mut store = self.store.write().await;
@@ -3238,6 +3239,12 @@ impl DesktopState {
 
                 let mut session_for_loop = session;
                 session_for_loop.messages.push(user_message);
+                // Inject fetched article content as ephemeral context (not persisted)
+                if has_enrichment {
+                    session_for_loop.messages.push(
+                        ConversationMessage::user_text(enriched.clone())
+                    );
+                }
 
                 tokio::spawn(async move {
                     // Drop guard: best-effort synchronous cleanup using
@@ -3302,13 +3309,15 @@ impl DesktopState {
                 // No managed auth credentials available — fall back to the old
                 // synchronous turn executor (no local tool execution).
                 tokio::spawn(async move {
+                    // Use enriched content for LLM (if URL was fetched)
+                    let llm_message = if has_enrichment { enriched.clone() } else { message.clone() };
                     state
                         .run_background_turn(
                             session_id,
                             session,
                             previous_message_count,
                             DesktopTurnRequest {
-                                message: message.clone(),
+                                message: llm_message,
                                 project_path,
                             },
                             turn_executor,
