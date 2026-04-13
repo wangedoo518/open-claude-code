@@ -7,6 +7,7 @@
 
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
 import {
   Loader2,
   FileText,
@@ -22,6 +23,7 @@ import {
   Globe,
   X,
   File,
+  Maximize2,
 } from "lucide-react";
 import { listRawEntries, getRawEntry } from "@/features/ingest/persist";
 import { ingestText } from "@/features/ingest/adapters/text";
@@ -788,6 +790,7 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
   });
 
   const [copied, setCopied] = useState(false);
+  const [showFullScreen, setShowFullScreen] = useState(false);
 
   if (detailQuery.isLoading) {
     return (
@@ -823,48 +826,300 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
   };
 
   return (
-    <div className="mb-2 ml-12 mr-4 overflow-hidden rounded-md border border-border/50 bg-background">
-      {/* Metadata strip */}
-      <div className="flex items-center justify-between border-b border-border/30 px-3 py-1.5">
-        <div className="flex items-center gap-3 text-muted-foreground/40" style={{ fontSize: 11 }}>
-          <span className="font-mono">#{String(entry.id).padStart(5, "0")}</span>
-          <span>{entry.filename}</span>
-          <span>{entry.ingested_at}</span>
-          <span>{formatSize(entry.byte_size)}</span>
+    <>
+      <div className="mb-2 ml-12 mr-4 overflow-hidden rounded-md border border-border/50 bg-background">
+        {/* Metadata strip */}
+        <div className="flex items-center justify-between border-b border-border/30 px-3 py-1.5">
+          <div className="flex items-center gap-3 text-muted-foreground/40" style={{ fontSize: 11 }}>
+            <span className="font-mono">#{String(entry.id).padStart(5, "0")}</span>
+            <span>{entry.filename}</span>
+            <span>{entry.ingested_at}</span>
+            <span>{formatSize(entry.byte_size)}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              style={{ fontSize: 11 }}
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+              {copied ? "已复制" : "复制"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFullScreen(true)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+              style={{ fontSize: 11 }}
+            >
+              <Maximize2 className="size-3" />
+              全屏阅读
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          style={{ fontSize: 11 }}
+
+        {/* Source URL */}
+        {entry.source_url && (
+          <div className="border-b border-border/30 px-3 py-1">
+            <a
+              href={entry.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline decoration-primary/40 hover:decoration-primary"
+              style={{ fontSize: 11 }}
+            >
+              {entry.source_url}
+            </a>
+          </div>
+        )}
+
+        {/* Body content */}
+        <pre
+          className="max-h-[500px] overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-foreground/90"
+          style={{ fontSize: 12, lineHeight: 1.6 }}
         >
-          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-          {copied ? "已复制" : "复制"}
-        </button>
+          {body}
+        </pre>
       </div>
 
-      {/* Source URL */}
-      {entry.source_url && (
-        <div className="border-b border-border/30 px-3 py-1">
-          <a
-            href={entry.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline decoration-primary/40 hover:decoration-primary"
-            style={{ fontSize: 11 }}
-          >
-            {entry.source_url}
-          </a>
-        </div>
+      {/* Fullscreen reading modal */}
+      {showFullScreen && (
+        <FullScreenReader
+          entry={entry}
+          body={body}
+          onClose={() => setShowFullScreen(false)}
+        />
       )}
+    </>
+  );
+}
 
-      {/* Body content */}
-      <pre
-        className="max-h-[300px] overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-foreground/90"
-        style={{ fontSize: 12, lineHeight: 1.6 }}
-      >
-        {body}
-      </pre>
+/* ─── Fullscreen reading modal ───────────────────────────────────── */
+
+function FullScreenReader({
+  entry,
+  body,
+  onClose,
+}: {
+  entry: RawEntry;
+  body: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAll = () => {
+    void navigator.clipboard.writeText(body);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  // Close on Escape key
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    },
+    [onClose],
+  );
+
+  const badge = sourceBadgeStyle(entry.source);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col bg-background"
+      onKeyDown={handleKeyDown}
+      tabIndex={-1}
+      ref={(el) => el?.focus()}
+    >
+      {/* Header */}
+      <div className="shrink-0 border-b border-border/50 px-6 py-4">
+        <div className="mx-auto flex max-w-3xl items-start justify-between">
+          <h1
+            className="min-w-0 flex-1 text-foreground"
+            style={{
+              fontSize: 22,
+              fontWeight: 600,
+              fontFamily: "var(--font-serif, Lora, serif)",
+              lineHeight: 1.3,
+            }}
+          >
+            {entry.slug}
+          </h1>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-4 shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="关闭"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Metadata bar */}
+      <div className="shrink-0 border-b border-border/30 bg-accent/20 px-6 py-2">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-3" style={{ fontSize: 12 }}>
+          <span
+            className="rounded-full px-2 py-0.5 font-medium"
+            style={{ backgroundColor: badge.bg, color: badge.text }}
+          >
+            {translateSource(entry.source)}
+          </span>
+          {entry.filename && (
+            <span className="text-muted-foreground/60">{entry.filename}</span>
+          )}
+          <span className="text-muted-foreground/50">{entry.date}</span>
+          <span className="text-muted-foreground/40">{formatSize(entry.byte_size)}</span>
+          {entry.source_url && (
+            <a
+              href={entry.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="truncate text-primary underline decoration-primary/40 hover:decoration-primary"
+              style={{ maxWidth: 400 }}
+            >
+              {entry.source_url}
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Content area */}
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <article
+          className="prose prose-sm mx-auto max-w-3xl text-foreground/90"
+          style={{
+            fontFamily: "var(--font-serif, Lora, serif)",
+            fontSize: "16px",
+            lineHeight: "1.8",
+          }}
+        >
+          <ReactMarkdown
+            components={{
+              h1: (props) => (
+                <h1
+                  className="mb-4 mt-0 text-foreground"
+                  style={{
+                    fontFamily: "var(--font-serif, Lora, serif)",
+                    fontSize: "24px",
+                    fontWeight: 600,
+                    letterSpacing: "-0.01em",
+                  }}
+                  {...props}
+                />
+              ),
+              h2: (props) => (
+                <h2
+                  className="mb-3 mt-8 text-foreground"
+                  style={{ fontSize: "20px", fontWeight: 600 }}
+                  {...props}
+                />
+              ),
+              h3: (props) => (
+                <h3
+                  className="mb-2 mt-6 text-foreground"
+                  style={{ fontSize: "17px", fontWeight: 600 }}
+                  {...props}
+                />
+              ),
+              p: (props) => (
+                <p
+                  className="my-3 text-foreground/90"
+                  style={{ fontSize: "16px", lineHeight: "1.8" }}
+                  {...props}
+                />
+              ),
+              ul: (props) => (
+                <ul
+                  className="my-3 list-disc pl-6 text-foreground/90"
+                  style={{ fontSize: "16px", lineHeight: "1.8" }}
+                  {...props}
+                />
+              ),
+              ol: (props) => (
+                <ol
+                  className="my-3 list-decimal pl-6 text-foreground/90"
+                  style={{ fontSize: "16px", lineHeight: "1.8" }}
+                  {...props}
+                />
+              ),
+              code: ({ className, children, ...props }) => {
+                const isBlock = /language-/.test(className ?? "");
+                if (isBlock) {
+                  return (
+                    <code
+                      className="block overflow-auto rounded-md bg-muted/40 p-4 font-mono"
+                      style={{ fontSize: "14px", lineHeight: "1.6" }}
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  );
+                }
+                return (
+                  <code
+                    className="rounded bg-muted/40 px-1 py-0.5 font-mono"
+                    style={{ fontSize: "14px" }}
+                    {...props}
+                  >
+                    {children}
+                  </code>
+                );
+              },
+              blockquote: (props) => (
+                <blockquote
+                  className="my-4 border-l-4 border-border pl-4 italic text-foreground/80"
+                  style={{ fontSize: "16px", lineHeight: "1.8" }}
+                  {...props}
+                />
+              ),
+              a: ({ href, children, ...props }) => (
+                <a
+                  href={href}
+                  className="text-primary underline hover:no-underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  {...props}
+                >
+                  {children}
+                </a>
+              ),
+              img: ({ src, alt, ...props }) => (
+                <img
+                  src={src}
+                  alt={alt ?? ""}
+                  className="my-4 max-w-full rounded-md"
+                  {...props}
+                />
+              ),
+            }}
+          >
+            {body}
+          </ReactMarkdown>
+        </article>
+      </div>
+
+      {/* Bottom bar */}
+      <div className="shrink-0 border-t border-border/50 px-6 py-3">
+        <div className="mx-auto flex max-w-3xl items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={handleCopyAll}
+            className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            style={{ fontSize: 13 }}
+          >
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+            {copied ? "已复制" : "复制全文"}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            style={{ fontSize: 13 }}
+          >
+            关闭
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
