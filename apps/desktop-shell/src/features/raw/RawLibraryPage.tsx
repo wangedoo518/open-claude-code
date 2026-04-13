@@ -37,7 +37,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, FileText, Link2, Upload, Copy, Check } from "lucide-react";
+import { Loader2, FileText, Link2, Upload, Copy, Check, Trash2 } from "lucide-react";
 import { listRawEntries, getRawEntry } from "@/features/ingest/persist";
 import { ingestText } from "@/features/ingest/adapters/text";
 import { ingestUrl } from "@/features/ingest/adapters/url";
@@ -66,12 +66,54 @@ function translateSource(source: string): string {
 
 export function RawLibraryPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   const listQuery = useQuery({
     queryKey: rawKeys.list(),
     queryFn: () => listRawEntries(),
     staleTime: 30_000,
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await fetchJson(`/api/wiki/raw/${id}`, { method: "DELETE" });
+    },
+    onSuccess: (_data, deletedId) => {
+      void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
+      if (selectedId === deletedId) setSelectedId(null);
+    },
+  });
+
+  const batchCleanupMutation = useMutation({
+    mutationFn: async () => {
+      const small = (listQuery.data?.entries ?? []).filter(
+        (e) => e.byte_size < 100,
+      );
+      await Promise.all(
+        small.map((e) =>
+          fetchJson(`/api/wiki/raw/${e.id}`, { method: "DELETE" }),
+        ),
+      );
+      return small.length;
+    },
+    onSuccess: (count) => {
+      void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
+      if (
+        selectedId !== null &&
+        (listQuery.data?.entries ?? []).some(
+          (e) => e.id === selectedId && e.byte_size < 100,
+        )
+      ) {
+        setSelectedId(null);
+      }
+      // count is available for potential toast notification
+      void count;
+    },
+  });
+
+  const smallCount = (listQuery.data?.entries ?? []).filter(
+    (e) => e.byte_size < 100,
+  ).length;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -88,8 +130,25 @@ export function RawLibraryPage() {
             微信转发、粘贴文本、链接、文件上传 -- 全部以 <code>~/.clawwiki/raw/</code> 下的 markdown 落盘
           </p>
         </div>
-        <div className="text-muted-foreground/40" style={{ fontSize: 11 }}>
-          {listQuery.data?.entries.length ?? 0} 条
+        <div className="flex items-center gap-3">
+          {smallCount > 0 && (
+            <button
+              type="button"
+              onClick={() => batchCleanupMutation.mutate()}
+              disabled={batchCleanupMutation.isPending}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-caption text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+            >
+              {batchCleanupMutation.isPending ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Trash2 className="size-3" />
+              )}
+              批量清理 ({smallCount})
+            </button>
+          )}
+          <span className="text-muted-foreground/40" style={{ fontSize: 11 }}>
+            {listQuery.data?.entries.length ?? 0} 条
+          </span>
         </div>
       </div>
 
@@ -108,6 +167,8 @@ export function RawLibraryPage() {
             error={listQuery.error}
             selectedId={selectedId}
             onSelect={(id) => setSelectedId(id)}
+            onDelete={(id) => deleteMutation.mutate(id)}
+            deletingId={deleteMutation.isPending ? (deleteMutation.variables ?? null) : null}
           />
         </aside>
 
@@ -429,6 +490,8 @@ interface EntryListProps {
   error: Error | null;
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onDelete: (id: number) => void;
+  deletingId: number | null;
 }
 
 function EntryList({
@@ -437,6 +500,8 @@ function EntryList({
   error,
   selectedId,
   onSelect,
+  onDelete,
+  deletingId,
 }: EntryListProps) {
   if (isLoading) {
     return (
@@ -473,7 +538,7 @@ function EntryList({
       {entries.map((entry) => {
         const isActive = entry.id === selectedId;
         return (
-          <li key={entry.id}>
+          <li key={entry.id} className="group relative">
             <button
               type="button"
               onClick={() => onSelect(entry.id)}
@@ -503,6 +568,22 @@ function EntryList({
                 <span>·</span>
                 <span>{entry.byte_size} B</span>
               </div>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(entry.id);
+              }}
+              disabled={deletingId === entry.id}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground/40 opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
+              title="删除"
+            >
+              {deletingId === entry.id ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="size-3.5" />
+              )}
             </button>
           </li>
         );

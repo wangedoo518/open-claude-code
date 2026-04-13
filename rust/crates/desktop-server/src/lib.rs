@@ -481,7 +481,7 @@ pub fn app(state: AppState) -> Router {
             "/api/wiki/raw",
             get(list_wiki_raw_handler).post(ingest_wiki_raw_handler),
         )
-        .route("/api/wiki/raw/{id}", get(get_wiki_raw_handler))
+        .route("/api/wiki/raw/{id}", get(get_wiki_raw_handler).delete(delete_wiki_raw_handler))
         // ── ClawWiki N: URL preview proxy (canonical §9.3) ─────────
         // POST /api/wiki/fetch — fetches a URL through the
         // server's HTTP client and returns the extracted markdown
@@ -3804,4 +3804,14 @@ async fn install_python_deps_handler(
     }
 
     Ok(Json(serde_json::json!({"ok":all_ok,"steps":steps})))
+}
+
+async fn delete_wiki_raw_handler(
+    Path(id): Path<u32>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    wiki_store::delete_raw_entry(&paths, id).map_err(|e| {
+        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("{e}") }))
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": id })))
 }

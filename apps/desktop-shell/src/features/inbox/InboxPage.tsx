@@ -511,7 +511,7 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
         {isResolved ? (
           <div className="flex items-center justify-between gap-3">
             <div className="text-caption text-muted-foreground">
-              该任务已{translateStatus(entry.status)}。
+              该任务{translateStatus(entry.status)}。
             </div>
           </div>
         ) : (

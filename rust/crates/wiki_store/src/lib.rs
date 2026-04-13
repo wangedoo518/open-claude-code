@@ -769,6 +769,18 @@ pub fn read_raw_entry(paths: &WikiPaths, id: u32) -> Result<(RawEntry, String)> 
     Ok((entry, body))
 }
 
+/// Delete a raw entry by id. Removes the .md file from disk.
+pub fn delete_raw_entry(paths: &WikiPaths, id: u32) -> Result<()> {
+    let entries = list_raw_entries(paths)?;
+    let entry = entries
+        .into_iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| WikiStoreError::NotFound(id))?;
+    let path = paths.raw.join(&entry.filename);
+    fs::remove_file(&path).map_err(|e| WikiStoreError::io(path, e))?;
+    Ok(())
+}
+
 // ── internal helpers ──────────────────────────────────────────────
 
 /// Pull the leading 5-digit id off a filename, returning `None` for

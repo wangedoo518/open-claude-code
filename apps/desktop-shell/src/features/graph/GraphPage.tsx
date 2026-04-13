@@ -49,7 +49,7 @@ export function GraphPage() {
     staleTime: 30_000,
   });
 
-  const entries = rawQuery.data?.entries ?? [];
+  const entries = (rawQuery.data?.entries ?? []).filter(e => e.byte_size >= 200);
   const graphData = graphQuery.data;
   const isLoading = rawQuery.isLoading || graphQuery.isLoading;
 
