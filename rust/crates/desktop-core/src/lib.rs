@@ -2876,6 +2876,14 @@ impl DesktopState {
         Ok(detail)
     }
 
+    /// Truncate a string at a char boundary, never splitting a multi-byte char.
+    fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+        if s.len() <= max_bytes { return s; }
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+        &s[..end]
+    }
+
     /// If the message contains a URL, try to fetch its content and
     /// return an enriched message with the article text prepended.
     async fn maybe_enrich_url(message: String) -> String {
@@ -2915,7 +2923,7 @@ impl DesktopState {
                 return format!(
                     "请基于以下文章内容回答我的问题。\n\n\
                      标题：{}\n\n{}\n\n---\n用户原始消息：{}",
-                    result.title, &result.body[..result.body.len().min(6000)], message
+                    result.title, Self::safe_truncate(&result.body, 6000), message
                 );
             }
         }
@@ -2948,7 +2956,7 @@ impl DesktopState {
                     return format!(
                         "请基于以下文章内容回答我的问题。\n\n\
                          标题：{}\n\n{}\n\n---\n用户原始消息：{}",
-                        result.title, &result.body[..result.body.len().min(6000)], message
+                        result.title, Self::safe_truncate(&result.body, 6000), message
                     );
                 }
             }
