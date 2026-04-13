@@ -249,10 +249,27 @@ export function AskWorkbench({
     const url = extractUrl(message);
     console.log("[ask-url] message:", message.slice(0, 100), "extracted url:", url);
     if (url) {
-      // WeChat links always blocked by anti-scraping — intercept immediately
+      // WeChat links: try Playwright fetch via wechat-fetch API
       if (url.includes("mp.weixin.qq.com") || url.includes("weixin.qq.com")) {
-        console.log("[ask-url] WeChat URL blocked, not sending to LLM");
-        addSystemMessage("⚠️ 微信公众号文章无法直接抓取（反爬验证）。\n\n请通过以下方式入库：\n1. 在微信中将文章转发给 ClawBot\n2. 或手动复制文章内容粘贴到输入框");
+        console.log("[ask-url] WeChat URL detected, trying Playwright fetch");
+        addSystemMessage(`正在通过 Playwright 抓取微信文章...`);
+        try {
+          const result = await fetchJson<{ ok: boolean; title: string; markdown: string; raw_id?: number }>(
+            "/api/desktop/wechat-fetch",
+            { method: "POST", body: JSON.stringify({ url, ingest: true }) },
+            120_000,
+          );
+          if (result.ok && result.markdown && result.markdown.length > 100) {
+            addSystemMessage(`✅ 微信文章已抓取并入库 (Raw #${result.raw_id ?? "?"})`);
+            const enriched = `[系统：微信文章已通过 Playwright 抓取并入库。请基于以下内容回答用户。]\n\n标题：${result.title}\n\n${result.markdown.slice(0, 6000)}\n\n---\n用户原始消息：${message}`;
+            await onSend(enriched);
+            return;
+          }
+        } catch (err) {
+          console.warn("[ask-url] WeChat Playwright fetch failed:", err);
+        }
+        // Fallback
+        addSystemMessage("⚠️ 微信文章抓取失败。请通过 ClawBot 转发或手动复制内容。");
         return;
       }
       // Non-WeChat URLs: try to fetch

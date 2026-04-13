@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
 import { FolderOpen, X, AlertTriangle, Copy, Check, Loader2, CheckCircle2, XCircle, Terminal } from "lucide-react";
@@ -181,6 +181,9 @@ interface MarkItDownCheckResult {
 }
 
 function MarkItDownSection() {
+  const [autoInstalling, setAutoInstalling] = useState(false);
+  const [autoInstallDone, setAutoInstallDone] = useState(false);
+
   const checkQuery = useQuery<MarkItDownCheckResult>({
     queryKey: ["markitdown", "check"],
     queryFn: () => fetchJson<MarkItDownCheckResult>("/api/desktop/markitdown/check"),
@@ -190,6 +193,29 @@ function MarkItDownSection() {
 
   const data = checkQuery.data;
   const isLoading = checkQuery.isLoading;
+
+  // Auto-install: when check completes and markitdown is NOT available,
+  // automatically trigger installation without user action.
+  useEffect(() => {
+    if (isLoading || autoInstalling || autoInstallDone) return;
+    if (data && !data.available) {
+      setAutoInstalling(true);
+      fetchJson<{ ok: boolean }>("/api/desktop/python-deps/install", {
+        method: "POST",
+        body: JSON.stringify({ package: "all" }),
+      }, 300_000)
+        .then((result) => {
+          setAutoInstallDone(true);
+          if (result.ok) {
+            void checkQuery.refetch();
+          }
+        })
+        .catch(() => {
+          setAutoInstallDone(true);
+        })
+        .finally(() => setAutoInstalling(false));
+    }
+  }, [isLoading, data, autoInstalling, autoInstallDone, checkQuery]);
 
   return (
     <SettingGroup
@@ -206,6 +232,11 @@ function MarkItDownSection() {
             <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
               <span>检测中...</span>
+            </div>
+          ) : autoInstalling ? (
+            <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" style={{ color: "var(--deeptutor-primary)" }} />
+              <span>正在自动安装依赖...</span>
             </div>
           ) : data?.available ? (
             <div className="flex items-center gap-1.5 text-caption text-green-600">

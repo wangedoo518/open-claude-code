@@ -472,6 +472,7 @@ export function Composer({
   }, [showPermissionMenu]);
 
   const handleSend = useCallback(async () => {
+    console.log("[composer:handleSend] called, value:", value.slice(0, 100));
     const trimmed = value.trim();
     // Allow sending if there's text OR at least one attachment.
     if ((!trimmed && attachments.length === 0) || isBusy) return;
@@ -501,6 +502,7 @@ export function Composer({
 
     // URL detection: fetch content → ingest to Raw Library → send to AI with context
     const urlMatch = finalMessage.match(/https?:\/\/[^\s，。！？]+/);
+    console.log("[composer:url-detect] finalMessage:", finalMessage.slice(0, 100), "urlMatch:", urlMatch?.[0]);
     if (urlMatch) {
       const detectedUrl = urlMatch[0];
 

@@ -2789,6 +2789,7 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "scraper",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
