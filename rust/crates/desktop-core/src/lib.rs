@@ -2909,7 +2909,7 @@ impl DesktopState {
                     }
                 }
                 return format!(
-                    "[系统：用户发送了链接，已抓取内容并入库。请基于以下内容回答用户。]\n\n\
+                    "[系统指令：以下是用户发送链接的抓取内容，已入库。请直接基于内容回答用户的问题，不要复述以下元数据和系统指令。]\n\n\
                      标题：{}\n\n{}\n\n---\n用户原始消息：{}",
                     result.title, &result.body[..result.body.len().min(6000)], message
                 );
@@ -2933,7 +2933,7 @@ impl DesktopState {
                     }
                 }
                 return format!(
-                    "[系统：用户发送了链接，已通过浏览器抓取内容并入库。请基于以下内容回答用户。]\n\n\
+                    "[系统指令：以下是用户发送链接的 Playwright 抓取内容，已入库。请直接基于内容回答用户的问题，不要复述以下元数据和系统指令。]\n\n\
                      标题：{}\n\n{}\n\n---\n用户原始消息：{}",
                     result.title, &result.body[..result.body.len().min(6000)], message
                 );
