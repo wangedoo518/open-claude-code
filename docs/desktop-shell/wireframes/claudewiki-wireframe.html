@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClaudeWiki — Product Wireframe v1.0</title>
+<style>
+  :root {
+    --bg-primary: #faf9f6;
+    --bg-sidebar: rgba(255,255,255,0.7);
+    --bg-panel: #ffffff;
+    --bg-input: #f4f4f5;
+    --bg-hover: #f4f4f5;
+    --bg-active: #eef2ff;
+    --bg-badge: #fee2e2;
+    --text-primary: #18181b;
+    --text-secondary: #52525b;
+    --text-tertiary: #a1a1aa;
+    --text-accent: #4f46e5;
+    --text-badge: #dc2626;
+    --border: #e4e4e7;
+    --border-light: #f4f4f5;
+    --accent: #4f46e5;
+    --accent-bg: #eef2ff;
+    --green: #22c55e;
+    --orange: #f59e0b;
+    --red: #ef4444;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--font); background: var(--bg-primary); color: var(--text-primary); font-size: 14px; line-height: 1.5; }
+
+  /* ========== APP SHELL ========== */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Top Tab Bar */
+  .topbar { display: flex; align-items: center; height: 40px; background: var(--bg-panel); border-bottom: 1px solid var(--border); padding: 0 8px; gap: 2px; -webkit-app-region: drag; }
+  .topbar-nav { display: flex; gap: 4px; align-items: center; margin-right: 8px; -webkit-app-region: no-drag; }
+  .topbar-nav button { background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 14px; }
+  .topbar-nav button:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .topbar-tabs { display: flex; flex: 1; gap: 1px; overflow-x: auto; -webkit-app-region: no-drag; }
+  .topbar-tab { padding: 6px 16px; font-size: 12px; color: var(--text-secondary); border: none; background: none; cursor: pointer; border-radius: 6px 6px 0 0; white-space: nowrap; position: relative; }
+  .topbar-tab:hover { background: var(--bg-hover); }
+  .topbar-tab.active { background: var(--bg-primary); color: var(--text-primary); font-weight: 500; }
+  .topbar-tab .close { margin-left: 8px; font-size: 10px; color: var(--text-tertiary); }
+  .topbar-actions { display: flex; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
+  .topbar-actions button { background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+
+  /* Main Layout: Sidebar + Content + Chat Panel */
+  .main { display: flex; flex: 1; overflow: hidden; gap: 0; padding: 0; }
+
+  /* ========== SIDEBAR ========== */
+  .sidebar { width: 240px; min-width: 240px; background: var(--bg-sidebar); backdrop-filter: blur(12px); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Mode Toggle */
+  .mode-toggle { display: flex; margin: 12px 12px 0; background: var(--bg-input); border-radius: var(--radius-sm); padding: 3px; }
+  .mode-toggle button { flex: 1; padding: 6px 0; border: none; background: none; font-size: 13px; font-weight: 500; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-xs); transition: all 0.15s; }
+  .mode-toggle button.active { background: var(--bg-panel); color: var(--text-primary); box-shadow: var(--shadow); }
+
+  /* Toolbar */
+  .sidebar-toolbar { display: flex; padding: 8px 12px; gap: 4px; border-bottom: 1px solid var(--border-light); }
+  .sidebar-toolbar button { background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 13px; }
+  .sidebar-toolbar button:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .sidebar-toolbar button.active { color: var(--text-accent); }
+
+  /* Sidebar Content */
+  .sidebar-content { flex: 1; overflow-y: auto; padding: 8px 0; }
+
+  /* File Tree */
+  .tree-section { padding: 0 8px; margin-bottom: 4px; }
+  .tree-section-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; border-radius: var(--radius-xs); }
+  .tree-section-header:hover { background: var(--bg-hover); }
+  .tree-section-header .count { font-weight: 400; color: var(--text-tertiary); font-size: 11px; }
+  .tree-section-header .badge { background: var(--red); color: white; font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 600; }
+
+  .tree-item { display: flex; align-items: center; padding: 5px 8px 5px 16px; font-size: 13px; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-xs); margin: 0 4px; gap: 6px; }
+  .tree-item:hover { background: var(--bg-hover); }
+  .tree-item.active { background: var(--accent-bg); color: var(--text-accent); }
+  .tree-item .icon { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; }
+  .tree-item.indent-1 { padding-left: 28px; }
+  .tree-item.indent-2 { padding-left: 40px; }
+
+  /* Conversation List */
+  .conv-group { padding: 0 8px; margin-bottom: 8px; }
+  .conv-group-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 8px; }
+  .conv-item { display: flex; align-items: center; padding: 8px 10px; font-size: 13px; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-xs); margin: 1px 0; }
+  .conv-item:hover { background: var(--bg-hover); }
+  .conv-item.active { background: var(--accent-bg); color: var(--text-accent); }
+  .conv-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 8px; flex-shrink: 0; }
+
+  /* Sidebar Footer */
+  .sidebar-footer { border-top: 1px solid var(--border); padding: 8px; }
+  .sidebar-footer-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 13px; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-xs); }
+  .sidebar-footer-item:hover { background: var(--bg-hover); }
+  .sidebar-footer-item .status { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+  /* ========== CONTENT AREA ========== */
+  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-primary); }
+
+  /* Empty State */
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; color: var(--text-tertiary); }
+  .empty-state h2 { font-size: 16px; font-weight: 400; color: var(--text-secondary); }
+
+  /* Quick Actions */
+  .quick-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; padding: 16px; }
+  .quick-action { display: flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 20px; font-size: 13px; color: var(--text-secondary); cursor: pointer; background: var(--bg-panel); transition: all 0.15s; }
+  .quick-action:hover { border-color: var(--text-tertiary); background: var(--bg-hover); }
+  .quick-action .qa-icon { font-size: 14px; }
+
+  /* Chat Input */
+  .chat-input-area { padding: 0 24px 20px; }
+  .chat-input { display: flex; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; background: var(--bg-panel); gap: 8px; box-shadow: var(--shadow); }
+  .chat-input .input-actions { display: flex; gap: 4px; }
+  .chat-input .input-actions button { background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px; font-size: 16px; }
+  .chat-input input { flex: 1; border: none; outline: none; font-size: 14px; background: transparent; color: var(--text-primary); }
+  .chat-input input::placeholder { color: var(--text-tertiary); }
+  .chat-input .model-select { font-size: 12px; color: var(--text-tertiary); padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: none; }
+  .chat-input .send-btn { background: var(--text-primary); color: white; border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* ========== WIKI CONTENT (Markdown Rendering) ========== */
+  .wiki-content { flex: 1; overflow-y: auto; padding: 32px 48px; max-width: 800px; }
+  .wiki-content h1 { font-size: 28px; font-weight: 700; padding: 8px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .wiki-content h2 { font-size: 20px; font-weight: 600; padding: 16px 0 8px; color: var(--text-primary); }
+  .wiki-content h3 { font-size: 16px; font-weight: 600; padding: 12px 0 6px; }
+  .wiki-content p { padding: 6px 0; color: var(--text-secondary); line-height: 1.7; }
+  .wiki-content ul, .wiki-content ol { padding: 6px 0 6px 20px; color: var(--text-secondary); }
+  .wiki-content li { padding: 2px 0; }
+  .wiki-content blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 8px 0; background: var(--accent-bg); border-radius: 0 var(--radius-xs) var(--radius-xs) 0; color: var(--text-secondary); }
+  .wiki-content code { font-family: var(--font-mono); background: var(--bg-input); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .wiki-content pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: var(--radius-sm); overflow-x: auto; margin: 8px 0; }
+  .wiki-content pre code { background: none; padding: 0; color: inherit; }
+  .wiki-content a { color: var(--text-accent); text-decoration: none; }
+  .wiki-content a:hover { text-decoration: underline; }
+  .wikilink { color: var(--text-accent); background: var(--accent-bg); padding: 1px 6px; border-radius: 4px; text-decoration: none; font-size: 13px; }
+  .wikilink:hover { background: #dbeafe; text-decoration: none; }
+  .wiki-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  .wiki-content th, .wiki-content td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-size: 13px; }
+  .wiki-content th { background: var(--bg-input); font-weight: 600; }
+
+  /* Frontmatter */
+  .frontmatter { display: flex; gap: 12px; align-items: center; padding: 8px 0 16px; flex-wrap: wrap; }
+  .fm-tag { font-size: 11px; padding: 3px 10px; border-radius: 12px; font-weight: 500; }
+  .fm-tag.confidence { background: #dcfce7; color: #166534; }
+  .fm-tag.source { background: var(--accent-bg); color: var(--text-accent); }
+  .fm-tag.updated { background: var(--bg-input); color: var(--text-tertiary); }
+
+  /* Backlinks Section */
+  .backlinks { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 16px; }
+  .backlinks h3 { font-size: 12px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .backlink-item { display: inline-flex; align-items: center; gap: 4px; margin: 3px 4px 3px 0; }
+
+  /* ========== RIGHT CHAT PANEL ========== */
+  .chat-panel { width: 320px; min-width: 320px; border-left: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; }
+  .chat-panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border-light); font-size: 13px; font-weight: 500; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between; }
+  .chat-panel-body { flex: 1; overflow-y: auto; padding: 16px; }
+  .chat-panel-input { padding: 12px; border-top: 1px solid var(--border-light); }
+  .chat-panel-input .mini-input { display: flex; align-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; gap: 8px; }
+  .chat-panel-input .mini-input input { flex: 1; border: none; outline: none; font-size: 13px; background: transparent; }
+
+  /* Chat Messages */
+  .chat-msg { margin-bottom: 16px; }
+  .chat-msg.user { text-align: right; }
+  .chat-msg .bubble { display: inline-block; max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 13px; line-height: 1.5; text-align: left; }
+  .chat-msg.user .bubble { background: var(--text-primary); color: white; border-bottom-right-radius: 4px; }
+  .chat-msg.assistant .bubble { background: var(--bg-input); color: var(--text-primary); border-bottom-left-radius: 4px; }
+
+  /* ========== GRAPH VIEW ========== */
+  .graph-view { flex: 1; position: relative; background: var(--bg-panel); overflow: hidden; }
+  .graph-canvas { width: 100%; height: 100%; }
+  .graph-dot { position: absolute; width: 2px; height: 2px; background: var(--border); border-radius: 50%; }
+  .graph-node { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+  .graph-node .node-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+  .graph-node .node-label { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+  .graph-node:hover .node-label { color: var(--text-primary); font-weight: 500; }
+  .graph-line { position: absolute; background: var(--border); height: 1px; transform-origin: left center; }
+  .graph-legend { position: absolute; top: 16px; right: 16px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; }
+  .graph-legend h4 { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: 8px; }
+  .graph-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); margin: 4px 0; }
+  .graph-legend-item .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .graph-search { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 20px; padding: 8px 20px; width: 280px; }
+  .graph-search input { border: none; outline: none; font-size: 13px; width: 100%; background: transparent; color: var(--text-secondary); }
+
+  /* ========== SETTINGS MODAL ========== */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .modal { background: var(--bg-panel); border-radius: var(--radius); width: 680px; max-height: 80vh; display: flex; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+  .modal-sidebar { width: 200px; border-right: 1px solid var(--border); padding: 20px 0; background: var(--bg-primary); }
+  .modal-sidebar h3 { font-size: 16px; font-weight: 600; padding: 0 20px 16px; }
+  .modal-nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 20px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
+  .modal-nav-item:hover { background: var(--bg-hover); }
+  .modal-nav-item.active { background: var(--accent-bg); color: var(--text-accent); }
+  .modal-nav-item .nav-icon { font-size: 15px; width: 20px; text-align: center; }
+  .modal-body { flex: 1; padding: 24px; overflow-y: auto; }
+  .modal-close { position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 18px; color: var(--text-tertiary); cursor: pointer; }
+  .settings-section { margin-bottom: 24px; }
+  .settings-section h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .settings-section p { font-size: 12px; color: var(--text-tertiary); margin-bottom: 12px; }
+  .settings-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+  .settings-btn { padding: 6px 16px; border: 1px solid var(--border); border-radius: var(--radius-xs); font-size: 13px; cursor: pointer; background: var(--bg-panel); color: var(--text-primary); }
+  .settings-btn:hover { background: var(--bg-hover); }
+  .settings-btn.danger { color: var(--red); border-color: var(--red); }
+
+  /* ========== INBOX ========== */
+  .inbox-item { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; overflow: hidden; }
+  .inbox-item-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #fffbeb; border-bottom: 1px solid #fef3c7; }
+  .inbox-item-header .type { font-size: 12px; font-weight: 600; color: #92400e; }
+  .inbox-item-header .time { font-size: 11px; color: var(--text-tertiary); }
+  .inbox-item-body { padding: 12px 14px; font-size: 13px; color: var(--text-secondary); }
+  .inbox-actions { display: flex; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border-light); }
+  .inbox-actions button { padding: 5px 14px; border-radius: var(--radius-xs); font-size: 12px; cursor: pointer; border: 1px solid; }
+  .inbox-actions .approve { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+  .inbox-actions .reject { background: var(--bg-panel); color: var(--text-secondary); border-color: var(--border); }
+
+  /* ========== VIEW SWITCHING ========== */
+  .view { display: none; }
+  .view.active { display: flex; flex-direction: column; flex: 1; }
+
+  /* ========== RAW ENTRY ========== */
+  .raw-item { padding: 10px 14px; border-bottom: 1px solid var(--border-light); cursor: pointer; }
+  .raw-item:hover { background: var(--bg-hover); }
+  .raw-item .raw-title { font-size: 13px; font-weight: 500; color: var(--text-primary); margin-bottom: 2px; }
+  .raw-item .raw-meta { font-size: 11px; color: var(--text-tertiary); display: flex; gap: 8px; }
+  .raw-item .raw-source { background: var(--accent-bg); color: var(--text-accent); padding: 1px 6px; border-radius: 4px; font-size: 10px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  /* Responsive */
+  .three-col { display: flex; flex: 1; overflow: hidden; }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ===== TOP TAB BAR ===== -->
+  <div class="topbar">
+    <div class="topbar-nav">
+      <button>◀</button>
+      <button>▶</button>
+    </div>
+    <div class="topbar-tabs" id="topbar-tabs">
+      <button class="topbar-tab active" data-tab="wiki-page" onclick="openTab(this, 'wiki-page')">_index.md <span class="close">×</span></button>
+      <button class="topbar-tab" data-tab="wiki-article" onclick="openTab(this, 'wiki-article')">transformer-arch <span class="close">×</span></button>
+      <button class="topbar-tab" data-tab="graph" onclick="openTab(this, 'graph')">Graph View</button>
+      <button class="topbar-tab" data-tab="inbox-view" onclick="openTab(this, 'inbox-view')">Inbox</button>
+      <button class="topbar-tab" data-tab="chat-full" onclick="openTab(this, 'chat-full')">New chat</button>
+    </div>
+    <div class="topbar-actions">
+      <button onclick="document.getElementById('settings-modal').style.display='flex'">⚙</button>
+      <button>⬜</button>
+    </div>
+  </div>
+
+  <!-- ===== MAIN AREA ===== -->
+  <div class="main">
+
+    <!-- ===== LEFT SIDEBAR ===== -->
+    <div class="sidebar">
+      <!-- Mode Toggle: Chat | Wiki -->
+      <div class="mode-toggle">
+        <button id="mode-chat" onclick="switchMode('chat')">Chat</button>
+        <button id="mode-wiki" class="active" onclick="switchMode('wiki')">Wiki</button>
+      </div>
+
+      <!-- Wiki Mode: Toolbar -->
+      <div class="sidebar-toolbar" id="wiki-toolbar">
+        <button title="新建 Wiki 页">📄</button>
+        <button title="导入历史聊天">🗂</button>
+        <button title="反链视图">🔗</button>
+        <button title="知识统计">📊</button>
+        <button title="折叠">✕</button>
+      </div>
+
+      <!-- Sidebar Content -->
+      <div class="sidebar-content">
+
+        <!-- ===== WIKI MODE CONTENT ===== -->
+        <div id="sidebar-wiki">
+          <!-- Inbox -->
+          <div class="tree-section">
+            <div class="tree-section-header" onclick="openTab(null, 'inbox-view')">
+              <span>Inbox</span>
+              <span class="badge">3</span>
+            </div>
+          </div>
+
+          <!-- Raw 素材 -->
+          <div class="tree-section">
+            <div class="tree-section-header">
+              <span>▾ Raw 素材</span>
+              <span class="count">247</span>
+            </div>
+            <div class="raw-item">
+              <div class="raw-title">Karpathy LLM Wiki 方法论</div>
+              <div class="raw-meta">
+                <span class="raw-source">微信</span>
+                <span>2h 前</span>
+              </div>
+            </div>
+            <div class="raw-item">
+              <div class="raw-title">Q1 财务报告.pdf</div>
+              <div class="raw-meta">
+                <span class="raw-source">上传</span>
+                <span>3h 前</span>
+              </div>
+            </div>
+            <div class="raw-item">
+              <div class="raw-title">AI 技术群精华 (12条)</div>
+              <div class="raw-meta">
+                <span class="raw-source">导入</span>
+                <span>5h 前</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Wiki 知识 -->
+          <div class="tree-section">
+            <div class="tree-section-header">
+              <span>▾ Wiki 知识</span>
+              <span class="count">89</span>
+            </div>
+            <div class="tree-item indent-1" onclick="openTab(null, 'wiki-article')">
+              <span class="icon">▸</span> concepts
+              <span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">34</span>
+            </div>
+            <div class="tree-item indent-2 active">
+              <span class="icon">📄</span> transformer-arch
+            </div>
+            <div class="tree-item indent-2">
+              <span class="icon">📄</span> llm-wiki
+            </div>
+            <div class="tree-item indent-2">
+              <span class="icon">📄</span> rust-ownership
+            </div>
+            <div class="tree-item indent-1">
+              <span class="icon">▸</span> people
+              <span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">12</span>
+            </div>
+            <div class="tree-item indent-1">
+              <span class="icon">▸</span> topics
+              <span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">28</span>
+            </div>
+            <div class="tree-item indent-1">
+              <span class="icon">▸</span> comparisons
+              <span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">8</span>
+            </div>
+            <div class="tree-item indent-1">
+              <span class="icon">▸</span> decisions
+              <span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">7</span>
+            </div>
+            <div class="tree-item">
+              <span class="icon">📄</span> _index.md
+            </div>
+          </div>
+
+          <!-- Schema -->
+          <div class="tree-section">
+            <div class="tree-section-header">
+              <span>▸ Schema</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== CHAT MODE CONTENT ===== -->
+        <div id="sidebar-chat" style="display:none">
+          <div class="conv-group">
+            <div class="conv-group-label">今天</div>
+            <div class="conv-item active">
+              <div class="dot"></div>
+              Transformer vs RNN 的区别
+            </div>
+            <div class="conv-item">
+              <div class="dot" style="background:transparent"></div>
+              LLM Wiki 认知复利分析
+            </div>
+          </div>
+          <div class="conv-group">
+            <div class="conv-group-label">昨天</div>
+            <div class="conv-item">
+              <div class="dot" style="background:transparent"></div>
+              Karpathy 方法论总结
+            </div>
+          </div>
+          <div class="conv-group">
+            <div class="conv-group-label">本周</div>
+            <div class="conv-item">
+              <div class="dot" style="background:transparent"></div>
+              微信生态接入方案
+            </div>
+            <div class="conv-item">
+              <div class="dot" style="background:transparent"></div>
+              Rust Agent 架构讨论
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="sidebar-footer-item">
+          <span class="status"></span>
+          微信助手 · 在线
+        </div>
+        <div class="sidebar-footer-item" onclick="document.getElementById('settings-modal').style.display='flex'">
+          <span style="font-size:15px">⚙</span>
+          Settings
+        </div>
+        <div class="sidebar-footer-item">
+          <span style="font-size:15px">?</span>
+          Help
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== CONTENT + CHAT PANEL (Three Column) ===== -->
+    <div class="three-col">
+
+      <!-- ===== CONTENT VIEWS ===== -->
+
+      <!-- View: Chat Full (no right panel) -->
+      <div class="view" id="view-chat-full">
+        <div class="empty-state">
+          <h2>Ask anything...</h2>
+        </div>
+        <div class="quick-actions">
+          <div class="quick-action"><span class="qa-icon">🔗</span> 投喂 URL</div>
+          <div class="quick-action"><span class="qa-icon">🔍</span> 查询知识</div>
+          <div class="quick-action"><span class="qa-icon">📥</span> 查看最近摄入</div>
+          <div class="quick-action"><span class="qa-icon">📊</span> 知识统计</div>
+        </div>
+        <div class="chat-input-area">
+          <div class="chat-input">
+            <div class="input-actions">
+              <button>＋</button>
+              <button>🌐</button>
+            </div>
+            <input type="text" placeholder="Ask anything...">
+            <select class="model-select">
+              <option>claude-4.6</option>
+            </select>
+            <button title="语音">🎤</button>
+            <button class="send-btn">↑</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- View: Wiki Index Page -->
+      <div class="view active" id="view-wiki-page" style="flex-direction:row">
+        <div style="flex:1;overflow-y:auto">
+          <div class="wiki-content">
+            <h1>_index.md</h1>
+            <div class="frontmatter">
+              <span class="fm-tag updated">更新于 30 分钟前</span>
+              <span class="fm-tag source">89 pages</span>
+            </div>
+
+            <h2>Concepts</h2>
+            <ul>
+              <li><a class="wikilink" href="#" onclick="openTab(null,'wiki-article');return false">[[concepts/transformer-arch]]</a> — also: transformer, 自注意力</li>
+              <li><a class="wikilink" href="#">[[concepts/llm-wiki]]</a> — also: LLM 知识库, 认知复利</li>
+              <li><a class="wikilink" href="#">[[concepts/rust-ownership]]</a> — also: 所有权, borrow checker</li>
+              <li><a class="wikilink" href="#">[[concepts/file-over-app]]</a> — also: 文件优先</li>
+              <li><a class="wikilink" href="#">[[concepts/agentic-loop]]</a> — also: agent loop, 对话循环</li>
+            </ul>
+
+            <h2>People</h2>
+            <ul>
+              <li><a class="wikilink" href="#">[[people/karpathy]]</a> — also: Andrej Karpathy</li>
+              <li><a class="wikilink" href="#">[[people/vaswani]]</a> — also: Ashish Vaswani</li>
+            </ul>
+
+            <h2>Topics</h2>
+            <ul>
+              <li><a class="wikilink" href="#">[[topics/wechat-ecosystem]]</a> — also: 微信生态</li>
+              <li><a class="wikilink" href="#">[[topics/knowledge-management]]</a> — also: 知识管理, PKM</li>
+            </ul>
+
+            <h2>Comparisons</h2>
+            <ul>
+              <li><a class="wikilink" href="#">[[comparisons/rag-vs-wiki]]</a> — RAG 与 Wiki 范式对比</li>
+              <li><a class="wikilink" href="#">[[comparisons/rnn-vs-transformer]]</a></li>
+            </ul>
+
+            <h2>Decisions</h2>
+            <ul>
+              <li><a class="wikilink" href="#">[[decisions/2026-04-tech-stack]]</a> — Rust + SKILL.md 架构</li>
+              <li><a class="wikilink" href="#">[[decisions/2026-04-wechat-entry]]</a> — 客服 API 为唯一入口</li>
+            </ul>
+          </div>
+        </div>
+        <!-- Right Chat Panel -->
+        <div class="chat-panel">
+          <div class="chat-panel-header">
+            Ask your Wiki
+            <button style="background:none;border:none;color:var(--text-tertiary);cursor:pointer">✕</button>
+          </div>
+          <div class="chat-panel-body">
+            <div class="chat-msg user">
+              <div class="bubble">Transformer 和 RNN 的核心区别是什么？</div>
+            </div>
+            <div class="chat-msg assistant">
+              <div class="bubble">
+                根据 <a class="wikilink" href="#">[[comparisons/rnn-vs-transformer]]</a>：
+                <br><br>
+                <strong>核心区别</strong>：Transformer 用自注意力替代了 RNN 的循环结构，实现了并行计算。
+                <br><br>
+                RNN 按时间步顺序处理，长距离依赖容易衰减；Transformer 通过注意力矩阵直接建模任意位置关系。
+                <br><br>
+                <span style="font-size:12px;color:var(--text-tertiary)">来源: concepts/transformer-arch · people/vaswani</span>
+              </div>
+            </div>
+          </div>
+          <div class="chat-panel-input">
+            <div class="mini-input">
+              <input type="text" placeholder="Ask anything...">
+              <button class="send-btn" style="width:24px;height:24px;font-size:12px">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- View: Wiki Article -->
+      <div class="view" id="view-wiki-article" style="flex-direction:row">
+        <div style="flex:1;overflow-y:auto">
+          <div class="wiki-content">
+            <h1>Transformer 架构</h1>
+            <div class="frontmatter">
+              <span class="fm-tag confidence">confidence: high</span>
+              <span class="fm-tag source">3 sources</span>
+              <span class="fm-tag updated">更新于 2h 前</span>
+            </div>
+
+            <p><strong>定义</strong>：基于自注意力机制的序列转换模型架构，由 Vaswani 等人在 2017 年提出，彻底改变了 NLP 领域的研究范式。</p>
+
+            <h2>要点</h2>
+            <ul>
+              <li><strong>Self-Attention</strong> 是核心创新 — 允许模型在处理每个位置时关注输入序列的所有其他位置</li>
+              <li><strong>位置编码</strong>解决序列顺序 — 由于不像 RNN 有内在的序列处理顺序，需要显式注入位置信息</li>
+              <li><strong>多头注意力</strong>捕获不同层次关系 — 让模型同时从多个表示子空间学习信息</li>
+              <li><strong>Layer Normalization + Residual Connection</strong> — 保证深层网络的训练稳定性</li>
+              <li>Encoder-Decoder 结构可根据任务灵活组合 — GPT 只用 Decoder，BERT 只用 Encoder</li>
+            </ul>
+
+            <h2>关键引用</h2>
+            <blockquote>
+              Attention Is All You Need — 这篇论文的标题本身就是最好的一句话总结。
+            </blockquote>
+
+            <h2>代码示例</h2>
+            <pre><code>class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, n_heads):
+        super().__init__()
+        self.d_k = d_model // n_heads
+        self.heads = n_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)</code></pre>
+
+            <h2>相关概念</h2>
+            <p>
+              <a class="wikilink" href="#">[[concepts/llm-wiki]]</a>
+              <a class="wikilink" href="#">[[concepts/agentic-loop]]</a>
+            </p>
+
+            <div class="backlinks">
+              <h3>反链 · Linked from</h3>
+              <div>
+                <span class="backlink-item"><a class="wikilink" href="#">[[people/vaswani]]</a></span>
+                <span class="backlink-item"><a class="wikilink" href="#">[[topics/llm-wiki]]</a></span>
+                <span class="backlink-item"><a class="wikilink" href="#">[[comparisons/rnn-vs-transformer]]</a></span>
+              </div>
+
+              <h3 style="margin-top:16px">来源 · Sources</h3>
+              <div style="font-size:12px;color:var(--text-tertiary)">
+                <div>📄 raw/2026-04-01-url-001.md</div>
+                <div>📄 raw/2026-04-10-wechat-003.md</div>
+                <div>📄 raw/2026-04-12-url-015.md</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Right Chat Panel (same as above) -->
+        <div class="chat-panel">
+          <div class="chat-panel-header">
+            Ask your Wiki
+            <button style="background:none;border:none;color:var(--text-tertiary);cursor:pointer">✕</button>
+          </div>
+          <div class="chat-panel-body">
+            <div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:40px 20px">
+              浏览 Wiki 时随时提问。<br>
+              /query 会基于索引页和反链回答。
+            </div>
+          </div>
+          <div class="chat-panel-input">
+            <div class="mini-input">
+              <input type="text" placeholder="Ask anything...">
+              <button class="send-btn" style="width:24px;height:24px;font-size:12px">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- View: Graph -->
+      <div class="view" id="view-graph" style="position:relative">
+        <div class="graph-view">
+          <!-- Legend -->
+          <div class="graph-legend">
+            <h4>Folders</h4>
+            <div class="graph-legend-item"><div class="dot" style="background:#6366f1"></div> concepts</div>
+            <div class="graph-legend-item"><div class="dot" style="background:#f59e0b"></div> people</div>
+            <div class="graph-legend-item"><div class="dot" style="background:#22c55e"></div> topics</div>
+            <div class="graph-legend-item"><div class="dot" style="background:#ef4444"></div> comparisons</div>
+          </div>
+
+          <!-- Nodes (positioned manually for wireframe) -->
+          <svg width="100%" height="100%" style="position:absolute;inset:0;pointer-events:none">
+            <line x1="42%" y1="32%" x2="28%" y2="48%" stroke="#e4e4e7" stroke-width="1"/>
+            <line x1="42%" y1="32%" x2="56%" y2="48%" stroke="#e4e4e7" stroke-width="1"/>
+            <line x1="28%" y1="48%" x2="42%" y2="62%" stroke="#e4e4e7" stroke-width="1"/>
+            <line x1="56%" y1="48%" x2="42%" y2="62%" stroke="#e4e4e7" stroke-width="1"/>
+            <line x1="42%" y1="62%" x2="42%" y2="78%" stroke="#e4e4e7" stroke-width="1"/>
+            <line x1="42%" y1="62%" x2="62%" y2="68%" stroke="#e4e4e7" stroke-width="1"/>
+          </svg>
+
+          <div class="graph-node" style="left:40%;top:28%">
+            <div class="node-dot" style="background:#6366f1;width:18px;height:18px"></div>
+            <div class="node-label" style="font-weight:600">transformer-arch</div>
+          </div>
+          <div class="graph-node" style="left:26%;top:44%">
+            <div class="node-dot" style="background:#f59e0b"></div>
+            <div class="node-label">vaswani</div>
+          </div>
+          <div class="graph-node" style="left:54%;top:44%">
+            <div class="node-dot" style="background:#6366f1"></div>
+            <div class="node-label">attention</div>
+          </div>
+          <div class="graph-node" style="left:40%;top:58%">
+            <div class="node-dot" style="background:#22c55e"></div>
+            <div class="node-label">llm-wiki</div>
+          </div>
+          <div class="graph-node" style="left:40%;top:74%">
+            <div class="node-dot" style="background:#f59e0b"></div>
+            <div class="node-label">karpathy</div>
+          </div>
+          <div class="graph-node" style="left:60%;top:64%">
+            <div class="node-dot" style="background:#ef4444"></div>
+            <div class="node-label">rag-vs-wiki</div>
+          </div>
+
+          <!-- Search -->
+          <div class="graph-search">
+            <input type="text" placeholder="Search nodes...">
+          </div>
+        </div>
+      </div>
+
+      <!-- View: Inbox -->
+      <div class="view" id="view-inbox-view" style="flex-direction:row">
+        <div style="flex:1;overflow-y:auto;padding:24px 32px">
+          <h2 style="font-size:18px;font-weight:600;margin-bottom:16px">Inbox <span style="font-size:13px;font-weight:400;color:var(--text-tertiary)">· 3 pending</span></h2>
+
+          <div class="inbox-item">
+            <div class="inbox-item-header">
+              <span class="type">⚠ 冲突检测</span>
+              <span class="time">20 分钟前</span>
+            </div>
+            <div class="inbox-item-body">
+              <strong>topics/rag.md</strong> 与新摄入素材观点不一致：
+              <br>已有页面认为 "RAG 适合企业知识库"，但新素材（Karpathy LLM Wiki）论证 "结构化 Wiki 优于 RAG"。
+              <br><br>
+              <span style="font-size:12px;color:var(--text-tertiary)">来源: raw/2026-04-14-url-042.md → topics/rag.md</span>
+            </div>
+            <div class="inbox-actions">
+              <button class="approve">✓ 采纳新观点</button>
+              <button class="reject">✕ 保留原有</button>
+            </div>
+          </div>
+
+          <div class="inbox-item">
+            <div class="inbox-item-header">
+              <span class="type">⚠ 冲突检测</span>
+              <span class="time">1h 前</span>
+            </div>
+            <div class="inbox-item-body">
+              <strong>concepts/agent-orchestration.md</strong>：新素材认为 "多 Agent 编排是过度工程"，与已有页面的 "Agent 编排层是必要的" 矛盾。
+            </div>
+            <div class="inbox-actions">
+              <button class="approve">✓ 采纳新观点</button>
+              <button class="reject">✕ 保留原有</button>
+            </div>
+          </div>
+
+          <div class="inbox-item">
+            <div class="inbox-item-header">
+              <span class="type" style="color:#0369a1;background:none">📄 新页面建议</span>
+              <span class="time">2h 前</span>
+            </div>
+            <div class="inbox-item-body">
+              /absorb 建议创建新概念页 <a class="wikilink" href="#">[[concepts/cognitive-compound-interest]]</a>（认知复利），从 3 个 raw entries 中提取。
+            </div>
+            <div class="inbox-actions">
+              <button class="approve">✓ 创建页面</button>
+              <button class="reject">✕ 跳过</button>
+            </div>
+          </div>
+        </div>
+        <!-- Right Chat Panel -->
+        <div class="chat-panel">
+          <div class="chat-panel-header">Ask your Wiki</div>
+          <div class="chat-panel-body">
+            <div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:40px 20px">
+              审核 Inbox 时可以提问：<br>
+              "这两个观点的完整上下文是什么？"
+            </div>
+          </div>
+          <div class="chat-panel-input">
+            <div class="mini-input">
+              <input type="text" placeholder="Ask anything...">
+              <button class="send-btn" style="width:24px;height:24px;font-size:12px">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /three-col -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ===== SETTINGS MODAL ===== -->
+<div class="modal-overlay" id="settings-modal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="modal">
+    <div class="modal-sidebar">
+      <h3>Settings</h3>
+      <div class="modal-nav-item active"><span class="nav-icon">👤</span> Account</div>
+      <div class="modal-nav-item"><span class="nav-icon">💬</span> 微信助手</div>
+      <div class="modal-nav-item"><span class="nav-icon">🤖</span> LLM Provider</div>
+      <div class="modal-nav-item"><span class="nav-icon">🔒</span> Security</div>
+      <div class="modal-nav-item"><span class="nav-icon">🎨</span> Appearance</div>
+      <div class="modal-nav-item"><span class="nav-icon">📝</span> SKILL 编辑器</div>
+      <div class="modal-nav-item"><span class="nav-icon">📐</span> Schema 模板</div>
+    </div>
+    <div class="modal-body" style="position:relative">
+      <button class="modal-close" onclick="document.getElementById('settings-modal').style.display='none'">✕</button>
+
+      <h3 style="font-size:18px;margin-bottom:4px">Account</h3>
+      <p style="font-size:13px;color:var(--text-tertiary);margin-bottom:20px">Manage your ClaudeWiki account</p>
+
+      <div class="settings-section">
+        <div class="settings-card">
+          <div>
+            <div style="font-size:14px;font-weight:500">championchangpeng@gmail.com</div>
+            <div style="font-size:12px;color:var(--text-tertiary)">Local Account</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h4>📂 Workspace</h4>
+        <p>知识库存储路径</p>
+        <div class="settings-card">
+          <code style="font-size:12px;color:var(--text-secondary)">~/.clawwiki/</code>
+          <button class="settings-btn">Change</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h4>📊 知识库统计</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:8px">
+          <div class="settings-card" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <div style="font-size:24px;font-weight:600">247</div>
+            <div style="font-size:12px;color:var(--text-tertiary)">Raw 素材</div>
+          </div>
+          <div class="settings-card" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <div style="font-size:24px;font-weight:600">89</div>
+            <div style="font-size:12px;color:var(--text-tertiary)">Wiki 页面</div>
+          </div>
+          <div class="settings-card" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <div style="font-size:24px;font-weight:600">156</div>
+            <div style="font-size:12px;color:var(--text-tertiary)">反链关系</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tab switching
+function openTab(el, viewId) {
+  // Deactivate all tabs and views
+  document.querySelectorAll('.topbar-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+
+  // Activate clicked tab
+  if (el) {
+    el.classList.add('active');
+  } else {
+    document.querySelectorAll('.topbar-tab').forEach(t => {
+      if (t.dataset.tab === viewId) t.classList.add('active');
+    });
+  }
+
+  // Show corresponding view
+  const view = document.getElementById('view-' + viewId);
+  if (view) view.classList.add('active');
+
+  // If switching to chat-full, switch sidebar to chat mode
+  if (viewId === 'chat-full') {
+    switchMode('chat');
+  }
+}
+
+// Mode switching (Chat / Wiki)
+function switchMode(mode) {
+  const chatBtn = document.getElementById('mode-chat');
+  const wikiBtn = document.getElementById('mode-wiki');
+  const chatContent = document.getElementById('sidebar-chat');
+  const wikiContent = document.getElementById('sidebar-wiki');
+  const wikiToolbar = document.getElementById('wiki-toolbar');
+
+  if (mode === 'chat') {
+    chatBtn.classList.add('active');
+    wikiBtn.classList.remove('active');
+    chatContent.style.display = 'block';
+    wikiContent.style.display = 'none';
+    wikiToolbar.style.display = 'none';
+  } else {
+    wikiBtn.classList.add('active');
+    chatBtn.classList.remove('active');
+    wikiContent.style.display = 'block';
+    chatContent.style.display = 'none';
+    wikiToolbar.style.display = 'flex';
+  }
+}
+</script>
+
+</body>
+</html>
