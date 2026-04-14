@@ -10,6 +10,7 @@ members = [
     "crates/wiki_store",
     "crates/wiki_ingest",
     "crates/wiki_maintainer",
+    "crates/wiki_patrol",
 ]
 resolver = "2"
 

@@ -21,6 +21,7 @@ bytes = "1"
 desktop-core = { path = "../desktop-core" }
 wiki_maintainer = { path = "../wiki_maintainer" }
 wiki_store = { path = "../wiki_store" }
+wiki_patrol = { path = "../wiki_patrol" }
 wiki_ingest = { path = "../wiki_ingest" }
 futures = "0.3"
 log = "0.4"

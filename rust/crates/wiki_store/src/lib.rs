@@ -33,6 +33,7 @@
 //! is channel-agnostic: whichever crate ends up writing into `raw/`
 //! sees the same on-disk shape.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -96,6 +97,19 @@ static WIKI_WRITE_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn lock_wiki_writes() -> MutexGuard<'static, ()> {
     WIKI_WRITE_GUARD
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Process-global guard that serializes read-modify-write access to
+/// `{meta}/_absorb_log.json`. Same pattern as [`INBOX_WRITE_GUARD`]:
+/// prevents concurrent `append_absorb_log` calls from losing entries
+/// due to TOCTOU races on the load → append → save cycle.
+static ABSORB_LOG_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn lock_absorb_log_writes() -> MutexGuard<'static, ()> {
+    ABSORB_LOG_GUARD
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -216,6 +230,14 @@ pub enum WikiStoreError {
     /// filename, etc.). The string carries the detail.
     #[error("invalid input: {0}")]
     Invalid(String),
+    /// `_absorb_log.json` is present but its contents are not valid JSON
+    /// or do not match the expected `Vec<AbsorbLogEntry>` schema.
+    #[error("absorb log corrupted: {0}")]
+    AbsorbLogCorrupted(String),
+    /// `_backlinks.json` is present but its contents are not valid JSON
+    /// or do not match the expected `BacklinksIndex` schema.
+    #[error("backlinks index corrupted: {0}")]
+    BacklinksCorrupted(String),
 }
 
 impl WikiStoreError {
@@ -954,7 +976,7 @@ fn strip_frontmatter(content: &str) -> &str {
 ///
 /// Rust's `type` is a reserved keyword, so the discriminator field
 /// is stored as `kind` in Rust and emitted as `type` in YAML.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WikiFrontmatter {
     /// Always `"concept"` for entries in `wiki/concepts/`. Future
     /// sprints add `"people"`, `"topic"`, `"compare"`, `"changelog"`.
@@ -976,7 +998,12 @@ pub struct WikiFrontmatter {
     pub source_raw_id: Option<u32>,
     /// ISO-8601 datetime when the page was first written.
     pub created_at: String,
+    /// v2: LLM confidence score [0.0, 1.0]. Computed by absorb_batch.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub confidence: f32,
 }
+
+fn is_zero_f32(v: &f32) -> bool { *v == 0.0 }
 
 impl WikiFrontmatter {
     /// Build a frontmatter for a freshly-approved maintainer proposal.
@@ -992,6 +1019,7 @@ impl WikiFrontmatter {
             summary: summary.to_string(),
             source_raw_id,
             created_at: now_iso8601(),
+            confidence: 0.0,
         }
     }
 
@@ -1015,6 +1043,9 @@ impl WikiFrontmatter {
             s.push_str(&format!("source_raw_id: {raw_id}\n"));
         }
         s.push_str(&format!("created_at: {}\n", self.created_at));
+        if self.confidence > 0.0 {
+            s.push_str(&format!("confidence: {:.2}\n", self.confidence));
+        }
         s.push_str("---\n");
         s
     }
@@ -1023,7 +1054,7 @@ impl WikiFrontmatter {
 /// On-disk metadata for a single wiki concept page, returned by
 /// [`list_wiki_pages`] and [`read_wiki_page`]. Mirrors `RawEntry`'s
 /// shape for the raw layer.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WikiPageSummary {
     /// Slug (kebab-case ASCII). Primary key and filename stem.
     pub slug: String,
@@ -1041,6 +1072,9 @@ pub struct WikiPageSummary {
     /// Set by `list_all_wiki_pages` from the directory the page
     /// lives in. Defaults to "concept" for backward compatibility.
     pub category: String,
+    /// v2: Confidence score [0.0, 1.0] from frontmatter.
+    #[serde(default)]
+    pub confidence: f32,
 }
 
 /// Validate a wiki page slug. Rules match `slugify` output plus the
@@ -1459,6 +1493,12 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
             };
             let (title, summary, source_raw_id, created_at) =
                 parse_wiki_frontmatter_fields(&content);
+            // Parse confidence from frontmatter if present.
+            let confidence = content.lines()
+                .find(|l| l.trim_start().starts_with("confidence:"))
+                .and_then(|l| l.split(':').nth(1)?.trim().parse::<f32>().ok())
+                .unwrap_or(0.0);
+
             results.push(WikiPageSummary {
                 slug,
                 title,
@@ -1467,6 +1507,7 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 created_at,
                 byte_size: metadata.len(),
                 category: "concept".to_string(),
+                confidence,
             });
         }
     }
@@ -1479,7 +1520,7 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
 /// snippet centered on the first body-level match (if any). The
 /// frontend uses `snippet` to render the search result card's
 /// "excerpt" line without re-fetching the full body.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WikiSearchHit {
     /// The matched page's summary (slug / title / summary / etc.).
     pub page: WikiPageSummary,
@@ -1598,6 +1639,7 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
                 created_at,
                 byte_size: metadata.len(),
                 category: "concept".to_string(),
+                confidence: 0.0,
             },
             score,
             snippet,
@@ -1702,6 +1744,10 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         fs::read_to_string(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
     let metadata = fs::metadata(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
     let (title, summary, source_raw_id, created_at) = parse_wiki_frontmatter_fields(&content);
+    let confidence = content.lines()
+        .find(|l| l.trim_start().starts_with("confidence:"))
+        .and_then(|l| l.split(':').nth(1)?.trim().parse::<f32>().ok())
+        .unwrap_or(0.0);
     Ok(WikiPageSummary {
         slug: slug.to_string(),
         title,
@@ -1710,6 +1756,7 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         created_at,
         byte_size: metadata.len(),
         category: "concept".to_string(), // overridden by list_all_wiki_pages
+        confidence,
     })
 }
 
@@ -2449,13 +2496,33 @@ pub fn notify_affected_pages(
 
 /// Hand-rolled UTC ISO-8601 timestamp formatter, second precision.
 /// We use `std::time` rather than pulling `chrono` for one function.
-fn now_iso8601() -> String {
+/// Made `pub` in v2 so downstream crates (`wiki_maintainer`, etc.)
+/// can stamp `AbsorbLogEntry.timestamp` with the same format.
+pub fn now_iso8601() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format_iso8601(secs)
+}
+
+/// Return today's date as `YYYY-MM-DD` in UTC. Used by `wiki_stats`
+/// to filter "today's" ingested entries.
+pub fn today_date_string() -> String {
+    now_iso8601()[..10].to_string()
+}
+
+/// Return the date 7 days ago as `YYYY-MM-DD` in UTC. Used by
+/// `wiki_stats` to compute weekly metrics.
+fn week_ago_date_string() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let week_ago = secs.saturating_sub(7 * 86_400);
+    format_iso8601(week_ago)[..10].to_string()
 }
 
 /// Format an `i64` epoch-seconds value as `YYYY-MM-DDTHH:MM:SSZ`.
@@ -2485,6 +2552,675 @@ fn format_iso8601(epoch_secs: u64) -> String {
     format!(
         "{year:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
     )
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: Absorb log persistence  (technical-design.md §3.5, §4.1.1)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Filename for the absorb log inside `{meta}/`.
+const ABSORB_LOG_FILENAME: &str = "_absorb_log.json";
+
+/// Record of a single absorb operation result.
+/// Persisted to `{meta}/_absorb_log.json` as a JSON array.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AbsorbLogEntry {
+    pub entry_id: u32,
+    pub timestamp: String,
+    pub action: String,
+    pub page_slug: Option<String>,
+    pub page_title: Option<String>,
+    pub page_category: Option<String>,
+}
+
+fn absorb_log_path(paths: &WikiPaths) -> PathBuf {
+    paths.meta.join(ABSORB_LOG_FILENAME)
+}
+
+fn load_absorb_log_file(paths: &WikiPaths) -> Result<Vec<AbsorbLogEntry>> {
+    let path = absorb_log_path(paths);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let parsed: Vec<AbsorbLogEntry> = serde_json::from_slice(&bytes)
+        .map_err(|e| WikiStoreError::AbsorbLogCorrupted(format!("{e}")))?;
+    Ok(parsed)
+}
+
+fn save_absorb_log_file(paths: &WikiPaths, entries: &[AbsorbLogEntry]) -> Result<()> {
+    fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
+    let bytes = serde_json::to_vec_pretty(entries)
+        .map_err(|e| WikiStoreError::AbsorbLogCorrupted(format!("serialize: {e}")))?;
+    let path = absorb_log_path(paths);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &bytes).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(())
+}
+
+/// Append one absorb log entry to `{meta}/_absorb_log.json`.
+/// Atomic write: load → append → tmp + rename.
+/// Thread-safe: serialized through [`ABSORB_LOG_GUARD`].
+pub fn append_absorb_log(
+    paths: &WikiPaths,
+    entry: AbsorbLogEntry,
+) -> Result<()> {
+    let _guard = lock_absorb_log_writes();
+    let mut entries = load_absorb_log_file(paths)?;
+    entries.push(entry);
+    save_absorb_log_file(paths, &entries)
+}
+
+/// Read the complete absorb log, ordered by timestamp descending.
+/// Returns an empty `Vec` if the file does not exist (not an error).
+pub fn list_absorb_log(paths: &WikiPaths) -> Result<Vec<AbsorbLogEntry>> {
+    let mut entries = load_absorb_log_file(paths)?;
+    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    Ok(entries)
+}
+
+/// Check whether a raw entry has already been absorbed (action != "skip").
+/// Linear scan of `_absorb_log.json`.
+pub fn is_entry_absorbed(paths: &WikiPaths, entry_id: u32) -> bool {
+    let entries = load_absorb_log_file(paths).unwrap_or_default();
+    entries
+        .iter()
+        .any(|e| e.entry_id == entry_id && e.action != "skip")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: Backlinks index  (technical-design.md §3.6, §4.1.1)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Filename for the backlinks index inside `{meta}/`.
+const BACKLINKS_INDEX_FILENAME: &str = "_backlinks.json";
+
+/// Reverse-link index: key = target slug, value = list of slugs
+/// that reference the target. Values are deduplicated and sorted
+/// alphabetically.
+pub type BacklinksIndex = HashMap<String, Vec<String>>;
+
+fn backlinks_index_path(paths: &WikiPaths) -> PathBuf {
+    paths.meta.join(BACKLINKS_INDEX_FILENAME)
+}
+
+/// Rebuild the complete backlinks index from disk.
+/// Walks all wiki pages, calls [`extract_internal_links`] on each,
+/// and collects `target_slug → [referring_slugs]` mappings.
+/// The return value is **not** persisted — the caller decides
+/// whether to call [`save_backlinks_index`].
+pub fn build_backlinks_index(paths: &WikiPaths) -> Result<BacklinksIndex> {
+    let all_pages = list_all_wiki_pages(paths)?;
+    let mut index: BacklinksIndex = HashMap::new();
+
+    for page in &all_pages {
+        let body = match read_wiki_page(paths, &page.slug) {
+            Ok((_summary, body)) => body,
+            Err(_) => continue,
+        };
+        let outgoing = extract_internal_links(&body);
+        for target_slug in outgoing {
+            // Skip self-links.
+            if target_slug == page.slug {
+                continue;
+            }
+            index
+                .entry(target_slug)
+                .or_default()
+                .push(page.slug.clone());
+        }
+    }
+
+    // Deduplicate and sort each value list alphabetically.
+    for refs in index.values_mut() {
+        refs.sort();
+        refs.dedup();
+    }
+
+    // Per §3.6: "无入链的页面不出现在 index 中" — we don't insert
+    // empty vecs, so this is satisfied by construction.
+
+    Ok(index)
+}
+
+/// Persist the backlinks index to `{meta}/_backlinks.json`.
+/// Atomic write: tmp + rename.
+pub fn save_backlinks_index(
+    paths: &WikiPaths,
+    index: &BacklinksIndex,
+) -> Result<()> {
+    fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
+    let bytes = serde_json::to_vec_pretty(index)
+        .map_err(|e| WikiStoreError::BacklinksCorrupted(format!("serialize: {e}")))?;
+    let path = backlinks_index_path(paths);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &bytes).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(())
+}
+
+/// Load a previously persisted backlinks index.
+/// Returns an empty `HashMap` if the file does not exist.
+pub fn load_backlinks_index(paths: &WikiPaths) -> Result<BacklinksIndex> {
+    let path = backlinks_index_path(paths);
+    if !path.is_file() {
+        return Ok(HashMap::new());
+    }
+    let bytes = fs::read(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let parsed: BacklinksIndex = serde_json::from_slice(&bytes)
+        .map_err(|e| WikiStoreError::BacklinksCorrupted(format!("{e}")))?;
+    Ok(parsed)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: Schema validation  (technical-design.md §3.7, §4.1.1–4.1.2)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Schema template for wiki page frontmatter validation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SchemaTemplate {
+    pub name: String,
+    pub fields: Vec<TemplateField>,
+    pub required_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TemplateField {
+    pub name: String,
+    pub field_type: FieldType,
+    pub description: String,
+    pub default_value: Option<serde_json::Value>,
+    pub validation: Option<FieldValidation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FieldType {
+    String,
+    Number,
+    Boolean,
+    StringList,
+    Enum(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FieldValidation {
+    pub max_length: Option<usize>,
+    pub min_length: Option<usize>,
+    pub pattern: Option<String>,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+}
+
+/// A single frontmatter validation error produced by [`validate_frontmatter`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationError {
+    pub field: String,
+    pub expected: String,
+    pub actual: String,
+    pub message: String,
+}
+
+/// Validate wiki page frontmatter against a [`SchemaTemplate`].
+/// Returns all violations; an empty list means fully compliant.
+pub fn validate_frontmatter(
+    content: &str,
+    template: &SchemaTemplate,
+) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+
+    // Extract YAML frontmatter block between first pair of `---` lines.
+    let fm_text = match extract_frontmatter_text(content) {
+        Some(text) => text,
+        None => {
+            errors.push(ValidationError {
+                field: "(frontmatter)".into(),
+                expected: "YAML frontmatter block".into(),
+                actual: "missing".into(),
+                message: "页面缺少 YAML frontmatter 块".into(),
+            });
+            return errors;
+        }
+    };
+
+    // Parse YAML as a loose key-value map.
+    let fm_map: HashMap<String, serde_json::Value> = match serde_json::from_str(&yaml_to_json_loose(&fm_text)) {
+        Ok(map) => map,
+        Err(_) => {
+            // Fallback: try to parse line-by-line as "key: value" pairs.
+            parse_frontmatter_loose(&fm_text)
+        }
+    };
+
+    // Check required fields.
+    for required in &template.required_fields {
+        if !fm_map.contains_key(required) {
+            errors.push(ValidationError {
+                field: required.clone(),
+                expected: "present".into(),
+                actual: "missing".into(),
+                message: format!("必填字段 `{required}` 缺失"),
+            });
+        }
+    }
+
+    // Validate each field that is both defined in the template and present in the page.
+    for tf in &template.fields {
+        if let Some(value) = fm_map.get(&tf.name) {
+            // Type check.
+            let type_ok = match &tf.field_type {
+                FieldType::String => value.is_string(),
+                FieldType::Number => value.is_number(),
+                FieldType::Boolean => value.is_boolean(),
+                FieldType::StringList => value.is_array(),
+                FieldType::Enum(allowed) => {
+                    value.as_str().map(|s| allowed.contains(&s.to_string())).unwrap_or(false)
+                }
+            };
+            if !type_ok {
+                errors.push(ValidationError {
+                    field: tf.name.clone(),
+                    expected: format!("{:?}", tf.field_type),
+                    actual: format!("{value}"),
+                    message: format!("字段 `{}` 类型不匹配", tf.name),
+                });
+            }
+
+            // Length validation for strings.
+            if let (Some(validation), Some(s)) = (&tf.validation, value.as_str()) {
+                if let Some(max) = validation.max_length {
+                    if s.len() > max {
+                        errors.push(ValidationError {
+                            field: tf.name.clone(),
+                            expected: format!("max_length={max}"),
+                            actual: format!("length={}", s.len()),
+                            message: format!("字段 `{}` 超过最大长度 {max}", tf.name),
+                        });
+                    }
+                }
+                if let Some(min) = validation.min_length {
+                    if s.len() < min {
+                        errors.push(ValidationError {
+                            field: tf.name.clone(),
+                            expected: format!("min_length={min}"),
+                            actual: format!("length={}", s.len()),
+                            message: format!("字段 `{}` 低于最小长度 {min}", tf.name),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    errors
+}
+
+/// Extract the YAML text between the first pair of `---` delimiters.
+fn extract_frontmatter_text(content: &str) -> Option<String> {
+    let mut lines = content.lines();
+    if lines.next()? != "---" {
+        return None;
+    }
+    let mut fm_lines = Vec::new();
+    for line in lines {
+        if line == "---" {
+            return Some(fm_lines.join("\n"));
+        }
+        fm_lines.push(line);
+    }
+    None
+}
+
+/// Minimal YAML-to-JSON conversion for simple `key: value` frontmatter.
+/// Handles strings (quoted or unquoted), numbers, booleans, and lists.
+fn yaml_to_json_loose(yaml: &str) -> String {
+    let mut pairs = Vec::new();
+    for line in yaml.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, val)) = line.split_once(':') {
+            let key = key.trim().trim_matches('"');
+            let val = val.trim();
+            let json_val = if val.starts_with('"') && val.ends_with('"') {
+                val.to_string()
+            } else if val.starts_with('[') {
+                val.to_string()
+            } else if val == "true" || val == "false" {
+                val.to_string()
+            } else if val.parse::<f64>().is_ok() {
+                val.to_string()
+            } else {
+                format!("\"{}\"", val.replace('"', "\\\""))
+            };
+            pairs.push(format!("\"{key}\": {json_val}"));
+        }
+    }
+    format!("{{{}}}", pairs.join(", "))
+}
+
+/// Fallback line-by-line parser for YAML frontmatter.
+fn parse_frontmatter_loose(yaml: &str) -> HashMap<String, serde_json::Value> {
+    let mut map = HashMap::new();
+    for line in yaml.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, val)) = line.split_once(':') {
+            let key = key.trim().to_string();
+            let val = val.trim();
+            let json_val = if val.starts_with('"') && val.ends_with('"') {
+                serde_json::Value::String(val[1..val.len()-1].to_string())
+            } else if val == "true" {
+                serde_json::Value::Bool(true)
+            } else if val == "false" {
+                serde_json::Value::Bool(false)
+            } else if let Ok(n) = val.parse::<i64>() {
+                serde_json::Value::Number(n.into())
+            } else if let Ok(n) = val.parse::<f64>() {
+                serde_json::json!(n)
+            } else {
+                serde_json::Value::String(val.to_string())
+            };
+            map.insert(key, json_val);
+        }
+    }
+    map
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: Wiki stats  (technical-design.md §3.9, §4.1.1)
+// ─────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: Patrol types  (technical-design.md §3.8)
+// ─────────────────────────────────────────────────────────────────────
+
+/// A single issue found by the wiki patrol system.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatrolIssue {
+    pub kind: PatrolIssueKind,
+    pub page_slug: String,
+    pub description: String,
+    pub suggested_action: String,
+}
+
+/// Category of patrol issue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PatrolIssueKind {
+    Orphan,
+    Stale,
+    SchemaViolation,
+    Oversized,
+    Stub,
+    /// v2: Confidence score has decayed (high confidence + old sources).
+    ConfidenceDecay,
+    /// v2: Crystallization mechanism check (query results not being captured).
+    Uncrystallized,
+}
+
+/// Full patrol report aggregating all issues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatrolReport {
+    pub issues: Vec<PatrolIssue>,
+    pub summary: PatrolSummary,
+    pub checked_at: String,
+}
+
+/// Count of issues by category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatrolSummary {
+    pub orphans: usize,
+    pub stale: usize,
+    pub schema_violations: usize,
+    pub oversized: usize,
+    pub stubs: usize,
+    #[serde(default)]
+    pub confidence_decay: usize,
+    #[serde(default)]
+    pub uncrystallized: usize,
+}
+
+/// Record of a superseded claim (technical-design.md §3.3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupersessionRecord {
+    pub claim: String,
+    pub replaced_by: String,
+    pub date: String,
+    pub source: String,
+}
+
+/// Update the confidence score in a wiki page's frontmatter.
+/// Reads the file, modifies the `confidence:` line, writes back atomically.
+pub fn update_page_confidence(paths: &WikiPaths, slug: &str, new_confidence: f32) -> Result<()> {
+    let (summary, body) = read_wiki_page(paths, slug)?;
+    let page_path = find_page_file(paths, slug, &summary.category);
+    let content = std::fs::read_to_string(&page_path)
+        .map_err(|e| WikiStoreError::io(page_path.clone(), e))?;
+
+    // Replace or insert confidence in frontmatter.
+    let updated = if content.contains("confidence:") {
+        // Replace existing confidence line.
+        let mut result = String::new();
+        for line in content.lines() {
+            if line.trim_start().starts_with("confidence:") {
+                result.push_str(&format!("confidence: {:.2}", new_confidence));
+            } else {
+                result.push_str(line);
+            }
+            result.push('\n');
+        }
+        result
+    } else {
+        // Insert confidence before the closing --- of frontmatter.
+        content.replacen(
+            "\n---\n",
+            &format!("\nconfidence: {:.2}\n---\n", new_confidence),
+            1,
+        )
+    };
+
+    let tmp = page_path.with_extension("md.tmp");
+    std::fs::write(&tmp, &updated).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    std::fs::rename(&tmp, &page_path).map_err(|e| WikiStoreError::io(page_path.clone(), e))?;
+    Ok(())
+}
+
+/// Find the filesystem path for a wiki page given slug and category.
+fn find_page_file(paths: &WikiPaths, slug: &str, category: &str) -> std::path::PathBuf {
+    let subdir = match category {
+        "concept" => WIKI_CONCEPTS_SUBDIR,
+        "people" => WIKI_PEOPLE_SUBDIR,
+        "topic" => WIKI_TOPICS_SUBDIR,
+        "compare" => WIKI_COMPARE_SUBDIR,
+        _ => WIKI_CONCEPTS_SUBDIR,
+    };
+    paths.wiki.join(subdir).join(format!("{slug}.md"))
+}
+
+/// Filename for the patrol report inside `{meta}/`.
+const PATROL_REPORT_FILENAME: &str = "_patrol_report.json";
+
+/// Save a patrol report to `{meta}/_patrol_report.json`.
+pub fn save_patrol_report(paths: &WikiPaths, report: &PatrolReport) -> Result<()> {
+    fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
+    let bytes = serde_json::to_vec_pretty(report)
+        .map_err(|e| WikiStoreError::Invalid(format!("patrol report serialize: {e}")))?;
+    let path = paths.meta.join(PATROL_REPORT_FILENAME);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &bytes).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(())
+}
+
+/// Load the last saved patrol report. Returns `None` if no report exists.
+pub fn load_patrol_report(paths: &WikiPaths) -> Result<Option<PatrolReport>> {
+    let path = paths.meta.join(PATROL_REPORT_FILENAME);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let report: PatrolReport = serde_json::from_slice(&bytes)
+        .map_err(|e| WikiStoreError::Invalid(format!("patrol report parse: {e}")))?;
+    Ok(Some(report))
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: Wiki stats  (technical-design.md §3.9, §4.1.1)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Aggregated wiki statistics, computed on every call (no caching).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiStats {
+    pub raw_count: usize,
+    pub wiki_count: usize,
+    pub concept_count: usize,
+    pub people_count: usize,
+    pub topic_count: usize,
+    pub compare_count: usize,
+    pub edge_count: usize,
+    pub orphan_count: usize,
+    pub inbox_pending: usize,
+    pub inbox_resolved: usize,
+    pub today_ingest_count: usize,
+    pub week_new_pages: usize,
+    pub avg_page_words: usize,
+    pub absorb_success_rate: f64,
+    pub knowledge_velocity: f64,
+    pub last_absorb_at: Option<String>,
+}
+
+/// Compute and return aggregated wiki statistics.
+/// Real-time computation, no caching. Suitable for Dashboard and
+/// `/api/wiki/stats`.
+pub fn wiki_stats(paths: &WikiPaths) -> Result<WikiStats> {
+    let raws = list_raw_entries(paths).unwrap_or_default();
+    let pages = list_all_wiki_pages(paths).unwrap_or_default();
+    let inbox = load_inbox_file(paths).unwrap_or_default();
+    let graph = build_wiki_graph(paths).unwrap_or_else(|_| WikiGraph {
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        raw_count: 0,
+        concept_count: 0,
+        edge_count: 0,
+    });
+
+    let concept_count = pages.iter().filter(|p| p.category == "concept").count();
+    let people_count = pages.iter().filter(|p| p.category == "people").count();
+    let topic_count = pages.iter().filter(|p| p.category == "topic").count();
+    let compare_count = pages.iter().filter(|p| p.category == "compare").count();
+
+    // Orphan count: pages with no inbound links in the backlinks index.
+    let backlinks = load_backlinks_index(paths).unwrap_or_default();
+    let orphan_count = pages
+        .iter()
+        .filter(|p| {
+            backlinks
+                .get(&p.slug)
+                .map(|v| v.is_empty())
+                .unwrap_or(true)
+        })
+        .count();
+
+    let inbox_pending = inbox.iter().filter(|e| e.status == InboxStatus::Pending).count();
+    let inbox_resolved = inbox
+        .iter()
+        .filter(|e| e.status == InboxStatus::Approved || e.status == InboxStatus::Rejected)
+        .count();
+
+    // Today's ingested raw entries.
+    let today = today_date_string();
+    let today_ingest_count = raws.iter().filter(|r| r.date == today).count();
+
+    // Wiki pages created in the last 7 days.
+    let week_ago = week_ago_date_string();
+    let week_new_pages = pages
+        .iter()
+        .filter(|p| p.created_at.as_str() >= week_ago.as_str())
+        .count();
+
+    // Average word count across all wiki pages.
+    let avg_page_words = if pages.is_empty() {
+        0
+    } else {
+        let total_words: usize = pages
+            .iter()
+            .filter_map(|p| {
+                read_wiki_page(paths, &p.slug)
+                    .ok()
+                    .map(|(_, body)| count_words(&body))
+            })
+            .sum();
+        total_words / pages.len()
+    };
+
+    // absorb_success_rate = resolved / (resolved + pending)
+    let total_inbox = inbox_resolved + inbox_pending;
+    let absorb_success_rate = if total_inbox == 0 {
+        0.0
+    } else {
+        inbox_resolved as f64 / total_inbox as f64
+    };
+
+    // knowledge_velocity = week_new_pages / 7.0
+    let knowledge_velocity = week_new_pages as f64 / 7.0;
+
+    // last_absorb_at: last entry's timestamp from absorb log.
+    let absorb_log = load_absorb_log_file(paths).unwrap_or_default();
+    let last_absorb_at = absorb_log
+        .iter()
+        .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
+        .map(|e| e.timestamp.clone());
+
+    Ok(WikiStats {
+        raw_count: raws.len(),
+        wiki_count: pages.len(),
+        concept_count,
+        people_count,
+        topic_count,
+        compare_count,
+        edge_count: graph.edge_count,
+        orphan_count,
+        inbox_pending,
+        inbox_resolved,
+        today_ingest_count,
+        week_new_pages,
+        avg_page_words,
+        absorb_success_rate,
+        knowledge_velocity,
+        last_absorb_at,
+    })
+}
+
+/// Count words in a markdown body. For CJK text each character counts
+/// as one word; for ASCII, whitespace-split tokens are counted.
+/// Count words in a body string. CJK characters count as one word
+/// each; ASCII tokens are counted by whitespace boundaries.
+/// Mixed tokens (e.g. "abc中") count as: ASCII word part + CJK chars.
+fn count_words(body: &str) -> usize {
+    let body = strip_frontmatter(body);
+    let mut count = 0usize;
+    let mut in_ascii_word = false;
+
+    for ch in body.chars() {
+        if ch.is_whitespace() {
+            in_ascii_word = false;
+        } else if ch.is_ascii() {
+            // ASCII non-whitespace: count on transition into a word.
+            if !in_ascii_word {
+                count += 1;
+                in_ascii_word = true;
+            }
+        } else {
+            // CJK / non-ASCII: each character = 1 word.
+            count += 1;
+            in_ascii_word = false;
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -4495,5 +5231,265 @@ mod tests {
             );
         }
         assert_eq!(count_pending_inbox(&paths).unwrap(), 0);
+    }
+
+    // ── v2 absorb_log tests ─────────────────────────────────────
+
+    #[test]
+    fn absorb_log_append_and_list_roundtrip() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let entry = AbsorbLogEntry {
+            entry_id: 1,
+            timestamp: "2026-04-14T10:00:00Z".to_string(),
+            action: "create".to_string(),
+            page_slug: Some("test-page".to_string()),
+            page_title: Some("Test Page".to_string()),
+            page_category: Some("concept".to_string()),
+        };
+        append_absorb_log(&paths, entry.clone()).unwrap();
+
+        let log = list_absorb_log(&paths).unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].entry_id, 1);
+        assert_eq!(log[0].action, "create");
+        assert_eq!(log[0].page_slug.as_deref(), Some("test-page"));
+    }
+
+    #[test]
+    fn absorb_log_empty_file_returns_empty_vec() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        // Don't write any log entries.
+        let log = list_absorb_log(&paths).unwrap();
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn absorb_log_list_is_reverse_chronological() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        for i in 1..=3 {
+            append_absorb_log(&paths, AbsorbLogEntry {
+                entry_id: i,
+                timestamp: format!("2026-04-14T10:0{i}:00Z"),
+                action: "create".to_string(),
+                page_slug: Some(format!("page-{i}")),
+                page_title: None,
+                page_category: None,
+            }).unwrap();
+        }
+
+        let log = list_absorb_log(&paths).unwrap();
+        assert_eq!(log.len(), 3);
+        // Should be descending by timestamp.
+        assert_eq!(log[0].entry_id, 3);
+        assert_eq!(log[2].entry_id, 1);
+    }
+
+    #[test]
+    fn is_entry_absorbed_true_for_create() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        append_absorb_log(&paths, AbsorbLogEntry {
+            entry_id: 42,
+            timestamp: now_iso8601(),
+            action: "create".to_string(),
+            page_slug: Some("x".to_string()),
+            page_title: None,
+            page_category: None,
+        }).unwrap();
+
+        assert!(is_entry_absorbed(&paths, 42));
+    }
+
+    #[test]
+    fn is_entry_absorbed_false_for_skip() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        append_absorb_log(&paths, AbsorbLogEntry {
+            entry_id: 7,
+            timestamp: now_iso8601(),
+            action: "skip".to_string(),
+            page_slug: None,
+            page_title: None,
+            page_category: None,
+        }).unwrap();
+
+        assert!(!is_entry_absorbed(&paths, 7), "skip should not count as absorbed");
+    }
+
+    #[test]
+    fn is_entry_absorbed_false_for_unknown() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        assert!(!is_entry_absorbed(&paths, 999));
+    }
+
+    // ── v2 backlinks_index tests ────────────────────────────────
+
+    #[test]
+    fn backlinks_save_load_roundtrip() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let mut index = BacklinksIndex::new();
+        index.insert("target".to_string(), vec!["source-a".to_string(), "source-b".to_string()]);
+
+        save_backlinks_index(&paths, &index).unwrap();
+        let loaded = load_backlinks_index(&paths).unwrap();
+        assert_eq!(loaded.get("target").unwrap().len(), 2);
+        assert!(loaded.get("target").unwrap().contains(&"source-a".to_string()));
+    }
+
+    #[test]
+    fn load_backlinks_index_missing_file_returns_empty() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let index = load_backlinks_index(&paths).unwrap();
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn build_backlinks_index_with_links() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        // Create two pages where page-a links to page-b.
+        write_wiki_page_in_category(
+            &paths, "concept", "page-a", "Page A", "Summary A",
+            "# Page A\n\nSee [Page B](concepts/page-b.md) for details.", Some(1),
+        ).unwrap();
+        write_wiki_page_in_category(
+            &paths, "concept", "page-b", "Page B", "Summary B",
+            "# Page B\n\nStandalone page.", Some(2),
+        ).unwrap();
+
+        let index = build_backlinks_index(&paths).unwrap();
+        // page-b should have page-a as a backlink.
+        let refs = index.get("page-b").unwrap();
+        assert!(refs.contains(&"page-a".to_string()));
+        // page-a has no inbound links.
+        assert!(index.get("page-a").is_none());
+    }
+
+    #[test]
+    fn build_backlinks_index_empty_wiki() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let index = build_backlinks_index(&paths).unwrap();
+        assert!(index.is_empty());
+    }
+
+    // ── v2 validate_frontmatter tests ───────────────────────────
+
+    #[test]
+    fn validate_frontmatter_compliant_page() {
+        let content = "---\ntype: concept\ntitle: Test\nsummary: A test page\n---\n# Body";
+        let template = SchemaTemplate {
+            name: "concept".to_string(),
+            fields: vec![
+                TemplateField {
+                    name: "type".to_string(),
+                    field_type: FieldType::String,
+                    description: "".to_string(),
+                    default_value: None,
+                    validation: None,
+                },
+                TemplateField {
+                    name: "title".to_string(),
+                    field_type: FieldType::String,
+                    description: "".to_string(),
+                    default_value: None,
+                    validation: None,
+                },
+            ],
+            required_fields: vec!["type".to_string(), "title".to_string()],
+        };
+        let errors = validate_frontmatter(content, &template);
+        assert!(errors.is_empty(), "compliant page should have no errors: {errors:?}");
+    }
+
+    #[test]
+    fn validate_frontmatter_missing_required_field() {
+        let content = "---\ntype: concept\n---\n# Body";
+        let template = SchemaTemplate {
+            name: "concept".to_string(),
+            fields: vec![],
+            required_fields: vec!["type".to_string(), "title".to_string()],
+        };
+        let errors = validate_frontmatter(content, &template);
+        assert_eq!(errors.len(), 1, "should report 1 missing field");
+        assert_eq!(errors[0].field, "title");
+    }
+
+    #[test]
+    fn validate_frontmatter_no_frontmatter_block() {
+        let content = "# Just a body, no frontmatter";
+        let template = SchemaTemplate {
+            name: "any".to_string(),
+            fields: vec![],
+            required_fields: vec![],
+        };
+        let errors = validate_frontmatter(content, &template);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].field, "(frontmatter)");
+    }
+
+    // ── v2 wiki_stats tests ─────────────────────────────────────
+
+    #[test]
+    fn wiki_stats_empty_wiki() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let stats = wiki_stats(&paths).unwrap();
+        assert_eq!(stats.raw_count, 0);
+        assert_eq!(stats.wiki_count, 0);
+        assert_eq!(stats.concept_count, 0);
+        assert_eq!(stats.edge_count, 0);
+        assert_eq!(stats.orphan_count, 0);
+        assert_eq!(stats.inbox_pending, 0);
+        assert_eq!(stats.avg_page_words, 0);
+        assert!(stats.absorb_success_rate == 0.0);
+        assert!(stats.knowledge_velocity == 0.0);
+        assert!(stats.last_absorb_at.is_none());
+    }
+
+    #[test]
+    fn wiki_stats_with_data() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        // Seed a raw entry and a wiki page.
+        let fm = RawFrontmatter::for_paste("paste", None);
+        write_raw_entry(&paths, "paste", "test", "body content", &fm).unwrap();
+
+        write_wiki_page_in_category(
+            &paths, "concept", "test-concept", "Test Concept", "Summary",
+            "This is a test concept page with some words.", Some(1),
+        ).unwrap();
+
+        let stats = wiki_stats(&paths).unwrap();
+        assert_eq!(stats.raw_count, 1);
+        assert_eq!(stats.wiki_count, 1);
+        assert_eq!(stats.concept_count, 1);
+        assert!(stats.avg_page_words > 0);
     }
 }

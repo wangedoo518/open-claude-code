@@ -594,6 +594,7 @@ dependencies = [
  "tower-http",
  "wiki_ingest",
  "wiki_maintainer",
+ "wiki_patrol",
  "wiki_store",
 ]
 
@@ -3483,6 +3484,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "wiki_store",
+]
+
+[[package]]
+name = "wiki_patrol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
  "wiki_store",
 ]
 

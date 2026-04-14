@@ -558,6 +558,16 @@ pub fn app(state: AppState) -> Router {
         .route("/api/wiki/graph", get(get_wiki_graph_handler))
         // ── ClawWiki Q: backlinks endpoint ─────────────────────────
         .route("/api/wiki/pages/{slug}/backlinks", get(get_wiki_backlinks_handler))
+        // ── v2 SKILL engine endpoints (technical-design.md §2.1-§2.9) ──
+        .route("/api/wiki/absorb", post(absorb_handler))
+        .route("/api/wiki/query", post(query_wiki_handler))
+        .route("/api/wiki/cleanup", post(cleanup_handler))
+        .route("/api/wiki/patrol", post(patrol_handler))
+        .route("/api/wiki/absorb-log", get(get_absorb_log_handler))
+        .route("/api/wiki/backlinks", get(get_backlinks_index_handler))
+        .route("/api/wiki/stats", get(get_stats_handler))
+        .route("/api/wiki/patrol/report", get(get_patrol_report_handler))
+        .route("/api/wiki/schema/templates", get(get_schema_templates_handler))
         // ── Phase 6C: WeChat account management ────────────────────
         .route(
             "/api/desktop/wechat/accounts",
@@ -2705,6 +2715,18 @@ async fn propose_wiki_inbox_handler(
                         error: format!("LLM proposal shape invalid: {msg}"),
                     }),
                 ),
+                wiki_maintainer::MaintainerError::Store(msg) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("wiki store error: {msg}"),
+                    }),
+                ),
+                wiki_maintainer::MaintainerError::Cancelled => (
+                    StatusCode::from_u16(499).unwrap_or(StatusCode::BAD_REQUEST),
+                    Json(ErrorResponse {
+                        error: "absorb cancelled by user".to_string(),
+                    }),
+                ),
             })?;
 
     Ok(Json(serde_json::json!({
@@ -4082,4 +4104,389 @@ async fn delete_wiki_raw_handler(
         (StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("{e}") }))
     })?;
     Ok(Json(serde_json::json!({ "ok": true, "deleted": id })))
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v2 SKILL engine handlers (technical-design.md §2.1–§2.9, §4.4)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Global flag: at most one absorb_batch may run at a time (§2.1: 409).
+static ABSORB_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+// ── §2.1 POST /api/wiki/absorb ─────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AbsorbRequest {
+    entry_ids: Option<Vec<u32>>,
+}
+
+/// POST /api/wiki/absorb — trigger batch absorb (202 Accepted).
+/// Spawns absorb_batch in background; returns task_id immediately.
+/// Returns 409 if another absorb is already running.
+async fn absorb_handler(
+    State(_state): State<AppState>,
+    Json(body): Json<AbsorbRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use std::sync::atomic::Ordering;
+
+    // Concurrency guard: only one absorb at a time.
+    if ABSORB_RUNNING.swap(true, Ordering::SeqCst) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "ABSORB_IN_PROGRESS".to_string(),
+            }),
+        ));
+    }
+
+    let paths = resolve_wiki_root_for_handler()?;
+
+    // Resolve entry_ids: explicit list or all un-absorbed raw entries.
+    let entry_ids = match body.entry_ids {
+        Some(ids) => ids,
+        None => {
+            let raws = wiki_store::list_raw_entries(&paths).map_err(|e| {
+                ABSORB_RUNNING.store(false, Ordering::SeqCst);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("list_raw_entries failed: {e}"),
+                    }),
+                )
+            })?;
+            raws.iter()
+                .filter(|r| !wiki_store::is_entry_absorbed(&paths, r.id))
+                .map(|r| r.id)
+                .collect()
+        }
+    };
+
+    let total = entry_ids.len();
+    let task_id = format!(
+        "absorb-{}-{:04x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        rand_u16()
+    );
+
+    // Spawn background task.
+    // Guard struct ensures ABSORB_RUNNING is reset even if the task panics.
+    struct AbsorbGuard;
+    impl Drop for AbsorbGuard {
+        fn drop(&mut self) {
+            ABSORB_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let task_id_clone = task_id.clone();
+    let adapter = desktop_core::wiki_maintainer_adapter::BrokerAdapter::from_global();
+    tokio::spawn(async move {
+        let _guard = AbsorbGuard;
+        let (tx, mut _rx) = tokio::sync::mpsc::channel(64);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let _result = wiki_maintainer::absorb_batch(&paths, entry_ids, &adapter, tx, cancel).await;
+        log::info!("[absorb] task {} completed", task_id_clone);
+        // _guard dropped here → ABSORB_RUNNING = false
+    });
+
+    Ok(Json(serde_json::json!({
+        "task_id": task_id,
+        "status": "started",
+        "total_entries": total,
+    })))
+}
+
+/// Quick pseudo-random u16 for task_id suffix (no crypto needed).
+fn rand_u16() -> u16 {
+    use std::time::SystemTime;
+    let t = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    (t & 0xFFFF) as u16
+}
+
+// ── §2.2 POST /api/wiki/query ───────────────────────────────────────
+
+#[derive(Deserialize)]
+struct QueryWikiRequest {
+    question: String,
+    max_sources: Option<usize>,
+}
+
+/// POST /api/wiki/query — Wiki-grounded Q&A (SSE stream).
+async fn query_wiki_handler(
+    State(_state): State<AppState>,
+    Json(body): Json<QueryWikiRequest>,
+) -> Result<axum::response::sse::Sse<impl futures::stream::Stream<Item = std::result::Result<axum::response::sse::Event, std::convert::Infallible>>>, ApiError> {
+    use axum::response::sse::{Event, Sse};
+
+    let question = body.question.trim().to_string();
+    if question.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "EMPTY_QUESTION".to_string(),
+            }),
+        ));
+    }
+    if question.len() > 2000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "QUESTION_TOO_LONG".to_string(),
+            }),
+        ));
+    }
+
+    let paths = resolve_wiki_root_for_handler()?;
+    let max_sources = body.max_sources.unwrap_or(5).min(20).max(1);
+    let adapter = desktop_core::wiki_maintainer_adapter::BrokerAdapter::from_global();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+
+    // Spawn query in background, collect result for done event.
+    let paths_clone = paths.clone();
+    let question_clone = question.clone();
+    tokio::spawn(async move {
+        let result = wiki_maintainer::query_wiki(
+            &paths_clone,
+            &question_clone,
+            max_sources,
+            &adapter,
+            tx,
+        )
+        .await;
+        // result is consumed by the SSE stream via the channel
+        result
+    });
+
+    // SSE stream: forward chunks from rx, then emit done.
+    let sse_stream = async_stream::stream! {
+        // Forward query_chunk events.
+        while let Some(chunk) = rx.recv().await {
+            let data = serde_json::json!({
+                "type": "query_chunk",
+                "delta": chunk.delta,
+                "source_refs": chunk.source_refs,
+            });
+            yield Ok(Event::default().event("skill").data(data.to_string()));
+        }
+        // Channel closed → query finished. Emit done.
+        yield Ok(Event::default().event("skill").data(
+            serde_json::json!({"type": "query_done"}).to_string()
+        ));
+    };
+
+    Ok(Sse::new(sse_stream))
+}
+
+// ── §2.3 POST /api/wiki/cleanup ─────────────────────────────────────
+
+/// POST /api/wiki/cleanup — run patrol-based cleanup audit.
+/// Phase 4: delegates to wiki_patrol::run_full_patrol (local checks).
+/// Full LLM-based quality audit deferred to future sprint.
+async fn cleanup_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let config = wiki_patrol::PatrolConfig {
+        stale_threshold_days: 30,
+        min_page_words: 50,  // cleanup uses higher threshold than patrol
+        max_page_words: 3000,
+    };
+    let report = wiki_patrol::run_full_patrol(&paths, &config);
+    let _ = wiki_store::save_patrol_report(&paths, &report);
+    Ok(Json(serde_json::to_value(&report).unwrap_or(serde_json::Value::Null)))
+}
+
+// ── §2.4 POST /api/wiki/patrol ──────────────────────────────────────
+
+/// POST /api/wiki/patrol — run full patrol and return report.
+async fn patrol_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let config = wiki_patrol::PatrolConfig::default();
+    let report = wiki_patrol::run_full_patrol(&paths, &config);
+
+    // Persist the report for GET /api/wiki/patrol/report.
+    let _ = wiki_store::save_patrol_report(&paths, &report);
+
+    Ok(Json(
+        serde_json::to_value(&report).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+// ── §2.5 GET /api/wiki/absorb-log ───────────────────────────────────
+
+#[derive(Deserialize)]
+struct AbsorbLogQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+/// GET /api/wiki/absorb-log — paginated absorb log.
+async fn get_absorb_log_handler(
+    Query(params): Query<AbsorbLogQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let all = wiki_store::list_absorb_log(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("LOG_READ_FAILED: {e}"),
+            }),
+        )
+    })?;
+
+    let total = all.len();
+    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(100).min(1000).max(1);
+    let entries: Vec<_> = all.into_iter().skip(offset).take(limit).collect();
+
+    Ok(Json(serde_json::json!({
+        "entries": entries,
+        "total": total,
+    })))
+}
+
+// ── §2.6 GET /api/wiki/backlinks ────────────────────────────────────
+
+/// GET /api/wiki/backlinks — full backlinks index or single slug.
+/// Coexists with GET /api/wiki/pages/{slug}/backlinks (per-page).
+#[derive(Deserialize)]
+struct BacklinksQuery {
+    slug: Option<String>,
+}
+
+async fn get_backlinks_index_handler(
+    Query(params): Query<BacklinksQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+
+    // Try loading persisted index; if absent, build and save.
+    let mut index = wiki_store::load_backlinks_index(&paths).unwrap_or_default();
+    if index.is_empty() {
+        index = wiki_store::build_backlinks_index(&paths).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("INDEX_BUILD_FAILED: {e}"),
+                }),
+            )
+        })?;
+        let _ = wiki_store::save_backlinks_index(&paths, &index);
+    }
+
+    match params.slug {
+        Some(slug) => {
+            let backlinks = index.get(&slug).cloned().unwrap_or_default();
+            // Enrich with titles.
+            let enriched: Vec<serde_json::Value> = backlinks
+                .iter()
+                .filter_map(|s| {
+                    wiki_store::read_wiki_page(&paths, s).ok().map(|(summary, _)| {
+                        serde_json::json!({
+                            "slug": s,
+                            "title": summary.title,
+                            "category": summary.category,
+                        })
+                    })
+                })
+                .collect();
+            Ok(Json(serde_json::json!({
+                "slug": slug,
+                "backlinks": enriched,
+                "count": enriched.len(),
+            })))
+        }
+        None => {
+            let total_pages = wiki_store::list_all_wiki_pages(&paths)
+                .map(|p| p.len())
+                .unwrap_or(0);
+            let total_backlinks: usize = index.values().map(|v| v.len()).sum();
+            Ok(Json(serde_json::json!({
+                "index": index,
+                "total_pages": total_pages,
+                "total_backlinks": total_backlinks,
+            })))
+        }
+    }
+}
+
+// ── §2.7 GET /api/wiki/stats ────────────────────────────────────────
+
+/// GET /api/wiki/stats — aggregated wiki statistics.
+async fn get_stats_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let stats = wiki_store::wiki_stats(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("STATS_COMPUTE_FAILED: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::to_value(&stats).unwrap_or(serde_json::Value::Null)))
+}
+
+// ── §2.8 GET /api/wiki/patrol/report ────────────────────────────────
+
+/// GET /api/wiki/patrol/report — latest persisted patrol report.
+/// Returns `null` if no patrol has ever been run.
+async fn get_patrol_report_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let report = wiki_store::load_patrol_report(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("load patrol report: {e}"),
+            }),
+        )
+    })?;
+    match report {
+        Some(r) => Ok(Json(serde_json::to_value(&r).unwrap_or(serde_json::Value::Null))),
+        None => Ok(Json(serde_json::Value::Null)),
+    }
+}
+
+// ── §2.9 GET /api/wiki/schema/templates ─────────────────────────────
+
+/// GET /api/wiki/schema/templates — list all schema templates.
+async fn get_schema_templates_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let templates_dir = paths.schema.join("templates");
+    if !templates_dir.is_dir() {
+        return Ok(Json(serde_json::json!([])));
+    }
+
+    let mut templates = Vec::new();
+    let entries = std::fs::read_dir(&templates_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read schema/templates/ failed: {e}"),
+            }),
+        )
+    })?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        templates.push(serde_json::json!({
+            "name": name,
+            "file_path": path.to_string_lossy(),
+            "content": content,
+        }));
+    }
+
+    Ok(Json(serde_json::json!(templates)))
 }
