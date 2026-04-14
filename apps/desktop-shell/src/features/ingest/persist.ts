@@ -8,14 +8,19 @@
 
 import { fetchJson } from "@/lib/desktop/transport";
 import type {
+  AbsorbLogResponse,
+  AbsorbTaskResponse,
+  BacklinksFullResponse,
   InboxEntry,
   InboxListResponse,
   InboxResolveAction,
   IngestRawRequest,
+  PatrolReport,
   RawDetailResponse,
   RawEntry,
   RawListResponse,
   SchemaResponse,
+  SchemaTemplate,
   WikiApproveWithWriteResponse,
   WikiGraphResponse,
   WikiPageDetailResponse,
@@ -24,6 +29,7 @@ import type {
   WikiProposalResponse,
   WikiSearchResponse,
   WikiSpecialFileResponse,
+  WikiStats,
 } from "./types";
 
 /**
@@ -207,4 +213,67 @@ export async function searchWikiPages(
   if (query) params.set("q", query);
   params.set("limit", String(limit));
   return fetchJson<WikiSearchResponse>(`/api/wiki/search?${params.toString()}`);
+}
+
+// ── v2 SKILL API (technical-design.md §2.1–§2.9) ─────────────────
+
+/** POST `/api/wiki/absorb` — trigger batch absorb (§2.1). */
+export async function triggerAbsorb(
+  entryIds?: number[],
+): Promise<AbsorbTaskResponse> {
+  return fetchJson<AbsorbTaskResponse>("/api/wiki/absorb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entry_ids: entryIds ?? null }),
+  });
+}
+
+/** GET `/api/wiki/absorb-log` — paginated absorb log (§2.5). */
+export async function getAbsorbLog(
+  limit = 50,
+  offset = 0,
+): Promise<AbsorbLogResponse> {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  return fetchJson<AbsorbLogResponse>(`/api/wiki/absorb-log?${params.toString()}`);
+}
+
+/** GET `/api/wiki/backlinks` — full backlinks index (§2.6). */
+export async function getBacklinksIndex(): Promise<BacklinksFullResponse> {
+  return fetchJson<BacklinksFullResponse>("/api/wiki/backlinks");
+}
+
+/** GET `/api/wiki/stats` — aggregated wiki statistics (§2.7). */
+export async function getWikiStats(): Promise<WikiStats> {
+  return fetchJson<WikiStats>("/api/wiki/stats");
+}
+
+/** GET `/api/wiki/schema/templates` — schema templates (§2.9). */
+export async function getSchemaTemplates(): Promise<SchemaTemplate[]> {
+  return fetchJson<SchemaTemplate[]>("/api/wiki/schema/templates");
+}
+
+/**
+ * POST `/api/wiki/query` — wiki-grounded Q&A (§2.2).
+ * Returns a raw `fetch` Response for SSE streaming.
+ */
+/** POST `/api/wiki/patrol` — run full patrol (§2.4). */
+export async function triggerPatrol(): Promise<PatrolReport> {
+  return fetchJson<PatrolReport>("/api/wiki/patrol", { method: "POST" });
+}
+
+/** GET `/api/wiki/patrol/report` — latest patrol report (§2.8). */
+export async function getPatrolReport(): Promise<PatrolReport | null> {
+  return fetchJson<PatrolReport | null>("/api/wiki/patrol/report");
+}
+
+export async function queryWiki(question: string, maxSources = 5): Promise<Response> {
+  const { getDesktopApiBase } = await import("@/lib/desktop/bootstrap");
+  const base = await getDesktopApiBase();
+  return fetch(`${base}/api/wiki/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, max_sources: maxSources }),
+  });
 }

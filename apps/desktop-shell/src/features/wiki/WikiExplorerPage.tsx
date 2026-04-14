@@ -106,7 +106,18 @@ function useDebouncedValue<T>(value: T, delay: number): T {
   return debounced;
 }
 
+// ── v2 Wiki Tab (Phase 1 Day 8-10) ─────────────────────────────
+// The new multi-tab Wiki Explorer replaces the legacy split-pane layout.
+// Once stable, the legacy code below will be removed.
+import { WikiTab } from "./WikiTab";
+
 export function WikiExplorerPage() {
+  return <WikiTab />;
+}
+
+// @ts-expect-error Legacy v1 code preserved for rollback; will be removed after v2 stabilizes.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _WikiExplorerPageLegacy() {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Selection | null>(null);
   const [searchInput, setSearchInput] = useState("");

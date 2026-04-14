@@ -217,3 +217,104 @@ export interface WikiSearchResponse {
   total_matches: number;
   limit: number;
 }
+
+// ── v2 types (technical-design.md §3.5–§3.9) ─────────────────────
+
+/**
+ * Record of a single absorb operation result.
+ * Persisted to `{meta}/_absorb_log.json`.
+ */
+export interface AbsorbLogEntry {
+  entry_id: number;
+  timestamp: string;
+  action: "create" | "update" | "skip";
+  page_slug: string | null;
+  page_title: string | null;
+  page_category: string | null;
+}
+
+export interface AbsorbLogResponse {
+  entries: AbsorbLogEntry[];
+  total: number;
+}
+
+/** Reverse-link index: target slug → list of referring slugs. */
+export type BacklinksIndex = Record<string, string[]>;
+
+export interface BacklinksDetailResponse {
+  slug: string;
+  backlinks: Array<{ slug: string; title: string; category: string }>;
+  count: number;
+}
+
+export interface BacklinksFullResponse {
+  index: BacklinksIndex;
+  total_pages: number;
+  total_backlinks: number;
+}
+
+/** Aggregated wiki statistics (§3.9). */
+export interface WikiStats {
+  raw_count: number;
+  wiki_count: number;
+  concept_count: number;
+  people_count: number;
+  topic_count: number;
+  compare_count: number;
+  edge_count: number;
+  orphan_count: number;
+  inbox_pending: number;
+  inbox_resolved: number;
+  today_ingest_count: number;
+  week_new_pages: number;
+  avg_page_words: number;
+  absorb_success_rate: number;
+  knowledge_velocity: number;
+  last_absorb_at: string | null;
+}
+
+/** Schema template metadata (§3.7). */
+export interface SchemaTemplate {
+  name: string;
+  file_path: string;
+  content: string;
+}
+
+/** POST /api/wiki/absorb response (§2.1). */
+export interface AbsorbTaskResponse {
+  task_id: string;
+  status: "started";
+  total_entries: number;
+}
+
+/** Patrol issue (§3.8). */
+export interface PatrolIssue {
+  kind: "orphan" | "stale" | "schema-violation" | "oversized" | "stub" | "confidence-decay" | "uncrystallized";
+  page_slug: string;
+  description: string;
+  suggested_action: string;
+}
+
+export interface PatrolSummary {
+  orphans: number;
+  stale: number;
+  schema_violations: number;
+  oversized: number;
+  stubs: number;
+  confidence_decay: number;
+  uncrystallized: number;
+}
+
+export interface PatrolReport {
+  issues: PatrolIssue[];
+  summary: PatrolSummary;
+  checked_at: string;
+}
+
+/** A single source page referenced in a /query answer (§2.2). */
+export interface QuerySource {
+  slug: string;
+  title: string;
+  relevance_score: number;
+  snippet: string;
+}
