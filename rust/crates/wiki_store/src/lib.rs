@@ -2996,7 +2996,7 @@ pub struct SupersessionRecord {
 /// Update the confidence score in a wiki page's frontmatter.
 /// Reads the file, modifies the `confidence:` line, writes back atomically.
 pub fn update_page_confidence(paths: &WikiPaths, slug: &str, new_confidence: f32) -> Result<()> {
-    let (summary, body) = read_wiki_page(paths, slug)?;
+    let (summary, _body) = read_wiki_page(paths, slug)?;
     let page_path = find_page_file(paths, slug, &summary.category);
     let content = std::fs::read_to_string(&page_path)
         .map_err(|e| WikiStoreError::io(page_path.clone(), e))?;
