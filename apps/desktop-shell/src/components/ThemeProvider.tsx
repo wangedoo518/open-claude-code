@@ -71,14 +71,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
-  // S0.4: ClawWikiShell is now the only shell, so the DeepTutor warm
-  // palette is always on and the legacy "warwolf" palette is suppressed
-  // unconditionally. The previous dual-track logic that toggled both
-  // classes against `clawwikiShell` is gone with the flag.
+  // v3: the canonical OkLCH warm-parchment palette lives in `:root` /
+  // `.dark` directly (see globals.css). The legacy `.theme-warwolf` /
+  // `.theme-deeptutor` parallel palette blocks are inactive — we strip
+  // both classes here so v3 tokens take effect. The blocks themselves
+  // are dead code that a follow-up cleanup can remove.
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove("theme-warwolf");
-    root.classList.add("theme-deeptutor");
+    root.classList.remove("theme-deeptutor");
   }, []);
 
   const setThemeMode = (mode: ThemeMode) => {

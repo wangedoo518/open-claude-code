@@ -133,11 +133,11 @@ function ChatSidePanelBody() {
       {/* Tiny header strip with model badge + streaming indicator.
           Kept because AskHeader is hidden via hideHeader prop — users
           still need to see which model is answering. */}
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-3">
-        <span className="text-[12px] font-semibold text-[var(--color-foreground)]">Ask</span>
-        <span className="truncate text-[10px] text-[var(--color-muted-foreground)]">
+      <div className="sticky top-0 z-10 flex h-9 shrink-0 items-center justify-between border-b border-border bg-card px-3">
+        <span className="text-[12px] font-semibold text-foreground">Ask</span>
+        <span className="truncate text-right text-xs text-muted-foreground">
           {realModelLabel ?? "..."}
-          {isTurnActive && <span className="ml-1.5 text-[var(--color-primary)]">思考中...</span>}
+          {isTurnActive && <span className="ml-1.5 text-primary">思考中...</span>}
         </span>
       </div>
 

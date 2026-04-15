@@ -38,6 +38,8 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { getWikiSchema, putWikiSchema } from "@/features/ingest/persist";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 
 export function SchemaEditorPage() {
   const queryClient = useQueryClient();
@@ -96,7 +98,7 @@ export function SchemaEditorPage() {
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <h1
           className="text-foreground"
-          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
+          style={{ fontSize: 18 }}
         >
           Schema Editor
         </h1>
@@ -273,11 +275,11 @@ function SchemaBody({
           ) : null}
         </div>
         {isEditing ? (
-          <textarea
+          <Textarea
             value={draft}
             onChange={(e) => onDraftChange(e.target.value)}
             spellCheck={false}
-            className="block min-h-[400px] w-full resize-y bg-background px-5 py-4 font-mono text-body-sm leading-relaxed text-foreground/90 outline-none"
+            className="block min-h-[400px] w-full resize-y border-0 bg-background px-5 py-4 font-mono text-body-sm leading-relaxed text-foreground/90 shadow-none focus-visible:ring-0"
             style={{
               fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
             }}
@@ -306,38 +308,34 @@ function SchemaBody({
         ) : null}
         {isEditing ? (
           <>
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={onCancel}
               disabled={isSaving}
-              className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground transition-colors hover:bg-muted/40 disabled:opacity-50"
             >
               <X className="size-3" />
               Cancel
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
               onClick={onSave}
               disabled={isSaving || draft.trim().length === 0}
-              className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
             >
               {isSaving ? (
                 <Loader2 className="size-3 animate-spin" />
               ) : (
                 <Save className="size-3" />
               )}
-              Save
-            </button>
+              保存
+            </Button>
           </>
         ) : (
-          <button
-            type="button"
-            onClick={onEdit}
-            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-body-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
+          <Button variant="default" size="sm" onClick={onEdit}>
             <Pencil className="size-3" />
             Edit
-          </button>
+          </Button>
         )}
       </div>
     </div>

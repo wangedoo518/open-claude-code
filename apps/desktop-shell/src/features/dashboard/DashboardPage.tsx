@@ -36,6 +36,7 @@ import { listRawEntries, listInboxEntries, getWikiStats, getAbsorbLog, getPatrol
 // useSettingsStore / useWikiTabStore available for future Quick Action routing.
 import { getBootstrap } from "@/features/settings/api/client";
 import { getBrokerStatus } from "@/features/settings/api/private-cloud";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const dashboardKeys = {
@@ -118,8 +119,8 @@ export function DashboardPage() {
       {/* Hero — 07-dashboard.md §6.1 */}
       <section className="border-b border-border/50 px-8 py-6">
         <h1
-          className="text-foreground"
-          style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-serif, Lora, serif)" }}
+          className="text-3xl font-medium text-foreground"
+          style={{ fontFamily: 'var(--font-family-dt-serif, "Lora", "Songti SC", Georgia, serif)' }}
         >
           你的外脑
         </h1>
@@ -232,7 +233,7 @@ export function DashboardPage() {
             {absorbLogQuery.data.entries.slice(0, 8).map((entry, i) => (
               <div
                 key={`${entry.entry_id}-${i}`}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] hover:bg-foreground/5 transition-colors"
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] hover:bg-accent/50 transition-colors"
               >
                 <span className="text-muted-foreground/60 w-12 shrink-0 text-[11px]">
                   {entry.timestamp.slice(11, 16)}
@@ -327,24 +328,21 @@ export function DashboardPage() {
       {/* Quick Actions — 07-dashboard.md §6.6 */}
       <section className="px-8 pb-6">
         <div className="flex gap-3">
-          <Link
-            to="/inbox"
-            className="flex items-center gap-1.5 rounded-md border border-border/40 px-4 py-2 text-[12px] text-foreground transition-colors hover:border-primary/30"
-          >
-            <InboxIcon className="size-3.5" /> 开始维护
-          </Link>
-          <Link
-            to="/graph"
-            className="flex items-center gap-1.5 rounded-md border border-border/40 px-4 py-2 text-[12px] text-foreground transition-colors hover:border-primary/30"
-          >
-            查看图谱
-          </Link>
-          <Link
-            to="/wiki"
-            className="flex items-center gap-1.5 rounded-md border border-border/40 px-4 py-2 text-[12px] text-foreground transition-colors hover:border-primary/30"
-          >
-            打开 Wiki
-          </Link>
+          <Button variant="outline" size="default" asChild>
+            <Link to="/inbox">
+              <InboxIcon className="size-3.5" /> 开始维护
+            </Link>
+          </Button>
+          <Button variant="outline" size="default" asChild>
+            <Link to="/graph">
+              查看图谱
+            </Link>
+          </Button>
+          <Button variant="outline" size="default" asChild>
+            <Link to="/wiki">
+              打开 Wiki
+            </Link>
+          </Button>
         </div>
       </section>
     </div>
@@ -368,7 +366,7 @@ function StatCard({
 }) {
   const body = (
     <div
-      className="h-full rounded-md border border-border/40 px-4 py-3 transition-colors group-hover:border-border"
+      className="h-full rounded-xl border bg-card p-6 shadow-warm-ring transition-shadow hover:shadow-warm-ring-hover"
       style={{ borderLeft: `3px solid ${tint ?? "var(--color-border)"}` }}
     >
       <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground/60" style={{ fontSize: 11, textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
@@ -455,7 +453,7 @@ function RecentEntries({
         <li key={entry.id}>
           <Link
             to="/raw"
-            className="flex items-center justify-between px-1 py-2.5 transition-colors hover:bg-accent/30"
+            className="flex items-center justify-between px-1 py-2.5 transition-colors hover:bg-accent/50"
           >
             <div className="flex min-w-0 items-baseline gap-3">
               <span className="shrink-0 font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>

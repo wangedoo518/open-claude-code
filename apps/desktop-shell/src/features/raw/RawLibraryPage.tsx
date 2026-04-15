@@ -30,6 +30,8 @@ import { ingestText } from "@/features/ingest/adapters/text";
 import { ingestUrl } from "@/features/ingest/adapters/url";
 import { fetchJson } from "@/lib/desktop/transport";
 import type { RawEntry } from "@/features/ingest/types";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 const rawKeys = {
   list: () => ["wiki", "raw", "list"] as const,
@@ -237,32 +239,26 @@ export function RawLibraryPage() {
               {allEntries.length} 条
             </span>
             {/* Add button */}
-            <button
-              type="button"
+            <Button
+              variant={showAddPanel ? "default" : "outline"}
+              size="sm"
               onClick={() => setShowAddPanel(!showAddPanel)}
-              className={
-                "flex items-center gap-1 rounded-md px-2.5 py-1 text-body-sm font-medium transition-colors " +
-                (showAddPanel
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-primary/10 text-primary hover:bg-primary/20")
-              }
             >
               {showAddPanel ? <X className="size-3.5" /> : <Plus className="size-3.5" />}
               添加
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Search bar */}
         <div className="relative mt-3">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/40" />
-          <input
+          <Input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索素材标题、来源..."
-            className="w-full rounded-md border border-input bg-background py-1.5 pl-8 pr-3 text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring/40"
-            style={{ fontSize: 13 }}
+            className="pl-8 pr-8"
           />
           {searchQuery && (
             <button
@@ -641,7 +637,7 @@ function CardList({
   }
 
   return (
-    <div className="divide-y divide-border/30 px-6">
+    <div className="flex flex-col gap-3 px-6 py-3">
       {entries.map((entry) => (
         <EntryCard
           key={entry.id}
@@ -683,13 +679,13 @@ function EntryCard({
 
   return (
     <div
-      className="group"
+      className="group rounded-xl border bg-card p-4 shadow-warm-ring transition-shadow hover:shadow-warm-ring-hover"
       style={{
-        borderLeft: isExpanded ? "3px solid var(--color-primary)" : "3px solid transparent",
+        borderLeft: isExpanded ? "3px solid var(--color-primary)" : undefined,
       }}
     >
       {/* Card row */}
-      <div className="flex items-center gap-3 py-2.5 pl-3 pr-1">
+      <div className="flex items-center gap-3">
         {/* Checkbox for multi-select */}
         <input
           type="checkbox"
@@ -794,7 +790,7 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
 
   if (detailQuery.isLoading) {
     return (
-      <div className="flex items-center justify-center pb-4 pl-12 text-muted-foreground" style={{ fontSize: 12 }}>
+      <div className="flex items-center justify-center pb-2 pt-3 text-muted-foreground" style={{ fontSize: 12 }}>
         <Loader2 className="mr-2 size-3.5 animate-spin" />
         加载中...
       </div>
@@ -803,7 +799,7 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
   if (detailQuery.error) {
     return (
       <div
-        className="mx-12 mb-3 rounded-md border px-2 py-1.5"
+        className="mt-3 rounded-md border px-2 py-1.5"
         style={{
           fontSize: 12,
           borderColor: "color-mix(in srgb, var(--color-error) 30%, transparent)",
@@ -827,7 +823,7 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
 
   return (
     <>
-      <div className="mb-2 ml-12 mr-4 overflow-hidden rounded-md border border-border/50 bg-background">
+      <div className="mt-3 overflow-hidden rounded-md border border-border/50 bg-background">
         {/* Metadata strip */}
         <div className="flex items-center justify-between border-b border-border/30 px-3 py-1.5">
           <div className="flex items-center gap-3 text-muted-foreground/40" style={{ fontSize: 11 }}>

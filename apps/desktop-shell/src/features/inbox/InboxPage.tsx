@@ -165,7 +165,7 @@ export function InboxPage() {
             onSelect={(id) => setSelectedId(id)}
           />
         </aside>
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
           {selectedEntry ? (
             <EntryDetail key={selectedEntry.id} entry={selectedEntry} />
           ) : (
@@ -193,6 +193,24 @@ function EntryList({
   onSelect: (id: number) => void;
 }) {
   const queryClient = useQueryClient();
+
+  // Sort: pending first, then newest first. Wrapped in useMemo so
+  // we don't re-sort on every render; React Query triggers a fresh
+  // `entries` reference only when the underlying data actually
+  // changes, so `useMemo([entries])` is sufficient.
+  //
+  // MUST be called before any early-return — Rules of Hooks (was a
+  // latent violation that surfaced once the parallel `useSidebar`
+  // dev-warning spam was silenced).
+  const sorted = useMemo(
+    () =>
+      [...entries].sort((a, b) => {
+        if (a.status === "pending" && b.status !== "pending") return -1;
+        if (b.status === "pending" && a.status !== "pending") return 1;
+        return b.id - a.id;
+      }),
+    [entries],
+  );
 
   if (isLoading) {
     return (
@@ -234,20 +252,6 @@ function EntryList({
     );
   }
 
-  // Sort: pending first, then newest first. Wrapped in useMemo so
-  // we don't re-sort on every render; React Query triggers a fresh
-  // `entries` reference only when the underlying data actually
-  // changes, so `useMemo([entries])` is sufficient.
-  const sorted = useMemo(
-    () =>
-      [...entries].sort((a, b) => {
-        if (a.status === "pending" && b.status !== "pending") return -1;
-        if (b.status === "pending" && a.status !== "pending") return 1;
-        return b.id - a.id;
-      }),
-    [entries],
-  );
-
   return (
     <ul className="flex-1 divide-y divide-border/30 overflow-y-auto">
       {sorted.map((entry) => {
@@ -258,8 +262,10 @@ function EntryList({
               type="button"
               onClick={() => onSelect(entry.id)}
               className={
-                "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/30 " +
-                (isActive ? "border-l-[3px] border-l-primary" : "border-l-[3px] border-l-transparent")
+                "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 " +
+                (isActive
+                  ? "bg-accent border-l-[3px] border-primary"
+                  : "border-l-[3px] border-l-transparent")
               }
             >
               <div className="flex items-center justify-between gap-2">

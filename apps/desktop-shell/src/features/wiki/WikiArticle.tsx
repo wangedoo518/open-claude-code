@@ -11,17 +11,10 @@ import type { Components } from "react-markdown";
 import { getWikiPage } from "@/features/ingest/persist";
 import { useWikiTabStore } from "@/state/wiki-tab-store";
 import type { WikiPageSummary } from "@/features/ingest/types";
-
-/* ── Wikilink regex ────────────────────────────────────────────── */
-const WIKILINK_RE = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
-
-/** Replace `[[slug]]` and `[[slug|Label]]` with markdown links. */
-function expandWikilinks(body: string): string {
-  return body.replace(WIKILINK_RE, (_match, slug: string, label?: string) => {
-    const display = label || slug;
-    return `[${display}](wiki://${slug})`;
-  });
-}
+import {
+  preprocessWikilinks,
+  useWikiLinkRenderer,
+} from "./wiki-link-utils";
 
 /* ── Reading time ──────────────────────────────────────────────── */
 function estimateReadingTime(body: string): string {
@@ -93,8 +86,15 @@ function BacklinksSection({ slug }: { slug: string }) {
 }
 
 /* ── Markdown custom components ────────────────────────────────── */
+/**
+ * Article-page Markdown renderer. The `<a>` handler is shared with
+ * the chat-side /query renderer via `useWikiLinkRenderer` — see
+ * `wiki-link-utils.tsx` for why and how internal wiki refs are
+ * intercepted (short version: raw relative `.md` paths were falling
+ * through React Router to `/dashboard`).
+ */
 function useMarkdownComponents(): Components {
-  const openTab = useWikiTabStore((s) => s.openTab);
+  const Anchor = useWikiLinkRenderer();
 
   return useMemo(
     (): Components => ({
@@ -145,40 +145,9 @@ function useMarkdownComponents(): Components {
           </code>
         );
       },
-      a: ({ href, children }) => {
-        // Handle wikilinks (wiki:// protocol).
-        if (href?.startsWith("wiki://")) {
-          const slug = href.replace("wiki://", "");
-          return (
-            <button
-              onClick={() =>
-                openTab({
-                  id: slug,
-                  kind: "article",
-                  slug,
-                  title: String(children),
-                  closable: true,
-                })
-              }
-              className="cursor-pointer text-[var(--color-primary)] underline decoration-dotted underline-offset-[3px] hover:decoration-solid"
-            >
-              {children}
-            </button>
-          );
-        }
-        return (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[var(--color-primary)] underline underline-offset-2"
-          >
-            {children}
-          </a>
-        );
-      },
+      a: Anchor,
     }),
-    [openTab],
+    [Anchor],
   );
 }
 
@@ -216,20 +185,20 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   const category = (summary as WikiPageSummary & { category?: string }).category ?? "concept";
   const categoryStyle = CATEGORY_STYLES[category] ?? CATEGORY_STYLES.concept;
   const readingTime = estimateReadingTime(body);
-  const expandedBody = expandWikilinks(body);
+  const expandedBody = preprocessWikilinks(body);
 
   return (
     <div className="mx-auto max-w-[720px] px-8 py-6">
       {/* Title — component-spec.md §3.2 */}
       <h1
-        className="mb-2 text-[24px] font-semibold leading-[1.3] text-[var(--color-foreground)]"
+        className="mb-2 text-[24px] leading-[1.3] text-[var(--color-foreground)]"
         style={{ fontFamily: 'var(--font-family-dt-serif, "Lora", serif)' }}
       >
         {summary.title}
       </h1>
 
       {/* Metadata row — component-spec.md §3.3 */}
-      <div className="mb-6 flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
+      <div className="mb-6 flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className={`rounded px-2 py-0.5 text-[10px] font-medium ${categoryStyle}`}>
           {category}
         </span>
@@ -247,7 +216,7 @@ export function WikiArticle({ slug }: WikiArticleProps) {
       )}
 
       {/* Markdown body — component-spec.md §3.4 */}
-      <div className="wiki-article-body">
+      <div className="wiki-article-body markdown-content">
         <ReactMarkdown components={components}>{expandedBody}</ReactMarkdown>
       </div>
 

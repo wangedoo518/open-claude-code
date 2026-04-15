@@ -26,7 +26,7 @@ function SpecialFilePage({ kind }: { kind: "index" | "log" }) {
 
   if (isLoading) {
     return (
-      <div className="flex h-64 items-center justify-center text-[var(--color-muted-foreground)]">
+      <div className="flex h-64 items-center justify-center text-muted-foreground">
         Loading...
       </div>
     );
@@ -35,12 +35,12 @@ function SpecialFilePage({ kind }: { kind: "index" | "log" }) {
   return (
     <div className="mx-auto max-w-[720px] px-8 py-6">
       <h1
-        className="mb-4 text-[24px] font-semibold leading-[1.3] text-[var(--color-foreground)]"
+        className="mb-4 text-[24px] leading-[1.3] text-foreground"
         style={{ fontFamily: 'var(--font-family-dt-serif, "Lora", serif)' }}
       >
         {kind === "index" ? "Wiki" : "Changelog"}
       </h1>
-      <pre className="whitespace-pre-wrap text-[14px] leading-[1.6] text-[var(--color-foreground)]">
+      <pre className="whitespace-pre-wrap text-[14px] leading-[1.6] text-foreground">
         {data?.content ?? "No content yet."}
       </pre>
     </div>
@@ -65,7 +65,7 @@ function EmbeddedGraph() {
 
   if (graphQuery.isLoading) {
     return (
-      <div className="flex h-full items-center justify-center text-[var(--color-muted-foreground)]">
+      <div className="flex h-full items-center justify-center text-muted-foreground">
         Loading graph...
       </div>
     );
@@ -94,7 +94,7 @@ function WikiContent() {
 
   if (!activeTab) {
     return (
-      <div className="flex h-full items-center justify-center text-[var(--color-muted-foreground)]">
+      <div className="flex h-full items-center justify-center text-muted-foreground">
         Select a page from the file tree
       </div>
     );
@@ -109,7 +109,7 @@ function WikiContent() {
       return <EmbeddedGraph />;
     case "raw":
       return (
-        <div className="flex h-full items-center justify-center text-[var(--color-muted-foreground)]">
+        <div className="flex h-full items-center justify-center text-muted-foreground">
           Raw entry viewer (navigate to /raw)
         </div>
       );

@@ -42,6 +42,7 @@ import {
   FileSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { sanitizeFilename } from "@/lib/security";
 import { useSettingsStore } from "@/state/settings-store";
 import { useStreamingStore } from "@/state/streaming-store";
@@ -790,10 +791,12 @@ export function Composer({
         <div className="flex items-center justify-between px-3 pb-2.5">
           <div className="flex items-center gap-1">
             {/* Attach */}
-            <button
+            <Button
               type="button"
+              size="icon-sm"
+              variant="ghost"
               className={cn(
-                "flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+                "text-muted-foreground hover:text-foreground",
                 isUploading && "opacity-50",
               )}
               onClick={() => fileInputRef.current?.click()}
@@ -801,17 +804,19 @@ export function Composer({
               aria-label="附件"
             >
               <Paperclip className="size-3.5" />
-            </button>
+            </Button>
 
             {/* Slash commands */}
-            <button
+            <Button
               type="button"
-              className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              size="icon-sm"
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground"
               onClick={() => { setValue("/"); textareaRef.current?.focus(); }}
               aria-label="命令"
             >
               <ChevronDown className="size-3.5 rotate-[-90deg]" />
-            </button>
+            </Button>
 
             {/* Separator + model label (selector is in bottom bar) */}
             <div className="mx-1 h-4 w-px bg-border" />
@@ -822,19 +827,23 @@ export function Composer({
 
           {/* Send / Stop button */}
           {isBusy ? (
-            <button
-              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive text-white transition-transform duration-150 active:scale-95"
+            <Button
+              size="icon-sm"
+              variant="destructive"
+              className="rounded-full transition-transform duration-150 active:scale-95"
               onClick={handleStop}
               aria-label="停止"
             >
               <Square className="size-3.5" />
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
+              size="icon-sm"
+              variant="default"
               className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
+                "rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
                 value.trim() || attachments.length > 0
-                  ? "bg-primary shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
+                  ? "shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
                   : "bg-primary/40 pointer-events-none",
               )}
               onClick={() => void handleSend()}
@@ -842,7 +851,7 @@ export function Composer({
               aria-label="发送"
             >
               <ArrowUp className="size-4" />
-            </button>
+            </Button>
           )}
         </div>
       </div>
