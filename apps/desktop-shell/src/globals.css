@@ -14,73 +14,219 @@
   --font-size-subhead: 14px;   /* text-subhead — section headings */
   --font-size-head: 15px;      /* text-head   — page titles */
 
-  --color-background: oklch(1 0 0);
-  --color-foreground: oklch(0.145 0 0);
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.145 0 0);
-  --color-popover: oklch(1 0 0);
-  --color-popover-foreground: oklch(0.145 0 0);
-  --color-primary: oklch(0.205 0 0);
-  --color-primary-foreground: oklch(0.985 0 0);
-  --color-secondary: oklch(0.97 0 0);
-  --color-secondary-foreground: oklch(0.205 0 0);
-  --color-muted: oklch(0.97 0 0);
-  --color-muted-foreground: oklch(0.556 0 0);
-  --color-accent: oklch(0.97 0 0);
-  --color-accent-foreground: oklch(0.205 0 0);
-  --color-destructive: oklch(0.577 0.245 27.325);
-  --color-destructive-foreground: oklch(0.985 0 0);
-  --color-border: oklch(0.922 0 0);
-  --color-input: oklch(0.922 0 0);
-  --color-ring: oklch(0.708 0 0);
-  --color-sidebar-background: oklch(0.985 0 0);
-  --color-sidebar-foreground: oklch(0.556 0 0);
-  --color-sidebar-primary: oklch(0.205 0 0);
-  --color-sidebar-primary-foreground: oklch(0.985 0 0);
-  --color-sidebar-accent: oklch(0.97 0 0);
-  --color-sidebar-accent-foreground: oklch(0.205 0 0);
-  --color-sidebar-border: oklch(0.922 0 0);
-  --color-sidebar-ring: oklch(0.708 0 0);
+  /* ── ClawWiki v3 warm palette (OkLCH, Round-1) ──────────────────
+   * Default = light mode. Parchment bg, Ivory cards (never pure white).
+   * Terracotta primary CTA. Focus Blue is the ONLY cool color, used
+   * exclusively on --color-ring for input focus.
+   * See MEMORY: project_clawwiki_context.md for token roles.         */
+  --color-background: oklch(0.9660 0.0093 100.0);           /* Parchment #f5f4ed */
+  --color-foreground: oklch(0.4161 0.0067 95.2);            /* Charcoal Warm #4d4c48 */
+  --color-card: oklch(0.9818 0.0054 95.1);                  /* Ivory #faf9f5 */
+  --color-card-foreground: oklch(0.4161 0.0067 95.2);
+  --color-popover: oklch(0.9818 0.0054 95.1);               /* Ivory (NOT white) */
+  --color-popover-foreground: oklch(0.4161 0.0067 95.2);
+  --color-primary: oklch(0.6171 0.1375 39.0);               /* Terracotta #c96442 */
+  --color-primary-foreground: oklch(0.9818 0.0054 95.1);    /* Ivory on CTA */
+  --color-secondary: oklch(0.9237 0.0135 97.5);             /* Warm Sand #e8e6dc */
+  --color-secondary-foreground: oklch(0.4161 0.0067 95.2);
+  --color-muted: oklch(0.9237 0.0135 97.5);
+  --color-muted-foreground: oklch(0.4780 0.0064 95.2);      /* Olive Gray #5e5d59 */
+  --color-accent: oklch(0.9237 0.0135 97.5);
+  --color-accent-foreground: oklch(0.4161 0.0067 95.2);
+  --color-destructive: oklch(0.5191 0.1669 25.1);           /* Crimson #b53333 */
+  --color-destructive-foreground: oklch(0.9818 0.0054 95.1);
+  --color-border: oklch(0.9485 0.0109 95.2);                /* Border Cream #f0eee6 */
+  --color-input: oklch(0.9237 0.0135 97.5);                 /* Border Warm #e8e6dc */
+  --color-ring: oklch(0.6634 0.1531 248.9);                 /* Focus Blue (cool, only here) */
+
+  /* Chart palette — warm-dominant, Terracotta/Coral/amber/olive/sienna */
+  --color-chart-1: oklch(0.6171 0.1375 39.0);               /* Terracotta */
+  --color-chart-2: oklch(0.6724 0.1308 38.8);               /* Coral */
+  --color-chart-3: oklch(0.7000 0.1200 70.0);               /* warm amber */
+  --color-chart-4: oklch(0.5500 0.0800 110.0);              /* olive */
+  --color-chart-5: oklch(0.4500 0.1000 50.0);               /* sienna */
+
+  /* Sidebar — Ivory chrome, same Terracotta accent, warm borders */
+  --color-sidebar: oklch(0.9818 0.0054 95.1);               /* Ivory */
+  --color-sidebar-background: oklch(0.9818 0.0054 95.1);    /* legacy alias, same value */
+  --color-sidebar-foreground: oklch(0.4161 0.0067 95.2);
+  --color-sidebar-primary: oklch(0.6171 0.1375 39.0);       /* Terracotta */
+  --color-sidebar-primary-foreground: oklch(0.9818 0.0054 95.1);
+  --color-sidebar-accent: oklch(0.9237 0.0135 97.5);        /* Warm Sand */
+  --color-sidebar-accent-foreground: oklch(0.4161 0.0067 95.2);
+  --color-sidebar-border: oklch(0.9485 0.0109 95.2);
+  --color-sidebar-ring: oklch(0.6634 0.1531 248.9);
+
+  /* Radius scale — Rowboat 7-tier convention */
   --radius: 0.625rem;
-  --color-terminal-bg: oklch(0.985 0 0);
-  --color-terminal-user: oklch(0.37 0.14 270);
-  --color-terminal-tool: oklch(0.55 0.12 155);
-  --color-terminal-error: oklch(0.577 0.245 27.325);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Terminal tokens — keep prior roles, shift to warm-friendly OkLCH */
+  --color-terminal-bg: oklch(0.9818 0.0054 95.1);           /* Ivory */
+  --color-terminal-user: oklch(0.6634 0.1531 248.9);        /* Focus Blue */
+  --color-terminal-tool: oklch(0.6 0.08 60);                /* warm amber (Claude palette) */
+  --color-terminal-error: oklch(0.5191 0.1669 25.1);        /* Crimson */
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ClawWiki v3 — shadcn shorthand + warm-ring shadow tokens
+   Exposes the same palette via the canonical shadcn names
+   (--background, --card, --primary, --chart-1, --sidebar, --ring...)
+   so components using either naming convention keep working.
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* Text — shorthand palette */
+  --background: oklch(0.9660 0.0093 100.0);
+  --foreground: oklch(0.4161 0.0067 95.2);
+  --card: oklch(0.9818 0.0054 95.1);
+  --card-foreground: oklch(0.4161 0.0067 95.2);
+  --popover: oklch(0.9818 0.0054 95.1);
+  --popover-foreground: oklch(0.4161 0.0067 95.2);
+  --primary: oklch(0.6171 0.1375 39.0);
+  --primary-foreground: oklch(0.9818 0.0054 95.1);
+  --secondary: oklch(0.9237 0.0135 97.5);
+  --secondary-foreground: oklch(0.4161 0.0067 95.2);
+  --muted: oklch(0.9237 0.0135 97.5);
+  --muted-foreground: oklch(0.4780 0.0064 95.2);
+  --accent: oklch(0.9237 0.0135 97.5);
+  --accent-foreground: oklch(0.4161 0.0067 95.2);
+  --destructive: oklch(0.5191 0.1669 25.1);
+  --destructive-foreground: oklch(0.9818 0.0054 95.1);
+  --border: oklch(0.9485 0.0109 95.2);
+  --input: oklch(0.9237 0.0135 97.5);
+  --ring: oklch(0.6634 0.1531 248.9);
+
+  --chart-1: oklch(0.6171 0.1375 39.0);
+  --chart-2: oklch(0.6724 0.1308 38.8);
+  --chart-3: oklch(0.7000 0.1200 70.0);
+  --chart-4: oklch(0.5500 0.0800 110.0);
+  --chart-5: oklch(0.4500 0.1000 50.0);
+
+  --sidebar: oklch(0.9818 0.0054 95.1);
+  --sidebar-foreground: oklch(0.4161 0.0067 95.2);
+  --sidebar-primary: oklch(0.6171 0.1375 39.0);
+  --sidebar-primary-foreground: oklch(0.9818 0.0054 95.1);
+  --sidebar-accent: oklch(0.9237 0.0135 97.5);
+  --sidebar-accent-foreground: oklch(0.4161 0.0067 95.2);
+  --sidebar-border: oklch(0.9485 0.0109 95.2);
+  --sidebar-ring: oklch(0.6634 0.1531 248.9);
+
+  /* Tertiary text and emphasized link color (not in shadcn core) */
+  --stone-gray: oklch(0.6188 0.0104 100.1);                 /* #87867f */
+  --dark-warm: oklch(0.3590 0.0051 106.6);                  /* #3d3d3a */
+  --coral: oklch(0.6724 0.1308 38.8);                       /* #d97757 */
+
+  /* Warm-ring shadow tokens (1px warm border, whisper elevation) */
+  --shadow-warm-ring:        0 0 0 1px oklch(0.8533 0.0138 97.5);
+  --shadow-warm-ring-hover:  0 0 0 1px oklch(0.8066 0.0140 97.5);
+  --shadow-whisper:          0 4px 24px oklch(0 0 0 / 0.05);
+}
+
+@theme inline {
+  /* Expose radius + shadcn names to Tailwind utility generation */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
 }
 
 @layer base {
   .dark {
-    --color-background: oklch(0.145 0 0);
-    --color-foreground: oklch(0.985 0 0);
-    --color-card: oklch(0.145 0 0);
-    --color-card-foreground: oklch(0.985 0 0);
-    --color-popover: oklch(0.145 0 0);
-    --color-popover-foreground: oklch(0.985 0 0);
-    --color-primary: oklch(0.985 0 0);
-    --color-primary-foreground: oklch(0.205 0 0);
-    --color-secondary: oklch(0.269 0 0);
-    --color-secondary-foreground: oklch(0.985 0 0);
-    --color-muted: oklch(0.269 0 0);
-    --color-muted-foreground: oklch(0.708 0 0);
-    --color-accent: oklch(0.269 0 0);
-    --color-accent-foreground: oklch(0.985 0 0);
-    --color-destructive: oklch(0.704 0.191 22.216);
-    --color-destructive-foreground: oklch(0.985 0 0);
-    --color-border: oklch(0.269 0 0);
-    --color-input: oklch(0.269 0 0);
-    --color-ring: oklch(0.556 0 0);
-    --color-sidebar-background: oklch(0.175 0 0);
-    --color-sidebar-foreground: oklch(0.708 0 0);
-    --color-sidebar-primary: oklch(0.488 0.243 264.376);
-    --color-sidebar-primary-foreground: oklch(0.985 0 0);
-    --color-sidebar-accent: oklch(0.269 0 0);
-    --color-sidebar-accent-foreground: oklch(0.985 0 0);
-    --color-sidebar-border: oklch(0.269 0 0);
-    --color-sidebar-ring: oklch(0.556 0 0);
-    --color-terminal-bg: oklch(0.175 0 0);
-    --color-terminal-user: oklch(0.65 0.18 270);
-    --color-terminal-tool: oklch(0.7 0.15 155);
-    --color-terminal-error: oklch(0.704 0.191 22.216);
+    /* ── ClawWiki v3 dark palette (OkLCH) ──────────────────────────
+     * Near-Black page bg, Dark Surface cards, Warm Silver text.
+     * Terracotta primary stays the same for brand continuity; rings
+     * shift to slightly lighter values for visibility on dark.      */
+    --color-background: oklch(0.1908 0.0020 106.6);           /* Near Black #141413 */
+    --color-foreground: oklch(0.7499 0.0129 96.5);            /* Warm Silver #b0aea5 */
+    --color-card: oklch(0.3085 0.0035 106.6);                 /* Dark Surface #30302e */
+    --color-card-foreground: oklch(0.7499 0.0129 96.5);
+    --color-popover: oklch(0.3085 0.0035 106.6);
+    --color-popover-foreground: oklch(0.7499 0.0129 96.5);
+    --color-primary: oklch(0.6171 0.1375 39.0);               /* Terracotta (same) */
+    --color-primary-foreground: oklch(0.9818 0.0054 95.1);    /* Ivory */
+    --color-secondary: oklch(0.3590 0.0051 106.6);            /* Dark Warm #3d3d3a */
+    --color-secondary-foreground: oklch(0.7499 0.0129 96.5);
+    --color-muted: oklch(0.3085 0.0035 106.6);
+    --color-muted-foreground: oklch(0.6188 0.0104 100.1);     /* Stone Gray #87867f */
+    --color-accent: oklch(0.3590 0.0051 106.6);
+    --color-accent-foreground: oklch(0.7499 0.0129 96.5);
+    --color-destructive: oklch(0.5800 0.1669 25.1);           /* brighter Crimson for dark */
+    --color-destructive-foreground: oklch(0.9818 0.0054 95.1);
+    --color-border: oklch(0.3085 0.0035 106.6);               /* gentle depth */
+    --color-input: oklch(0.3590 0.0051 106.6);
+    --color-ring: oklch(0.6634 0.1531 248.9);                 /* Focus Blue */
+
+    --color-chart-1: oklch(0.6724 0.1308 38.8);               /* Coral (lighter) */
+    --color-chart-2: oklch(0.7000 0.1200 70.0);
+    --color-chart-3: oklch(0.7499 0.0129 96.5);
+    --color-chart-4: oklch(0.6188 0.0104 100.1);
+    --color-chart-5: oklch(0.5500 0.1300 30.0);
+
+    --color-sidebar: oklch(0.3085 0.0035 106.6);              /* Dark Surface */
+    --color-sidebar-background: oklch(0.3085 0.0035 106.6);   /* legacy alias */
+    --color-sidebar-foreground: oklch(0.7499 0.0129 96.5);
+    --color-sidebar-primary: oklch(0.6171 0.1375 39.0);
+    --color-sidebar-primary-foreground: oklch(0.9818 0.0054 95.1);
+    --color-sidebar-accent: oklch(0.3590 0.0051 106.6);
+    --color-sidebar-accent-foreground: oklch(0.7499 0.0129 96.5);
+    --color-sidebar-border: oklch(0.3085 0.0035 106.6);
+    --color-sidebar-ring: oklch(0.6634 0.1531 248.9);
+
+    /* Terminal overrides (dark) */
+    --color-terminal-bg: oklch(0.3085 0.0035 106.6);
+    --color-terminal-user: oklch(0.6634 0.1531 248.9);
+    --color-terminal-tool: oklch(0.6 0.08 60);
+    --color-terminal-error: oklch(0.5800 0.1669 25.1);
+
+    /* shadcn shorthand aliases for dark */
+    --background: oklch(0.1908 0.0020 106.6);
+    --foreground: oklch(0.7499 0.0129 96.5);
+    --card: oklch(0.3085 0.0035 106.6);
+    --card-foreground: oklch(0.7499 0.0129 96.5);
+    --popover: oklch(0.3085 0.0035 106.6);
+    --popover-foreground: oklch(0.7499 0.0129 96.5);
+    --primary: oklch(0.6171 0.1375 39.0);
+    --primary-foreground: oklch(0.9818 0.0054 95.1);
+    --secondary: oklch(0.3590 0.0051 106.6);
+    --secondary-foreground: oklch(0.7499 0.0129 96.5);
+    --muted: oklch(0.3085 0.0035 106.6);
+    --muted-foreground: oklch(0.6188 0.0104 100.1);
+    --accent: oklch(0.3590 0.0051 106.6);
+    --accent-foreground: oklch(0.7499 0.0129 96.5);
+    --destructive: oklch(0.5800 0.1669 25.1);
+    --destructive-foreground: oklch(0.9818 0.0054 95.1);
+    --border: oklch(0.3085 0.0035 106.6);
+    --input: oklch(0.3590 0.0051 106.6);
+    --ring: oklch(0.6634 0.1531 248.9);
+
+    --chart-1: oklch(0.6724 0.1308 38.8);
+    --chart-2: oklch(0.7000 0.1200 70.0);
+    --chart-3: oklch(0.7499 0.0129 96.5);
+    --chart-4: oklch(0.6188 0.0104 100.1);
+    --chart-5: oklch(0.5500 0.1300 30.0);
+
+    --sidebar: oklch(0.3085 0.0035 106.6);
+    --sidebar-foreground: oklch(0.7499 0.0129 96.5);
+    --sidebar-primary: oklch(0.6171 0.1375 39.0);
+    --sidebar-primary-foreground: oklch(0.9818 0.0054 95.1);
+    --sidebar-accent: oklch(0.3590 0.0051 106.6);
+    --sidebar-accent-foreground: oklch(0.7499 0.0129 96.5);
+    --sidebar-border: oklch(0.3085 0.0035 106.6);
+    --sidebar-ring: oklch(0.6634 0.1531 248.9);
+
+    /* Warm-ring shadow tokens (dark: rings step darker, whisper deeper) */
+    --shadow-warm-ring:        0 0 0 1px oklch(0.3590 0.0051 106.6);
+    --shadow-warm-ring-hover:  0 0 0 1px oklch(0.4161 0.0067 95.2);
+    --shadow-whisper:          0 4px 24px oklch(0 0 0 / 0.20);
   }
 }
 
@@ -88,12 +234,33 @@
   * {
     @apply border-border;
   }
+
+  /* Global focus-visible ring — 3px Focus Blue at 50% opacity. Phase-1
+     defined the --ring token; Phase-2 makes it visible on every focusable
+     element. Tab navigation finally shows where the cursor is. */
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+  }
+
+  /* Anthropic-Serif spirit — Lora at weight 500 for ALL h1–h6 across
+     the app (was previously only WikiArticle). Headings are tight
+     (1.30) so the serif letterforms breathe but stay editorial. */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-family-dt-serif, "Lora", "Songti SC", Georgia, serif);
+    font-weight: 500;
+    line-height: 1.30;
+    color: var(--foreground);
+  }
+
+  /* Body — relaxed line-height for editorial reading. Preserves Tauri
+     desktop-chrome constraints (overflow + user-select). */
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font-family-dt-sans, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.60;
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
@@ -107,421 +274,156 @@
       "Consolas", "Liberation Mono", monospace;
   }
 
-  /* Selection color */
+  /* Webkit scrollbar — 8px, warm gray tones. Light + dark variants. */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: oklch(0.94 0.013 97 / 0.5);
+  }
+  .dark ::-webkit-scrollbar-track {
+    background: oklch(0.30 0.004 107 / 0.5);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.7 0.01 95);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.62 0.012 95);
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: oklch(0.50 0.008 95);
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.62 0.01 95);
+  }
+
+  /* Selection — Terracotta tint at 30% alpha. */
   ::selection {
-    background: var(--color-selection-bg, rgba(180, 213, 255, 0.4));
+    background-color: color-mix(in srgb, var(--primary) 30%, transparent);
+    color: var(--foreground);
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Warwolf Theme — Claude Code Design Tokens (v2.1.88)
-   Dual-track: add class="theme-warwolf" to <html> to activate.
-   Original shadcn theme is fully preserved above.
+   .markdown-content — universal markdown styling
+   For query answers, wiki pages, anywhere ReactMarkdown lands.
    ═══════════════════════════════════════════════════════════════ */
-
-@layer base {
-  .theme-warwolf {
-    /* ── Layout (shadcn overrides) ── */
-    --color-background: rgb(250, 250, 250);
-    --color-foreground: rgb(10, 10, 10);
-    --color-card: rgb(255, 255, 255);
-    --color-card-foreground: rgb(10, 10, 10);
-    --color-popover: rgb(255, 255, 255);
-    --color-popover-foreground: rgb(10, 10, 10);
-    --color-primary: rgb(215, 119, 87);
-    --color-primary-foreground: rgb(255, 255, 255);
-    --color-secondary: rgb(245, 245, 245);
-    --color-secondary-foreground: rgb(10, 10, 10);
-    --color-muted: rgb(245, 245, 245);
-    --color-muted-foreground: rgb(102, 102, 102);
-    --color-accent: rgb(240, 240, 240);
-    --color-accent-foreground: rgb(10, 10, 10);
-    --color-destructive: rgb(171, 43, 63);
-    --color-destructive-foreground: rgb(255, 255, 255);
-    --color-border: rgb(229, 229, 229);
-    --color-input: rgb(229, 229, 229);
-    --color-ring: rgb(215, 119, 87);
-
-    /* ── Sidebar ── */
-    --color-sidebar-background: rgb(245, 245, 245);
-    --color-sidebar-foreground: rgb(102, 102, 102);
-    --color-sidebar-primary: rgb(215, 119, 87);
-    --color-sidebar-primary-foreground: rgb(255, 255, 255);
-    --color-sidebar-accent: rgb(240, 240, 240);
-    --color-sidebar-accent-foreground: rgb(10, 10, 10);
-    --color-sidebar-border: rgb(229, 229, 229);
-    --color-sidebar-ring: rgb(215, 119, 87);
-
-    /* ── Brand ── */
-    --claude-orange: rgb(215, 119, 87);
-    --claude-orange-shimmer: rgb(245, 149, 117);
-    --claude-blue: rgb(87, 105, 247);
-    --claude-blue-shimmer: rgb(137, 155, 255);
-
-    /* ── Semantic feedback ── */
-    --color-success: rgb(44, 122, 57);
-    --color-error: rgb(171, 43, 63);
-    --color-warning: rgb(150, 108, 30);
-
-    /* ── Text ── */
-    --color-text-primary: rgb(0, 0, 0);
-    --color-text-inverse: rgb(255, 255, 255);
-    --color-text-inactive: rgb(102, 102, 102);
-    --color-text-subtle: rgb(175, 175, 175);
-
-    /* ── Message backgrounds ── */
-    --color-msg-user-bg: rgb(240, 240, 240);
-    --color-msg-user-bg-hover: rgb(252, 252, 252);
-    --color-msg-assistant-bg: rgb(250, 250, 250);
-    --color-msg-actions-bg: rgb(232, 236, 244);
-    --color-msg-bash-bg: rgb(250, 245, 250);
-    --color-msg-memory-bg: rgb(230, 245, 250);
-
-    /* ── Selection ── */
-    --color-selection-bg: rgb(180, 213, 255);
-
-    /* ── Borders ── */
-    --color-border-prompt: rgb(153, 153, 153);
-    --color-border-bash: rgb(255, 0, 135);
-
-    /* ── Diff ── */
-    --color-diff-added: rgb(105, 219, 124);
-    --color-diff-removed: rgb(255, 168, 180);
-    --color-diff-added-word: rgb(47, 157, 68);
-    --color-diff-removed-word: rgb(209, 69, 75);
-
-    /* ── Labels ── */
-    --color-label-you: rgb(37, 99, 235);
-    --color-label-claude: rgb(215, 119, 87);
-
-    /* ── Fast mode ── */
-    --color-fast-mode: rgb(255, 106, 0);
-
-    /* ── Permission ── */
-    --color-permission: rgb(87, 105, 247);
-    --color-suggestion: rgb(87, 105, 247);
-
-    /* ── Terminal (override) ── */
-    --color-terminal-bg: rgb(250, 250, 250);
-    --color-terminal-user: rgb(37, 99, 235);
-    --color-terminal-tool: rgb(44, 122, 57);
-    --color-terminal-error: rgb(171, 43, 63);
-
-    /* ── Agent palette (mode-independent) ── */
-    --agent-red: rgb(220, 38, 38);
-    --agent-blue: rgb(37, 99, 235);
-    --agent-green: rgb(22, 163, 74);
-    --agent-yellow: rgb(202, 138, 4);
-    --agent-purple: rgb(147, 51, 234);
-    --agent-orange: rgb(234, 88, 12);
-    --agent-pink: rgb(219, 39, 119);
-    --agent-cyan: rgb(8, 145, 178);
-  }
-
-  .theme-warwolf.dark {
-    /* ── Layout (shadcn overrides) ── */
-    --color-background: rgb(25, 25, 25);
-    --color-foreground: rgb(229, 229, 229);
-    --color-card: rgb(30, 30, 30);
-    --color-card-foreground: rgb(229, 229, 229);
-    --color-popover: rgb(30, 30, 30);
-    --color-popover-foreground: rgb(229, 229, 229);
-    --color-primary: rgb(215, 119, 87);
-    --color-primary-foreground: rgb(255, 255, 255);
-    --color-secondary: rgb(45, 45, 45);
-    --color-secondary-foreground: rgb(229, 229, 229);
-    --color-muted: rgb(45, 45, 45);
-    --color-muted-foreground: rgb(153, 153, 153);
-    --color-accent: rgb(55, 55, 55);
-    --color-accent-foreground: rgb(229, 229, 229);
-    --color-destructive: rgb(255, 107, 128);
-    --color-destructive-foreground: rgb(255, 255, 255);
-    --color-border: rgb(64, 64, 64);
-    --color-input: rgb(64, 64, 64);
-    --color-ring: rgb(215, 119, 87);
-
-    /* ── Sidebar ── */
-    --color-sidebar-background: rgb(30, 30, 30);
-    --color-sidebar-foreground: rgb(153, 153, 153);
-    --color-sidebar-primary: rgb(215, 119, 87);
-    --color-sidebar-primary-foreground: rgb(255, 255, 255);
-    --color-sidebar-accent: rgb(55, 55, 55);
-    --color-sidebar-accent-foreground: rgb(229, 229, 229);
-    --color-sidebar-border: rgb(64, 64, 64);
-    --color-sidebar-ring: rgb(215, 119, 87);
-
-    /* ── Brand ── */
-    --claude-orange: rgb(215, 119, 87);
-    --claude-orange-shimmer: rgb(235, 159, 127);
-    --claude-blue: rgb(177, 185, 249);
-    --claude-blue-shimmer: rgb(207, 215, 255);
-
-    /* ── Semantic feedback ── */
-    --color-success: rgb(78, 186, 101);
-    --color-error: rgb(255, 107, 128);
-    --color-warning: rgb(255, 193, 7);
-
-    /* ── Text ── */
-    --color-text-primary: rgb(255, 255, 255);
-    --color-text-inverse: rgb(0, 0, 0);
-    --color-text-inactive: rgb(153, 153, 153);
-    --color-text-subtle: rgb(80, 80, 80);
-
-    /* ── Message backgrounds ── */
-    --color-msg-user-bg: rgb(55, 55, 55);
-    --color-msg-user-bg-hover: rgb(70, 70, 70);
-    --color-msg-assistant-bg: rgb(35, 35, 35);
-    --color-msg-actions-bg: rgb(44, 50, 62);
-    --color-msg-bash-bg: rgb(65, 60, 65);
-    --color-msg-memory-bg: rgb(55, 65, 70);
-
-    /* ── Selection ── */
-    --color-selection-bg: rgb(38, 79, 120);
-
-    /* ── Borders ── */
-    --color-border-prompt: rgb(136, 136, 136);
-    --color-border-bash: rgb(253, 93, 177);
-
-    /* ── Diff ── */
-    --color-diff-added: rgb(34, 92, 43);
-    --color-diff-removed: rgb(122, 41, 54);
-    --color-diff-added-word: rgb(56, 166, 96);
-    --color-diff-removed-word: rgb(179, 89, 107);
-
-    /* ── Labels ── */
-    --color-label-you: rgb(122, 180, 232);
-    --color-label-claude: rgb(215, 119, 87);
-
-    /* ── Fast mode ── */
-    --color-fast-mode: rgb(255, 120, 20);
-
-    /* ── Permission ── */
-    --color-permission: rgb(177, 185, 249);
-    --color-suggestion: rgb(177, 185, 249);
-
-    /* ── Terminal (override) ── */
-    --color-terminal-bg: rgb(25, 25, 25);
-    --color-terminal-user: rgb(122, 180, 232);
-    --color-terminal-tool: rgb(78, 186, 101);
-    --color-terminal-error: rgb(255, 107, 128);
-  }
+.markdown-content {
+  font-size: 15px;
+  line-height: 1.70;
+  color: var(--foreground);
 }
-
-/* ═══════════════════════════════════════════════════════════════
-   DeepTutor Warm Theme — ClawWiki canonical S0.2
-   Dual-track: add class="theme-deeptutor" to <html> to activate.
-   Light-first warm palette (#FAF9F6 paper + #C35A2C 烧陶橙 + Lora).
-   Coexists with shadcn and theme-warwolf; selected by the settings
-   flag `clawwikiShell` which drives ThemeProvider to toggle the class.
-
-   Palette sourced from the approved DeepTutor warm-theme reference so
-   the running shell matches the intended visual direction closely.
-   ═══════════════════════════════════════════════════════════════ */
-
-@layer base {
-  .theme-deeptutor {
-    /* ── Layout (shadcn variable names mapped to DeepTutor palette) ── */
-    --color-background: rgb(250, 249, 246);          /* #FAF9F6 paper */
-    --color-foreground: rgb(45, 43, 40);             /* #2D2B28 charcoal */
-    --color-card: rgb(255, 255, 255);
-    --color-card-foreground: rgb(45, 43, 40);
-    --color-popover: rgb(255, 255, 255);
-    --color-popover-foreground: rgb(45, 43, 40);
-    --color-primary: rgb(195, 90, 44);               /* #C35A2C 烧陶橙 */
-    --color-primary-foreground: rgb(255, 255, 255);
-    --color-secondary: rgb(240, 237, 231);           /* #F0EDE7 */
-    --color-secondary-foreground: rgb(45, 43, 40);
-    --color-muted: rgb(240, 237, 231);
-    --color-muted-foreground: rgb(139, 133, 128);    /* #8B8580 */
-    --color-accent: rgb(232, 228, 222);              /* #E8E4DE */
-    --color-accent-foreground: rgb(45, 43, 40);
-    --color-destructive: rgb(212, 74, 60);           /* #D44A3C */
-    --color-destructive-foreground: rgb(255, 255, 255);
-    --color-border: rgb(232, 228, 222);
-    --color-input: rgb(232, 228, 222);
-    --color-ring: rgb(195, 90, 44);
-
-    /* ── Sidebar (wireframes use bg-2 / border-2 for sidebar chrome) ── */
-    --color-sidebar-background: rgb(246, 243, 238); /* #F6F3EE */
-    --color-sidebar-foreground: rgb(90, 87, 83);     /* #5A5753 */
-    --color-sidebar-primary: rgb(195, 90, 44);
-    --color-sidebar-primary-foreground: rgb(255, 255, 255);
-    --color-sidebar-accent: rgb(232, 228, 222);
-    --color-sidebar-accent-foreground: rgb(45, 43, 40);
-    --color-sidebar-border: rgb(219, 214, 205);      /* #DBD6CD */
-    --color-sidebar-ring: rgb(195, 90, 44);
-
-    /* ── DeepTutor-only supplements (no shadcn equivalent) ── */
-    --deeptutor-primary: rgb(195, 90, 44);
-    --deeptutor-primary-hi: rgb(212, 115, 75);       /* hover/pressed #D4734B */
-    --deeptutor-primary-soft: rgba(195, 90, 44, 0.10);
-    --deeptutor-ok: rgb(63, 143, 94);                /* #3F8F5E */
-    --deeptutor-ok-soft: rgba(63, 143, 94, 0.12);
-    --deeptutor-warn: rgb(200, 139, 26);             /* #C88B1A */
-    --deeptutor-warn-soft: rgba(200, 139, 26, 0.14);
-    --deeptutor-danger: rgb(212, 74, 60);
-    --deeptutor-danger-soft: rgba(212, 74, 60, 0.14);
-    --deeptutor-wechat: rgb(7, 193, 96);             /* #07C160 官方绿 */
-    --deeptutor-wechat-soft: rgba(7, 193, 96, 0.12);
-    --deeptutor-purple: rgb(139, 92, 246);
-    --deeptutor-purple-soft: rgba(139, 92, 246, 0.10);
-
-    /* ── Fonts: Plus Jakarta Sans + Lora serif + JetBrains Mono ── */
-    --font-family-dt-sans:
-      "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont,
-      "PingFang SC", "Hiragino Sans", "Segoe UI", Roboto, sans-serif;
-    --font-family-dt-serif: "Lora", Georgia, "Songti SC", serif;
-    --font-family-dt-mono:
-      "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
-
-    /* ── Shadows (paper-soft, warm tinted) ── */
-    --deeptutor-shadow-sm:
-      0 1px 3px rgba(45, 43, 40, 0.04),
-      0 1px 2px rgba(45, 43, 40, 0.06);
-    --deeptutor-shadow-md:
-      0 4px 12px -2px rgba(45, 43, 40, 0.10),
-      0 2px 4px rgba(45, 43, 40, 0.04);
-    --deeptutor-shadow-lg:
-      0 20px 50px -16px rgba(45, 43, 40, 0.20),
-      0 4px 12px rgba(45, 43, 40, 0.06);
-
-    /* ── Selection highlight matches primary-soft ── */
-    --color-selection-bg: rgba(195, 90, 44, 0.18);
-
-    /* ── Ask page: remap warwolf message tokens to DeepTutor palette ── */
-    --claude-orange: rgb(195, 90, 44);
-    --claude-orange-shimmer: rgb(212, 115, 75);
-    --claude-blue: rgb(139, 92, 246);
-    --claude-blue-shimmer: rgb(167, 131, 255);
-    --color-label-claude: rgb(195, 90, 44);
-    --color-label-you: rgb(195, 90, 44);
-    --color-msg-user-bg: oklch(0.25 0.01 50);
-    --color-msg-user-fg: oklch(0.95 0.005 50);
-    --color-msg-assistant-bg: transparent;
-    --color-msg-bash-bg: rgb(240, 237, 231);
-    --color-msg-actions-bg: rgb(240, 237, 231);
-    --color-msg-memory-bg: rgba(139, 92, 246, 0.10);
-    --color-success: rgb(63, 143, 94);
-    --color-error: rgb(212, 74, 60);
-    --color-warning: rgb(200, 139, 26);
-    --color-fast-mode: rgb(200, 139, 26);
-    --color-terminal-tool: rgb(63, 143, 94);
-    --color-terminal-error: rgb(212, 74, 60);
-    --agent-purple: rgb(139, 92, 246);
-    --agent-cyan: rgb(63, 143, 94);
-  }
-
-  /* Dark variant: inverted warm palette.
-   *   bg   → deep espresso (~0.10 L)
-   *   fg   → paper (~0.90 L)
-   *   primary shifts to the lighter #D4734B for contrast
-   *   borders raise to ~0.22 L so cards remain visible on espresso */
-  .theme-deeptutor.dark {
-    --color-background: rgb(26, 25, 21);             /* #1A1915 espresso */
-    --color-foreground: rgb(232, 228, 222);
-    --color-card: rgb(37, 35, 32);                   /* #252320 */
-    --color-card-foreground: rgb(232, 228, 222);
-    --color-popover: rgb(37, 35, 32);
-    --color-popover-foreground: rgb(232, 228, 222);
-    --color-primary: rgb(212, 115, 75);              /* #D4734B brighter */
-    --color-primary-foreground: rgb(26, 25, 21);
-    --color-secondary: rgb(44, 41, 37);              /* #2C2925 */
-    --color-secondary-foreground: rgb(232, 228, 222);
-    --color-muted: rgb(44, 41, 37);
-    --color-muted-foreground: rgb(154, 148, 137);    /* #9A9489 */
-    --color-accent: rgb(58, 55, 51);                 /* #3A3733 */
-    --color-accent-foreground: rgb(232, 228, 222);
-    --color-destructive: rgb(255, 107, 92);
-    --color-destructive-foreground: rgb(26, 25, 21);
-    --color-border: rgb(58, 55, 51);
-    --color-input: rgb(58, 55, 51);
-    --color-ring: rgb(212, 115, 75);
-
-    --color-sidebar-background: rgb(33, 31, 27);     /* #211F1B */
-    --color-sidebar-foreground: rgb(154, 148, 137);
-    --color-sidebar-primary: rgb(212, 115, 75);
-    --color-sidebar-primary-foreground: rgb(26, 25, 21);
-    --color-sidebar-accent: rgb(58, 55, 51);
-    --color-sidebar-accent-foreground: rgb(232, 228, 222);
-    --color-sidebar-border: rgb(58, 55, 51);
-    --color-sidebar-ring: rgb(212, 115, 75);
-
-    --deeptutor-primary: rgb(212, 115, 75);
-    --deeptutor-primary-hi: rgb(232, 139, 100);
-    --deeptutor-primary-soft: rgba(212, 115, 75, 0.14);
-    --deeptutor-ok: rgb(95, 180, 125);
-    --deeptutor-ok-soft: rgba(95, 180, 125, 0.16);
-    --deeptutor-warn: rgb(236, 178, 70);
-    --deeptutor-warn-soft: rgba(236, 178, 70, 0.18);
-    --deeptutor-danger: rgb(255, 107, 92);
-    --deeptutor-danger-soft: rgba(255, 107, 92, 0.18);
-    --deeptutor-wechat: rgb(52, 214, 130);
-    --deeptutor-wechat-soft: rgba(52, 214, 130, 0.18);
-    --deeptutor-purple: rgb(167, 131, 255);
-    --deeptutor-purple-soft: rgba(167, 131, 255, 0.16);
-
-    --color-selection-bg: rgba(212, 115, 75, 0.26);
-
-    /* ── Ask page: remap warwolf message tokens to DeepTutor dark palette ── */
-    --claude-orange: rgb(212, 115, 75);
-    --claude-orange-shimmer: rgb(232, 139, 100);
-    --claude-blue: rgb(167, 131, 255);
-    --claude-blue-shimmer: rgb(190, 165, 255);
-    --color-label-claude: rgb(212, 115, 75);
-    --color-label-you: rgb(212, 115, 75);
-    --color-msg-user-bg: oklch(0.85 0.01 50);
-    --color-msg-user-fg: oklch(0.15 0.005 50);
-    --color-msg-assistant-bg: transparent;
-    --color-msg-bash-bg: rgb(44, 41, 37);
-    --color-msg-actions-bg: rgb(44, 41, 37);
-    --color-msg-memory-bg: rgba(167, 131, 255, 0.16);
-    --color-success: rgb(95, 180, 125);
-    --color-error: rgb(255, 107, 92);
-    --color-warning: rgb(236, 178, 70);
-    --color-fast-mode: rgb(236, 178, 70);
-    --color-terminal-tool: rgb(95, 180, 125);
-    --color-terminal-error: rgb(255, 107, 92);
-    --agent-purple: rgb(167, 131, 255);
-    --agent-cyan: rgb(95, 180, 125);
-  }
+.markdown-content h1, .markdown-content h2, .markdown-content h3,
+.markdown-content h4, .markdown-content h5, .markdown-content h6 {
+  font-family: var(--font-family-dt-serif, "Lora", "Songti SC", Georgia, serif);
+  font-weight: 500;
+  margin-top: 1.4em;
+  margin-bottom: 0.6em;
+  line-height: 1.30;
+  color: var(--foreground);
 }
-
-/* DeepTutor typographic affordances — only apply when the theme class
- * is present so other themes keep their existing font stack. */
-.theme-deeptutor {
-  font-family: var(--font-family-dt-sans);
+.markdown-content h1 { font-size: 1.75rem; }
+.markdown-content h2 { font-size: 1.4rem; }
+.markdown-content h3 { font-size: 1.2rem; }
+.markdown-content h4 { font-size: 1.05rem; }
+.markdown-content p { margin: 0.8em 0; }
+.markdown-content code:not(pre code) {
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 0.15em 0.4em;
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
 }
-.theme-deeptutor .font-serif-dt,
-.theme-deeptutor .wiki-body {
-  font-family: var(--font-family-dt-serif);
+.markdown-content pre {
+  background: var(--muted);
+  border-radius: var(--radius-md);
+  padding: 0.9em 1em;
+  overflow-x: auto;
+  margin: 1em 0;
 }
-.theme-deeptutor code,
-.theme-deeptutor pre,
-.theme-deeptutor .font-mono {
-  font-family: var(--font-family-dt-mono);
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
+.markdown-content pre code {
   background: transparent;
+  padding: 0;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  line-height: 1.55;
 }
-::-webkit-scrollbar-thumb {
-  background: oklch(0.7 0 0 / 0.3);
-  border-radius: 3px;
+.markdown-content blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+  font-style: italic;
+  margin: 1em 0;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.6 0 0 / 0.5);
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
 }
-.dark ::-webkit-scrollbar-thumb {
-  background: oklch(0.4 0 0 / 0.3);
+.markdown-content th, .markdown-content td {
+  border: 1px solid var(--border);
+  padding: 0.5em 0.75em;
+  text-align: left;
 }
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.5 0 0 / 0.5);
+.markdown-content th {
+  background: var(--muted);
+  font-weight: 600;
 }
+.markdown-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.markdown-content a:hover {
+  text-decoration-thickness: 2px;
+}
+/* Wikilink — dotted underline marker per design-tokens.md §3 link spec */
+.markdown-content a.wikilink {
+  text-decoration-style: dotted;
+}
+.markdown-content a.wikilink:hover {
+  text-decoration-style: solid;
+}
+.markdown-content ul, .markdown-content ol {
+  margin: 0.8em 0;
+  padding-left: 1.6em;
+}
+.markdown-content ul { list-style: disc; }
+.markdown-content ol { list-style: decimal; }
+.markdown-content li {
+  margin: 0.3em 0;
+}
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+.markdown-content img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Shadow utilities — expose warm-ring / whisper tokens as classes
+   (Tailwind v4 doesn't auto-generate from --shadow-warm-ring)
+   ═══════════════════════════════════════════════════════════════ */
+.shadow-warm-ring {
+  box-shadow: var(--shadow-warm-ring);
+}
+.shadow-warm-ring-hover {
+  transition: box-shadow 150ms ease;
+}
+.shadow-warm-ring-hover:hover {
+  box-shadow: var(--shadow-warm-ring-hover);
+}
+.shadow-whisper {
+  box-shadow: var(--shadow-whisper);
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
    Animation utilities
@@ -574,19 +476,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Syntax highlighter overrides for theme consistency
-   ═══════════════════════════════════════════════════════════════ */
-
-.theme-warwolf pre[class*="language-"] {
-  background: var(--color-msg-bash-bg) !important;
-}
-
-.theme-warwolf.dark pre[class*="language-"] {
-  background: var(--color-msg-bash-bg) !important;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   DeepTutor Ask page — streaming pulse + tool group + syntax
+   Ask page — streaming pulse + tool group + syntax
    ═══════════════════════════════════════════════════════════════ */
 
 /* Streaming message left-border pulse */
@@ -653,19 +543,6 @@
   font-size: 13px;
 }
 
-/* DeepTutor syntax highlighter overrides */
-.theme-deeptutor pre[class*="language-"] {
-  background: var(--color-msg-bash-bg) !important;
-}
-.theme-deeptutor.dark pre[class*="language-"] {
-  background: var(--color-msg-bash-bg) !important;
-}
-
-/* Serif heading utility for DeepTutor Ask page */
-.theme-deeptutor .ask-serif {
-  font-family: var(--font-family-dt-serif, "Lora", Georgia, serif);
-}
-
 /* ==============================================================
    Knowledge Graph — Rowboat 原版点阵画布 + 交互光标
    ============================================================== */
@@ -677,12 +554,12 @@
   content: '';
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(oklch(0.5 0 0 / 0.15) 1px, transparent 1px);
+  background-image: radial-gradient(oklch(0.5 0.008 95 / 0.15) 1px, transparent 1px);
   background-size: 40px 40px;
   pointer-events: none;
 }
 .dark .graph-view::before {
-  background-image: radial-gradient(oklch(0.7 0 0 / 0.08) 1px, transparent 1px);
+  background-image: radial-gradient(oklch(0.7 0.01 95 / 0.08) 1px, transparent 1px);
 }
 .graph-view > svg {
   position: relative;
