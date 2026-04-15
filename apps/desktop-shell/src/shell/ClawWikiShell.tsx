@@ -76,9 +76,17 @@ export function ClawWikiShell() {
             <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-sidebar-border px-2">
               <SidebarTrigger />
             </div>
-            <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            <main className="relative flex min-h-0 flex-1 flex-col">
               <ErrorBoundary>
-                <Routes>
+                {/* Scroll container — owns vertical overflow for all routes.
+                    `main` itself stays overflow:visible so this wrapper IS
+                    the single scroll surface; pages that set their own
+                    h-full still fit because this wrapper dictates height
+                    via flex-1. Previously `main` had overflow:hidden which
+                    clipped content since `h-full` chains break through
+                    flex-col ancestors without concrete heights. */}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <Routes>
                   <Route
                     path="/dashboard"
                     element={
@@ -156,6 +164,7 @@ export function ClawWikiShell() {
                     element={<Navigate to={CLAWWIKI_DEFAULT_ROUTE} replace />}
                   />
                 </Routes>
+                </div>
               </ErrorBoundary>
             </main>
           </div>
