@@ -2983,6 +2983,145 @@ fn parse_frontmatter_loose(yaml: &str) -> HashMap<String, serde_json::Value> {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// v2: Schema template API info (technical-design.md §2.9)
+//
+// `SchemaTemplate` above is the *validation* domain object consumed by
+// `validate_frontmatter`. The API surface (`GET /api/wiki/schema/templates`)
+// needs a richer, human-facing shape — category, Chinese display name,
+// body-writing hint, on-disk path. Keeping these concerns in separate
+// types lets the validator stay lean while the API stays descriptive.
+// ─────────────────────────────────────────────────────────────────────
+
+/// API-facing schema template metadata for `GET /api/wiki/schema/templates`.
+/// See technical-design.md §2.9.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SchemaTemplateInfo {
+    pub category: String,
+    pub display_name: String,
+    pub fields: Vec<TemplateFieldInfo>,
+    pub body_hint: String,
+    pub file_path: String,
+}
+
+/// Lightweight field descriptor in the API response. Every frontmatter
+/// key declared in the template is treated as required (= `true`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TemplateFieldInfo {
+    pub name: String,
+    pub required: bool,
+    pub field_type: String,
+    pub description: String,
+}
+
+/// Chinese display label for a built-in template category.
+/// Unknown categories fall back to the raw category string.
+fn template_display_name(category: &str) -> String {
+    match category {
+        "concept" => "概念".to_string(),
+        "people" => "人物".to_string(),
+        "topic" => "主题".to_string(),
+        "compare" => "对比".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Scan `schema/templates/*.md` and return rich `SchemaTemplateInfo` values.
+/// Returns an empty vec if the directory does not exist.
+///
+/// Parsing strategy:
+///   - Frontmatter keys → `fields` (all marked `required: true`, `field_type: "String"`).
+///   - Body after the closing `---` → `body_hint` (trimmed).
+///   - File stem → `category`; mapped via `template_display_name`.
+///
+/// Results are sorted alphabetically by category for stable API output.
+pub fn load_schema_template_infos(paths: &WikiPaths) -> Result<Vec<SchemaTemplateInfo>> {
+    let templates_dir = paths.schema.join("templates");
+    if !templates_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let dir = fs::read_dir(&templates_dir)
+        .map_err(|e| WikiStoreError::io(templates_dir.clone(), e))?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let category = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let content = fs::read_to_string(&path)
+            .map_err(|e| WikiStoreError::io(path.clone(), e))?;
+        let fields = parse_template_field_infos(&content);
+        let body_hint = extract_template_body_hint(&content);
+        out.push(SchemaTemplateInfo {
+            category: category.clone(),
+            display_name: template_display_name(&category),
+            fields,
+            body_hint,
+            file_path: path.to_string_lossy().to_string(),
+        });
+    }
+    out.sort_by(|a, b| a.category.cmp(&b.category));
+    Ok(out)
+}
+
+/// Convert YAML frontmatter keys into `TemplateFieldInfo` entries.
+fn parse_template_field_infos(content: &str) -> Vec<TemplateFieldInfo> {
+    let fm_text = match extract_frontmatter_text(content) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let mut fields = Vec::new();
+    for line in fm_text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, _)) = line.split_once(':') {
+            let key = key.trim().trim_matches('"').to_string();
+            if !key.is_empty() {
+                fields.push(TemplateFieldInfo {
+                    name: key,
+                    required: true,
+                    field_type: "String".to_string(),
+                    description: String::new(),
+                });
+            }
+        }
+    }
+    fields
+}
+
+/// Return the body content that follows the closing `---` of the frontmatter.
+/// Trimmed; empty string if there is no body or frontmatter is malformed.
+fn extract_template_body_hint(content: &str) -> String {
+    // Reuse the same scanning rule as extract_frontmatter_text: first two
+    // `---` lines mark the frontmatter. Body is everything after the
+    // closing marker.
+    let mut lines = content.lines();
+    if lines.next() != Some("---") {
+        return content.trim().to_string();
+    }
+    let mut saw_close = false;
+    let mut body_lines = Vec::new();
+    for line in lines {
+        if !saw_close {
+            if line == "---" {
+                saw_close = true;
+            }
+            continue;
+        }
+        body_lines.push(line);
+    }
+    if !saw_close {
+        return String::new();
+    }
+    body_lines.join("\n").trim().to_string()
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // v2: Wiki stats  (technical-design.md §3.9, §4.1.1)
 // ─────────────────────────────────────────────────────────────────────
 
@@ -3121,6 +3260,40 @@ pub fn load_patrol_report(paths: &WikiPaths) -> Result<Option<PatrolReport>> {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// v2: Unified orphan detection  (shared by wiki_stats + wiki_patrol)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Determine whether a page is an orphan: no inbound links in the
+/// backlinks index AND not referenced by `wiki/index.md`.
+///
+/// Both `wiki_stats().orphan_count` and `wiki_patrol::detect_orphans`
+/// must use this predicate so the two APIs never disagree.
+pub fn is_page_orphan(
+    page: &WikiPageSummary,
+    backlinks: &BacklinksIndex,
+    index_content: &str,
+) -> bool {
+    let has_inbound = backlinks
+        .get(&page.slug)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let in_index = index_content.contains(&format!("{}.md", page.slug));
+    !has_inbound && !in_index
+}
+
+/// Count how many pages are orphans. Loads backlinks + index once.
+pub fn compute_orphan_count(paths: &WikiPaths) -> usize {
+    let pages = list_all_wiki_pages(paths).unwrap_or_default();
+    let backlinks = load_backlinks_index(paths).unwrap_or_default();
+    let index_content =
+        std::fs::read_to_string(paths.wiki.join(WIKI_INDEX_FILENAME)).unwrap_or_default();
+    pages
+        .iter()
+        .filter(|p| is_page_orphan(p, &backlinks, &index_content))
+        .count()
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // v2: Wiki stats  (technical-design.md §3.9, §4.1.1)
 // ─────────────────────────────────────────────────────────────────────
 
@@ -3165,17 +3338,10 @@ pub fn wiki_stats(paths: &WikiPaths) -> Result<WikiStats> {
     let topic_count = pages.iter().filter(|p| p.category == "topic").count();
     let compare_count = pages.iter().filter(|p| p.category == "compare").count();
 
-    // Orphan count: pages with no inbound links in the backlinks index.
-    let backlinks = load_backlinks_index(paths).unwrap_or_default();
-    let orphan_count = pages
-        .iter()
-        .filter(|p| {
-            backlinks
-                .get(&p.slug)
-                .map(|v| v.is_empty())
-                .unwrap_or(true)
-        })
-        .count();
+    // Orphan count: reuse the unified definition (no inbound links AND
+    // not referenced by index.md). Same rule as wiki_patrol::detect_orphans
+    // so /api/wiki/stats.orphan_count == /api/wiki/patrol.summary.orphans.
+    let orphan_count = compute_orphan_count(paths);
 
     let inbox_pending = inbox.iter().filter(|e| e.status == InboxStatus::Pending).count();
     let inbox_resolved = inbox
@@ -5565,6 +5731,50 @@ mod tests {
         let errors = validate_frontmatter(content, &template);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].field, "(frontmatter)");
+    }
+
+    // ── v2 SchemaTemplateInfo / load_schema_template_infos tests ─
+
+    #[test]
+    fn load_schema_template_infos_returns_all_builtin_templates() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let infos = load_schema_template_infos(&paths).unwrap();
+        let categories: Vec<&str> = infos.iter().map(|t| t.category.as_str()).collect();
+        assert!(categories.contains(&"concept"), "expected concept template");
+        assert!(categories.contains(&"people"), "expected people template");
+        assert!(categories.contains(&"topic"), "expected topic template");
+        assert!(categories.contains(&"compare"), "expected compare template");
+
+        // Display-name mapping
+        let concept = infos.iter().find(|t| t.category == "concept").unwrap();
+        assert_eq!(concept.display_name, "概念");
+        let people = infos.iter().find(|t| t.category == "people").unwrap();
+        assert_eq!(people.display_name, "人物");
+
+        // Frontmatter parsed into field list
+        let concept_field_names: Vec<&str> =
+            concept.fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(concept_field_names.contains(&"type"));
+        assert!(concept_field_names.contains(&"title"));
+        assert!(concept_field_names.iter().all(|n| !n.is_empty()));
+
+        // body_hint contains body content (non-empty for seeded templates)
+        assert!(!concept.body_hint.is_empty(), "concept body_hint should be non-empty");
+
+        // file_path points to an existing .md file
+        assert!(concept.file_path.ends_with("concept.md"));
+    }
+
+    #[test]
+    fn load_schema_template_infos_missing_dir_returns_empty() {
+        let tmp = tempdir().unwrap();
+        // Do NOT init_wiki — templates dir absent
+        let paths = WikiPaths::resolve(tmp.path());
+        let infos = load_schema_template_infos(&paths).unwrap();
+        assert!(infos.is_empty());
     }
 
     // ── v2 wiki_stats tests ─────────────────────────────────────

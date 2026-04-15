@@ -1058,13 +1058,10 @@ async fn intercept_url(message: &str) -> Option<String> {
 
     // Strategy 1: For non-WeChat URLs, try simple HTTP fetch first (fast)
     if !is_wechat {
-        match wiki_ingest::url::fetch_and_body(url).await {
-            Ok(result) if result.body.len() > 200
-                && !result.body.contains("环境异常")
-                && !result.body.contains("完成验证") =>
-            {
+        if let Ok(result) = wiki_ingest::url::fetch_and_body(url).await {
+            // v2 bugfix: unified quality check from wiki_ingest.
+            if wiki_ingest::validate_fetched_content(&result.body).is_ok() {
                 eprintln!("[intercept_url] simple fetch OK: title={}", result.title);
-                // Ingest
                 if let Ok(paths) = resolve_wiki_root_for_handler() {
                     let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
                     if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
@@ -1077,17 +1074,26 @@ async fn intercept_url(message: &str) -> Option<String> {
                      标题：{}\n\n{}\n\n---\n用户原始消息：{}",
                     result.title, &result.body[..result.body.len().min(6000)], message
                 ));
+            } else {
+                eprintln!("[intercept_url] simple fetch rejected by quality check, trying Playwright...");
             }
-            _ => {
-                eprintln!("[intercept_url] simple fetch failed or content too short, trying Playwright...");
-            }
+        } else {
+            eprintln!("[intercept_url] simple fetch failed, trying Playwright...");
         }
     }
 
     // Strategy 2: Playwright fetch (for WeChat or failed simple fetch)
     eprintln!("[intercept_url] Playwright fetch: {url}");
     match wiki_ingest::wechat_fetch::fetch_wechat_article(url).await {
-        Ok(result) if result.body.len() > 100 => {
+        Ok(result) => {
+            // v2 bugfix: quality check.
+            if let Err(reason) = wiki_ingest::validate_fetched_content(&result.body) {
+                eprintln!("[intercept_url] Playwright rejected by quality check: {reason}");
+                return Some(format!(
+                    "[系统通知] 链接抓取失败（{reason}）。请告知用户手动复制内容粘贴。\n\n\
+                     用户原始消息：{message}",
+                ));
+            }
             eprintln!("[intercept_url] Playwright fetch OK: title={}", result.title);
 
             // Ingest to raw library
@@ -1107,10 +1113,6 @@ async fn intercept_url(message: &str) -> Option<String> {
                 &result.body[..result.body.len().min(6000)],
                 message
             ))
-        }
-        Ok(_) => {
-            eprintln!("[append_message] WeChat fetch returned too little content");
-            None
         }
         Err(e) => {
             eprintln!("[append_message] WeChat fetch failed: {e}");
@@ -4015,6 +4017,16 @@ async fn wechat_fetch_handler(
             )
         })?;
 
+    // v2 bugfix: quality check — don't ingest anti-bot pages / empty / image-only.
+    if let Err(reason) = wiki_ingest::validate_fetched_content(&result.body) {
+        eprintln!("[wechat-fetch] rejected by quality check: {reason}");
+        return Ok(Json(serde_json::json!({
+            "ok": false,
+            "error": reason,
+            "title": result.title,
+        })));
+    }
+
     let raw_id = if body.ingest {
         let paths = resolve_wiki_root_for_handler()?;
         let frontmatter = wiki_store::RawFrontmatter::for_paste(
@@ -4354,9 +4366,19 @@ async fn get_absorb_log_handler(
 
 /// GET /api/wiki/backlinks — full backlinks index or single slug.
 /// Coexists with GET /api/wiki/pages/{slug}/backlinks (per-page).
+///
+/// Response shapes:
+///   - `?slug=foo`           → `{ slug, backlinks: [{slug,title,category}], count }`
+///   - (no params)           → `{ index, total_pages, total_backlinks }` (wrapped)
+///   - `?format=raw`         → pure `HashMap<slug, Vec<slug>>` (raw index)
+///
+/// The `format=raw` variant is provided for callers that consume the
+/// `BacklinksIndex` type directly (e.g. CLI / external tooling). The
+/// wrapped variant keeps backwards compatibility for the UI.
 #[derive(Deserialize)]
 struct BacklinksQuery {
     slug: Option<String>,
+    format: Option<String>,
 }
 
 async fn get_backlinks_index_handler(
@@ -4401,6 +4423,12 @@ async fn get_backlinks_index_handler(
             })))
         }
         None => {
+            // ?format=raw → return the pure HashMap for direct BacklinksIndex consumers.
+            if params.format.as_deref() == Some("raw") {
+                return Ok(Json(
+                    serde_json::to_value(&index).unwrap_or(serde_json::json!({})),
+                ));
+            }
             let total_pages = wiki_store::list_all_wiki_pages(&paths)
                 .map(|p| p.len())
                 .unwrap_or(0);
@@ -4453,40 +4481,21 @@ async fn get_patrol_report_handler() -> Result<Json<serde_json::Value>, ApiError
 // ── §2.9 GET /api/wiki/schema/templates ─────────────────────────────
 
 /// GET /api/wiki/schema/templates — list all schema templates.
+///
+/// Response shape per technical-design.md §2.9:
+///   `[{ category, display_name, fields, body_hint, file_path }, ...]`
+///
+/// Delegates to `wiki_store::load_schema_template_infos` which parses
+/// the frontmatter of every `.md` file under `.clawwiki/schema/templates/`.
 async fn get_schema_templates_handler() -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
-    let templates_dir = paths.schema.join("templates");
-    if !templates_dir.is_dir() {
-        return Ok(Json(serde_json::json!([])));
-    }
-
-    let mut templates = Vec::new();
-    let entries = std::fs::read_dir(&templates_dir).map_err(|e| {
+    let infos = wiki_store::load_schema_template_infos(&paths).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("read schema/templates/ failed: {e}"),
+                error: format!("TEMPLATE_PARSE_FAILED: {e}"),
             }),
         )
     })?;
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        templates.push(serde_json::json!({
-            "name": name,
-            "file_path": path.to_string_lossy(),
-            "content": content,
-        }));
-    }
-
-    Ok(Json(serde_json::json!(templates)))
+    Ok(Json(serde_json::to_value(&infos).unwrap_or(serde_json::json!([]))))
 }

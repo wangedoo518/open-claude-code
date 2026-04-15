@@ -2921,10 +2921,9 @@ impl DesktopState {
             wiki_ingest::url::fetch_and_body(&url),
         ).await;
         if let Ok(Ok(result)) = fetch_result {
-            if result.body.len() > 200
-                && !result.body.contains("环境异常")
-                && !result.body.contains("完成验证")
-            {
+            // v2 bugfix: use unified quality check from wiki_ingest.
+            let quality = wiki_ingest::validate_fetched_content(&result.body);
+            if quality.is_ok() {
                 eprintln!(
                     "[enrich_url] simple fetch OK: {} chars, returning enriched",
                     result.body.len()
@@ -2946,6 +2945,8 @@ impl DesktopState {
                      标题：{}\n\n{}\n\n---\n用户原始消息：{}",
                     result.title, Self::safe_truncate(&result.body, 6000), message
                 );
+            } else if let Err(reason) = quality {
+                eprintln!("[enrich_url] simple fetch rejected by quality check: {reason}");
             }
         }
 
@@ -2961,27 +2962,39 @@ impl DesktopState {
                 wiki_ingest::wechat_fetch::fetch_wechat_article(&url),
             ).await;
             if let Ok(Ok(result)) = pw_result {
-                if result.body.len() > 100 {
-                    eprintln!(
-                        "[enrich_url] Playwright OK: {} chars, returning enriched",
-                        result.body.len()
-                    );
-                    if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
-                        let root = wiki_store::default_root();
-                        wiki_store::init_wiki(&root)?;
-                        Ok(wiki_store::WikiPaths::resolve(&root))
-                    })() {
-                        let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
-                        if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
-                            let _ = wiki_store::append_new_raw_task(&paths, &entry, "playwright-fetch");
-                            eprintln!("[enrich_url] ingested as raw #{}", entry.id);
+                // v2 bugfix: quality check for Playwright path too.
+                match wiki_ingest::validate_fetched_content(&result.body) {
+                    Ok(()) => {
+                        eprintln!(
+                            "[enrich_url] Playwright OK: {} chars, returning enriched",
+                            result.body.len()
+                        );
+                        if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
+                            let root = wiki_store::default_root();
+                            wiki_store::init_wiki(&root)?;
+                            Ok(wiki_store::WikiPaths::resolve(&root))
+                        })() {
+                            let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
+                            if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
+                                let _ = wiki_store::append_new_raw_task(&paths, &entry, "playwright-fetch");
+                                eprintln!("[enrich_url] ingested as raw #{}", entry.id);
+                            }
                         }
+                        return format!(
+                            "请基于以下文章内容回答我的问题。\n\n\
+                             标题：{}\n\n{}\n\n---\n用户原始消息：{}",
+                            result.title, Self::safe_truncate(&result.body, 6000), message
+                        );
                     }
-                    return format!(
-                        "请基于以下文章内容回答我的问题。\n\n\
-                         标题：{}\n\n{}\n\n---\n用户原始消息：{}",
-                        result.title, Self::safe_truncate(&result.body, 6000), message
-                    );
+                    Err(reason) => {
+                        eprintln!("[enrich_url] Playwright rejected by quality check: {reason}");
+                        // Tell the LLM to inform the user — don't pretend we got content.
+                        return format!(
+                            "[系统通知] 链接抓取失败（{}）。请告知用户手动复制内容粘贴，\
+                             或指明是否需要基于 URL 本身回答。\n\n用户原始消息：{}",
+                            reason, message
+                        );
+                    }
                 }
             }
             eprintln!("[enrich_url] Playwright failed or timed out for WeChat URL");
@@ -2990,7 +3003,7 @@ impl DesktopState {
             let bg_url = url.clone();
             tokio::spawn(async move {
                 if let Ok(result) = wiki_ingest::wechat_fetch::fetch_wechat_article(&bg_url).await {
-                    if result.body.len() > 100 {
+                    if wiki_ingest::validate_fetched_content(&result.body).is_ok() {
                         if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
                             let root = wiki_store::default_root();
                             wiki_store::init_wiki(&root)?;
@@ -3002,6 +3015,8 @@ impl DesktopState {
                                 eprintln!("[enrich_url:bg] ingested as raw #{}", entry.id);
                             }
                         }
+                    } else {
+                        eprintln!("[enrich_url:bg] background fetch rejected by quality check");
                     }
                 }
             });

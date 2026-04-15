@@ -484,24 +484,32 @@ impl KefuDesktopHandler {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[kefu handler] URL fetch failed: {e}");
-                let fm = wiki_store::RawFrontmatter::for_paste("url", Some(url.to_string()));
-                let _ = wiki_store::write_raw_entry(
-                    &paths,
-                    "url",
-                    &wiki_store::slugify(url),
-                    &format!("Failed to fetch: {url}\nError: {e}"),
-                    &fm,
-                );
+                // v2 bugfix: do NOT ingest the "Failed to fetch: {url}" stub —
+                // that's how we got garbage raw entries polluting Inbox.
+                // Just reply to the user; no raw entry created.
                 let _ = client
                     .send_text(
                         userid,
                         open_kfid,
-                        &format!("❌ 无法获取链接内容: {e}\n链接已记录"),
+                        &format!("❌ 无法获取链接内容: {e}\n请手动复制内容发送"),
                     )
                     .await;
                 return;
             }
         };
+
+        // Step 1.5 (v2 bugfix): Reject low-quality / anti-bot content.
+        if let Err(reason) = wiki_ingest::validate_fetched_content(&ingest_result.body) {
+            eprintln!("[kefu handler] URL content rejected: {reason}");
+            let _ = client
+                .send_text(
+                    userid,
+                    open_kfid,
+                    &format!("❌ 链接抓取失败（{reason}）\n请手动复制内容发送"),
+                )
+                .await;
+            return;
+        }
 
         // Step 2: Write to raw/.
         let title = if ingest_result.title.is_empty() {

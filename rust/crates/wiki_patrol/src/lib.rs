@@ -38,14 +38,11 @@ pub fn detect_orphans(paths: &WikiPaths) -> Vec<PatrolIssue> {
     )
     .unwrap_or_default();
 
+    // Reuse the unified orphan predicate from wiki_store so /api/wiki/stats
+    // and /api/wiki/patrol never disagree on what counts as an orphan.
     let mut issues = Vec::new();
     for page in &all_pages {
-        let has_inbound = backlinks
-            .get(&page.slug)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-        let in_index = index_content.contains(&format!("{}.md", page.slug));
-        if !has_inbound && !in_index {
+        if wiki_store::is_page_orphan(page, &backlinks, &index_content) {
             issues.push(PatrolIssue {
                 kind: PatrolIssueKind::Orphan,
                 page_slug: page.slug.clone(),
@@ -674,5 +671,38 @@ mod tests {
         assert_eq!(report.summary.stubs, 0);
         assert_eq!(report.summary.confidence_decay, 0);
         assert_eq!(report.summary.uncrystallized, 0);
+    }
+
+    /// Regression test for the orphan_count consistency bug:
+    /// `wiki_stats.orphan_count` (from wiki_store) and
+    /// `patrol.summary.orphans` (from wiki_patrol) must always agree.
+    #[test]
+    fn stats_and_patrol_orphans_agree() {
+        let (_tmp, paths) = init_and_paths();
+        // Seed a mix: one orphan, one page referenced by another, one in index.
+        create_page(&paths, "concept", "orphan-page", "Orphan", "Lonely page with no links.");
+        create_page(&paths, "concept", "referenced", "Referenced", "Some body.");
+        create_page(
+            &paths,
+            "concept",
+            "linker",
+            "Linker",
+            "Here is a link: [](concepts/referenced.md) and more text.",
+        );
+
+        // Rebuild backlinks so "referenced" gets an inbound from "linker".
+        let idx = wiki_store::build_backlinks_index(&paths).unwrap();
+        wiki_store::save_backlinks_index(&paths, &idx).unwrap();
+
+        // Compute both independently and assert they agree.
+        let stats = wiki_store::wiki_stats(&paths).unwrap();
+        let report = run_full_patrol(&paths, &PatrolConfig::default());
+        assert_eq!(
+            stats.orphan_count, report.summary.orphans,
+            "stats.orphan_count ({}) must equal patrol.summary.orphans ({})",
+            stats.orphan_count, report.summary.orphans,
+        );
+        // And at least "orphan-page" should be flagged.
+        assert!(stats.orphan_count >= 1, "expected ≥ 1 orphan");
     }
 }
