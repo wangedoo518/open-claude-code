@@ -17,7 +17,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
@@ -564,18 +570,23 @@ function ProviderForm({
           </label>
           <Select
             value={templateId}
-            onChange={(e) => {
-              setTemplateId(e.target.value);
+            onValueChange={(value) => {
+              setTemplateId(value);
               setCustomId("");
               setCustomModel("");
               setCustomBaseUrl("");
             }}
           >
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.display_name} — {t.description}
-              </option>
-            ))}
+            <SelectTrigger>
+              <SelectValue placeholder="选择厂商模板" />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.display_name} — {t.description}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </div>
       )}
