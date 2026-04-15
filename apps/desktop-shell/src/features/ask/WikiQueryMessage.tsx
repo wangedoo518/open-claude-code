@@ -3,12 +3,25 @@
  * Displayed in the message list when a ?-prefixed question triggers wiki Q&A.
  *
  * Visual: 📚 icon (instead of Bot avatar) + green left border + streaming answer + sources card.
+ *
+ * The answer body is piped through `preprocessWikilinks` to expand
+ * `[[slug|Label]]` syntax, then rendered with a custom `<a>` component
+ * (`useWikiLinkRenderer`) that intercepts relative `.md` / `wiki://` /
+ * `/wiki?page=` hrefs and routes them to the Wiki tab store instead of
+ * letting the browser navigate them (which used to fall through
+ * HashRouter to `/dashboard`).
  */
 
+import { useMemo } from "react";
 import { BookOpen, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import { QuerySourcesCard } from "./QuerySourcesCard";
 import type { QuerySource } from "@/features/ingest/types";
+import {
+  preprocessWikilinks,
+  useWikiLinkRenderer,
+} from "@/features/wiki/wiki-link-utils";
 
 interface WikiQueryMessageProps {
   question: string;
@@ -25,6 +38,16 @@ export function WikiQueryMessage({
   isStreaming,
   error,
 }: WikiQueryMessageProps) {
+  const Anchor = useWikiLinkRenderer();
+  const markdownComponents = useMemo<Components>(
+    () => ({ a: Anchor }),
+    [Anchor],
+  );
+  const processedAnswer = useMemo(
+    () => preprocessWikilinks(answer),
+    [answer],
+  );
+
   return (
     <div className="flex gap-3 py-3">
       {/* Icon — 📚 instead of Bot avatar */}
@@ -45,7 +68,9 @@ export function WikiQueryMessage({
         <div className="border-l-2 border-[var(--deeptutor-ok,#3F8F5E)]/40 pl-3">
           {answer ? (
             <div className="prose-sm text-[14px] leading-[1.6] text-[var(--color-foreground)]">
-              <ReactMarkdown>{answer}</ReactMarkdown>
+              <ReactMarkdown components={markdownComponents}>
+                {processedAnswer}
+              </ReactMarkdown>
             </div>
           ) : isStreaming ? (
             <div className="flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
