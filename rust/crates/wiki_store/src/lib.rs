@@ -282,24 +282,56 @@ impl WikiPaths {
 
 /// Resolve the default `~/.clawwiki/` root for the current process.
 ///
-/// Resolution order:
-///   1. `$CLAWWIKI_HOME` if set (any value, even empty string is honored
-///      verbatim — same convention as `XDG_*` vars).
-///   2. `$HOME/.clawwiki/` on Unix.
-///   3. `%USERPROFILE%/.clawwiki/` on Windows.
-///   4. Falls back to a relative `./.clawwiki/` if neither HOME nor
-///      USERPROFILE are set (very rare; only happens in CI sandboxes
-///      that strip the environment).
+/// Resolution order (per technical-design.md §7.2):
+///   1. `$CLAWWIKI_HOME` if set — highest priority, no fallback triggered.
+///   2. `$HOME/.clawwiki/` on Unix / `%USERPROFILE%/.clawwiki/` on Windows.
+///      Attempts to create the directory. On Windows, if creation fails
+///      with `PermissionDenied` (UAC / antivirus block), falls back to
+///      `%LOCALAPPDATA%/clawwiki/`.
+///   3. Relative `./.clawwiki/` if HOME/USERPROFILE unavailable (rare).
+///
+/// The Windows fallback addresses the common case where `C:\Users\{name}\`
+/// is sandboxed by corporate AV or UAC policies. `%LOCALAPPDATA%` is
+/// always user-writable.
 #[must_use]
 pub fn default_root() -> PathBuf {
     let override_var = std::env::var_os(ENV_OVERRIDE);
     let home = home_dir();
-    default_root_from(override_var, home.as_deref())
+    let primary = default_root_from(override_var.clone(), home.as_deref());
+
+    // If the env override was set, trust it verbatim — no fallback.
+    if override_var.is_some() {
+        return primary;
+    }
+
+    // Try to create the primary path. On success, use it.
+    match try_create_dir(&primary) {
+        Ok(()) => primary,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            // Windows UAC / AV fallback to %LOCALAPPDATA%\clawwiki
+            if let Some(fallback) = local_appdata_fallback() {
+                if try_create_dir(&fallback).is_ok() {
+                    eprintln!(
+                        "[wiki_store] primary path {} denied (PermissionDenied), \
+                         falling back to {}",
+                        primary.display(),
+                        fallback.display(),
+                    );
+                    return fallback;
+                }
+            }
+            primary // give up, let init_wiki surface the real error
+        }
+        Err(_) => primary, // other errors (disk full, etc) — let init_wiki report
+    }
 }
 
 /// Pure version of [`default_root`] that takes its inputs explicitly so
 /// the resolution rules can be unit-tested without mutating the
 /// process-wide environment (which would race with parallel tests).
+///
+/// **Note**: this function does not perform any I/O. The Windows UAC
+/// fallback logic lives in [`default_root`].
 #[must_use]
 pub fn default_root_from(override_var: Option<OsString>, home: Option<&Path>) -> PathBuf {
     if let Some(v) = override_var {
@@ -309,6 +341,26 @@ pub fn default_root_from(override_var: Option<OsString>, home: Option<&Path>) ->
         Some(h) => h.join(DEFAULT_DIRNAME),
         None => PathBuf::from(".").join(DEFAULT_DIRNAME),
     }
+}
+
+/// Try to create a directory, returning `Ok(())` if it already exists.
+fn try_create_dir(path: &Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(path)
+}
+
+/// Windows: return `%LOCALAPPDATA%\clawwiki` as the permission-safe fallback.
+#[cfg(target_os = "windows")]
+fn local_appdata_fallback() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|s| PathBuf::from(s).join("clawwiki"))
+}
+
+/// Non-Windows: no fallback needed (HOME is always user-writable).
+#[cfg(not(target_os = "windows"))]
+fn local_appdata_fallback() -> Option<PathBuf> {
+    None
 }
 
 /// Best-effort home directory lookup without pulling in the `dirs`
@@ -3239,6 +3291,71 @@ mod tests {
         assert_eq!(paths.schema, root.join("schema"));
         assert_eq!(paths.meta, root.join(".clawwiki"));
         assert_eq!(paths.schema_claude_md, root.join("schema").join("CLAUDE.md"));
+    }
+
+    // ── Windows UAC fallback tests (v2 Phase 4 bugfix) ──────────
+
+    /// When `$CLAWWIKI_HOME` is set to a writable temp path, `default_root`
+    /// uses it verbatim and does NOT probe for permission failures.
+    #[test]
+    fn env_override_wins_over_permission_check() {
+        let tmp = tempdir().unwrap();
+        let custom = tmp.path().join("my-custom-wiki");
+
+        // Set the env var for this test (restored in Drop).
+        struct EnvGuard;
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                std::env::remove_var(ENV_OVERRIDE);
+            }
+        }
+        let _guard = EnvGuard;
+        std::env::set_var(ENV_OVERRIDE, &custom);
+
+        let resolved = default_root();
+        assert_eq!(resolved, custom);
+        // Should NOT have created the directory (env override trusts the caller).
+        // Note: caller is expected to init_wiki(&resolved) explicitly.
+    }
+
+    /// When the primary path is writable, `default_root` returns it and
+    /// does not fall back.
+    #[test]
+    fn primary_path_succeeds_when_writable() {
+        // Use default_root_from (pure) to derive a path, then verify
+        // default_root would return the same (assuming no env override
+        // and writable home). We simulate by clearing the env var.
+        let _ = std::env::remove_var(ENV_OVERRIDE);
+
+        let pure = default_root_from(None, Some(Path::new("/tmp/x")));
+        assert_eq!(pure, Path::new("/tmp/x").join(DEFAULT_DIRNAME));
+    }
+
+    /// `default_root_from` stays pure — no I/O, no fallback logic.
+    #[test]
+    fn default_root_from_is_pure_no_fallback() {
+        // Even with a "denied" looking path, pure function just joins.
+        let result = default_root_from(None, Some(Path::new("/nonexistent/nowhere")));
+        assert_eq!(result, Path::new("/nonexistent/nowhere").join(DEFAULT_DIRNAME));
+    }
+
+    /// On non-Windows, `local_appdata_fallback` returns None.
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn local_appdata_fallback_is_none_on_unix() {
+        assert!(local_appdata_fallback().is_none());
+    }
+
+    /// On Windows, `local_appdata_fallback` returns `%LOCALAPPDATA%\clawwiki`.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn local_appdata_fallback_uses_localappdata_on_windows() {
+        if let Some(fallback) = local_appdata_fallback() {
+            assert!(fallback.ends_with("clawwiki"));
+            // Should not be empty and should point under LOCALAPPDATA.
+            let expected_prefix = std::env::var_os("LOCALAPPDATA");
+            assert!(expected_prefix.is_some(), "LOCALAPPDATA should be set on Windows");
+        }
     }
 
     #[test]

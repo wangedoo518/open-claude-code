@@ -68,6 +68,26 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // users can still relocate state via env var.
     ensure_claw_config_home_is_valid();
 
+    // v2 Phase 4 bugfix: resolve wiki root once at startup and pin it into
+    // CLAWWIKI_HOME. `wiki_store::default_root()` already performs the
+    // Windows UAC fallback (primary `%USERPROFILE%\.clawwiki` → denied →
+    // fallback `%LOCALAPPDATA%\clawwiki`). By writing the resolved path
+    // back into the env var, every subsequent call across all subsystems
+    // (including spawned tokio tasks) sees the same root without re-running
+    // the probe logic.
+    if std::env::var_os(wiki_store::ENV_OVERRIDE).is_none() {
+        let resolved = wiki_store::default_root();
+        std::env::set_var(wiki_store::ENV_OVERRIDE, &resolved);
+        println!("[startup] CLAWWIKI_HOME = {}", resolved.display());
+    } else {
+        println!(
+            "[startup] CLAWWIKI_HOME = {} (from env)",
+            std::env::var_os(wiki_store::ENV_OVERRIDE)
+                .map(|v| v.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        );
+    }
+
     let address = env::var("OPEN_CLAUDE_CODE_DESKTOP_ADDR")
         .unwrap_or_else(|_| DEFAULT_ADDRESS.to_string())
         .parse::<SocketAddr>()?;

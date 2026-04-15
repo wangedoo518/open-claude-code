@@ -2925,7 +2925,10 @@ impl DesktopState {
                 && !result.body.contains("环境异常")
                 && !result.body.contains("完成验证")
             {
-                eprintln!("[enrich_url] simple fetch OK: {} chars", result.body.len());
+                eprintln!(
+                    "[enrich_url] simple fetch OK: {} chars, returning enriched",
+                    result.body.len()
+                );
                 // Ingest to raw
                 if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
             let root = wiki_store::default_root();
@@ -2959,7 +2962,10 @@ impl DesktopState {
             ).await;
             if let Ok(Ok(result)) = pw_result {
                 if result.body.len() > 100 {
-                    eprintln!("[enrich_url] Playwright OK: {} chars", result.body.len());
+                    eprintln!(
+                        "[enrich_url] Playwright OK: {} chars, returning enriched",
+                        result.body.len()
+                    );
                     if let Ok(paths) = (|| -> std::result::Result<wiki_store::WikiPaths, Box<dyn std::error::Error>> {
                         let root = wiki_store::default_root();
                         wiki_store::init_wiki(&root)?;
@@ -3142,12 +3148,28 @@ impl DesktopState {
                         project_path_buf.display()
                     );
                 }
-                let system_prompt_text = system_prompt::build_system_prompt_with_source_and_skills(
+                let mut system_prompt_text = system_prompt::build_system_prompt_with_source_and_skills(
                     &project_path_buf,
                     &tool_specs,
                     claude_md_discovery.as_ref(),
                     &workspace_skills,
                 );
+
+                // v2 bugfix: Inject URL-fetched content into the managed-auth
+                // system prompt. Previously only the Err(no-auth) fallback
+                // branch injected `url_context`; the Ok(managed-auth) branch
+                // used `agentic_loop` and discarded `enriched` entirely, so
+                // the LLM saw only the raw URL. Fix: append enriched content
+                // to the system prompt string here so both branches behave
+                // identically.
+                if has_enrichment {
+                    eprintln!(
+                        "[live_turn] injecting url_context: {} chars into system_prompt (agentic)",
+                        enriched.len()
+                    );
+                    system_prompt_text.push_str("\n\n");
+                    system_prompt_text.push_str(&enriched);
+                }
 
                 // Load runtime config ONCE and extract both permission mode
                 // and hooks. Defaults to WorkspaceWrite (not DangerFullAccess)
@@ -4842,9 +4864,18 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
     // env var, so concurrent requests never overwrite each other.
     if let Some(ref url_context) = request.url_context {
         if !url_context.is_empty() {
+            eprintln!(
+                "[live_turn] injecting url_context: {} chars into system_prompt (fallback)",
+                url_context.len()
+            );
             system_prompt.push(url_context.clone());
         }
     }
+    eprintln!(
+        "[live_turn] system_prompt final: {} blocks, {} total chars",
+        system_prompt.len(),
+        system_prompt.iter().map(|s| s.len()).sum::<usize>()
+    );
 
     // feat(W9): inject wiki/index.md as context into the system prompt
     // so the LLM can reference the user's external brain when answering

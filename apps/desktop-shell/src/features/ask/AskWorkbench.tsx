@@ -49,8 +49,6 @@ import {
   type RuntimeConversationMessage,
 } from "@/lib/tauri";
 import { compactSession } from "./api/client";
-import { fetchJson } from "@/lib/desktop/transport";
-import { ingestRawEntry } from "@/features/ingest/persist";
 import type { ConversationMessage } from "@/features/common/message-types";
 import { MOCK_DEMO_MESSAGES } from "./mockDemoMessages";
 
@@ -60,36 +58,10 @@ function extractUrl(text: string): string | null {
   return match ? match[0] : null;
 }
 
-/** Check if fetched content is valid (not a CAPTCHA/block page). */
-function isValidContent(body: string): boolean {
-  if (body.length < 200) return false;
-  if (body.includes("环境异常") || body.includes("完成验证") || body.includes("去验证")) return false;
-  if (body.includes("请完成安全验证") || body.includes("访问频繁")) return false;
-  return true;
-}
-
-/** Fetch a URL's content via backend proxy, ingest to raw, and return markdown body. */
-async function fetchAndIngestUrl(url: string): Promise<{ body: string | null; blocked: boolean }> {
-  try {
-    const preview = await fetchJson<{ title: string; body: string; source_url: string; source: string }>(
-      "/api/wiki/fetch",
-      { method: "POST", body: JSON.stringify({ url }) },
-    );
-
-    if (!isValidContent(preview.body)) {
-      return { body: null, blocked: true };
-    }
-
-    // Ingest to raw library (non-fatal)
-    try {
-      await ingestRawEntry({ source: "url", title: preview.title || url, body: preview.body });
-    } catch { /* ok */ }
-
-    return { body: preview.body, blocked: false };
-  } catch {
-    return { body: null, blocked: false };
-  }
-}
+// v2 bugfix: fetchAndIngestUrl + isValidContent removed from the frontend.
+// Backend's `maybe_enrich_url` (desktop-core) now handles the entire
+// fetch → ingest → inject-to-system-prompt flow. The frontend only
+// shows a progress hint via addSystemMessage in handleSendWithUrlFetch.
 
 interface ProviderOption {
   id: string;
@@ -263,50 +235,24 @@ export function AskWorkbench({
       }
     }
 
+    // v2 bugfix: unified URL handling. The backend's `maybe_enrich_url`
+    // (desktop-core::append_user_message) handles fetch + ingest + inject
+    // into system prompt. The frontend's only job is to show a progress
+    // hint so the user knows the backend is working.
+    //
+    // Previously this function called `/api/desktop/wechat-fetch` directly
+    // and inlined the enriched content into the user message, which both
+    // polluted session history AND raced with the backend's own enrichment.
     const url = extractUrl(message);
-    console.log("[ask-url] message:", message.slice(0, 100), "extracted url:", url);
     if (url) {
-      // WeChat links: try Playwright fetch via wechat-fetch API
-      if (url.includes("mp.weixin.qq.com") || url.includes("weixin.qq.com")) {
-        console.log("[ask-url] WeChat URL detected, trying Playwright fetch");
-        addSystemMessage(`正在通过 Playwright 抓取微信文章...`);
-        try {
-          const result = await fetchJson<{ ok: boolean; title: string; markdown: string; raw_id?: number }>(
-            "/api/desktop/wechat-fetch",
-            { method: "POST", body: JSON.stringify({ url, ingest: true }) },
-            120_000,
-          );
-          if (result.ok && result.markdown && result.markdown.length > 100) {
-            addSystemMessage(`✅ 微信文章已抓取并入库 (Raw #${result.raw_id ?? "?"})`);
-            const enriched = `[系统：微信文章已通过 Playwright 抓取并入库。请基于以下内容回答用户。]\n\n标题：${result.title}\n\n${result.markdown.slice(0, 6000)}\n\n---\n用户原始消息：${message}`;
-            await onSend(enriched);
-            return;
-          }
-        } catch (err) {
-          console.warn("[ask-url] WeChat Playwright fetch failed:", err);
-        }
-        // Fallback
-        addSystemMessage("⚠️ 微信文章抓取失败。请通过 ClawBot 转发或手动复制内容。");
-        return;
+      const isWeChat = url.includes("mp.weixin.qq.com") || url.includes("weixin.qq.com");
+      if (isWeChat) {
+        addSystemMessage("⏳ 正在抓取微信文章（Playwright，最长 45 秒）...");
+      } else {
+        addSystemMessage(`⏳ 正在抓取 ${url.slice(0, 60)}${url.length > 60 ? "…" : ""}`);
       }
-      // Non-WeChat URLs: try to fetch
-      addSystemMessage(`正在抓取 ${url} ...`);
-      try {
-        const result = await fetchAndIngestUrl(url);
-        if (result.body) {
-          addSystemMessage("✅ 文章已抓取并入库。");
-          const enriched = `以下是从 ${url} 抓取的文章内容（已入库）：\n\n${result.body.slice(0, 8000)}\n\n---\n\n用户的问题：${message}`;
-          await onSend(enriched);
-          return;
-        }
-        if (result.blocked) {
-          addSystemMessage("⚠️ 该链接被反爬拦截，无法抓取。请手动复制内容粘贴。");
-          return;
-        }
-      } catch (err) {
-        console.warn("[ask] URL fetch failed:", err);
-      }
-      addSystemMessage("URL 抓取失败，发送原始消息。");
+      // Fall through to backend. maybe_enrich_url will handle fetch/ingest
+      // and inject content into the turn's system prompt.
     }
     await onSend(message);
   }, [onSend, addSystemMessage, wikiQuery]);
