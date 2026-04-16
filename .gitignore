@@ -29,3 +29,12 @@ apps/*/src-tauri/target/
 .claw/desktop/
 # Stale debugging file from earlier credential-routing experiments
 .claude/settings.json
+
+# Local data / runtime state / OS artifacts — never commit
+# (See rules/trigger-map.md pre-commit checklist for the full list)
+.clawwiki/
+__MACOSX/
+apps/desktop-shell/.claude/
+llm-wiki/
+rust/.claw/
+rust/crates/wiki_ingest/src/package-lock.json

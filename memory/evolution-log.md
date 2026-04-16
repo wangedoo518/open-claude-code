@@ -157,3 +157,32 @@ Together the two scripts enforce: **valid JSON + never rewritten**.
 - Untracked files pass: all governance memory files are currently untracked
   (never committed). Once committed, the append-only check activates. This
   avoids blocking the initial commit.
+
+---
+
+## 2026-04-16 — Multi-agent bug operations framework (S1)
+
+**What happened**:
+- Created `docs/multi-agent-bug-ops.md` — a concrete playbook for multi-agent bug detection and fixing phases
+- Updated `.gitignore` to cover 6 known local-data / junk entries that were polluting `git status`
+- Updated `rules/trigger-map.md` to reference the new playbook as a load requirement for bug phases
+- This is a framework-only round — no actual bugs were hunted or fixed
+
+**Why framework first, not direct bug hunt**:
+- Previous P0-P2 rounds showed that without explicit subagent ownership protocols, write-set conflicts, and stop conditions, bug fixes tended to scope-creep
+- The governance bootstrap (P2-2 through P3-3) established format and enforcement but lacked operational playbook for the bug-finding workflow itself
+- Cleaning junk from git status is prerequisite for reliable commit-scope audits during bug phases
+
+**Files created/modified this round**:
+
+| File | Change |
+|------|--------|
+| `docs/multi-agent-bug-ops.md` | New — 8-section bug-phase playbook |
+| `.gitignore` | Added 6 junk entries |
+| `rules/trigger-map.md` | Added bug-phase load requirement |
+| `memory/evolution-log.md` | This entry |
+
+**What was NOT created**:
+- No new enforcement scripts (existing JSONL + append-only validators are sufficient for bug phases)
+- No changes to learned-rules.md (no new multi-round pattern evidence yet)
+- No product code changes

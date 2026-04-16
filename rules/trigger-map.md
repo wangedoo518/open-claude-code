@@ -30,6 +30,11 @@ trigger. Agents MUST NOT skip them even if the change "looks small."
 | New file in `rust/crates/desktop-core/src/wechat_kefu/` | Check: KefuCapabilities::current() still matches handler behavior |
 | Change to `docs/design/modules/04-wechat-kefu.md` | Check: §0 Implementation Snapshot matches code |
 
+## Bug-phase load requirement
+
+Before entering any bug detection or fixing phase, agents MUST read:
+- `docs/multi-agent-bug-ops.md` — subagent protocol, bug lifecycle, report templates, stop conditions
+
 ## Pre-commit checklist
 
 Before asking the commander to commit:
@@ -39,4 +44,4 @@ Before asking the commander to commit:
 3. `git diff --check` — exit 0
 4. `git diff --stat` — verify only intended files are modified
 5. No unintended formatting changes in untouched files
-6. No `.clawwiki/` / `__MACOSX/` / `.claude/` / `llm-wiki/` / `rust/.claw/` staged
+6. No `.clawwiki/` / `__MACOSX/` / `.claude/` / `llm-wiki/` / `rust/.claw/` staged (these are in `.gitignore`)
