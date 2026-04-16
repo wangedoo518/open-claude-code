@@ -186,3 +186,26 @@ Together the two scripts enforce: **valid JSON + never rewritten**.
 - No new enforcement scripts (existing JSONL + append-only validators are sufficient for bug phases)
 - No changes to learned-rules.md (no new multi-round pattern evidence yet)
 - No product code changes
+
+---
+
+## 2026-04-16 — LR-4 promotion: theme token definition check (S2.1 / S2.1a)
+
+**What happened**: Promoted a new learned rule (LR-4) based on systemic evidence
+from S2 + S2.1: five `var(--color-*)` tokens were used in 47+ active files but
+never defined in the theme, causing invisible error/success/warning/permission
+states. The prevention command was initially written as a bash `grep | sed | while`
+pipeline; S2.1a corrected it to a cross-platform pure-Node one-liner that works on
+Windows + macOS + Linux without requiring `rg` or bash.
+
+**Why promote now**: 5 tokens, ~160 usages, 47+ files, discovered across 2 rounds
+(S2 found `--color-error`, S2.1 found the other 4). The pattern is systemic —
+caused by v3 OkLCH migration replacing v2 definitions but missing semantic aliases.
+
+**Changes**:
+
+| File | Change |
+|------|--------|
+| `memory/learned-rules.md` | Added LR-4 (S2.1); polished prevention command to pure-Node cross-platform (S2.1a) |
+| `memory/observations.jsonl` | Appended "theme token alias drift" observation (S2.1) |
+| `memory/evolution-log.md` | This entry |

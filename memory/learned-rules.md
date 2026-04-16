@@ -47,3 +47,42 @@ case.
 **Evidence**: P1-12 found Schema/CLAUDE.md and Raw child nodes were
 dead clicks because `handleNodeClick` only handled `article` and `log`.
 The data-driven action model eliminated the pattern.
+
+## LR-4: Theme token — verify definition before using `var(--color-*)`
+
+**Rule**: When writing `var(--color-TOKEN)` in any TSX/TS file, verify
+that `--color-TOKEN` is defined in `globals.css` @theme block **in both
+light and dark modes**. Run the cross-platform sweep in the Prevention
+section below — expect `All N color tokens defined.` and exit 0.
+
+**Evidence**: Across S2 and S2.1, five tokens were found used in 47+
+active files (~160 usages) but never defined:
+- `--color-error` (19 files, S2)
+- `--color-success` (13 files, S2.1)
+- `--color-warning` (13 files, S2.1)
+- `--color-permission` (1 file, S2.1)
+- `--color-fast-mode` (1 file, S2.1)
+
+All resolved to CSS initial/undefined → error/success/warning states
+were invisible (transparent backgrounds, inherited text colors). The v3
+OkLCH palette migration replaced v2 token definitions but missed these
+semantic aliases that inline styles across the codebase depended on.
+
+**Prevention**: Before PR, run the undefined-token sweep (pure Node, cross-platform):
+```sh
+node -e "
+const fs=require('fs'),path=require('path');
+function walk(d,ext,o=[]){try{for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory()&&!e.name.includes('node_modules'))walk(p,ext,o);else if(ext.some(x=>e.name.endsWith(x)))o.push(p);}}catch{}return o;}
+const files=walk('apps/desktop-shell/src',['.tsx','.ts']);
+const used=new Set();
+for(const f of files){for(const m of fs.readFileSync(f,'utf-8').matchAll(/var\(--color-([a-z_-]+)\)/g))used.add('--color-'+m[1]);}
+const css=fs.readFileSync('apps/desktop-shell/src/globals.css','utf-8');
+let ok=true;
+for(const t of[...used].sort()){if(!css.includes(t+':')){console.log('UNDEFINED:',t);ok=false;}}
+if(ok)console.log('All',used.size,'color tokens defined.');
+process.exit(ok?0:1);
+"
+```
+Expect `All N color tokens defined.` and exit 0. Any `UNDEFINED:` line means a
+token is used in code but missing from the theme — add it to `globals.css` in
+both `@theme` (light) and `.dark` blocks before committing.
