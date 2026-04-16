@@ -1035,94 +1035,12 @@ async fn append_message(
     Path(id): Path<String>,
     Json(payload): Json<AppendDesktopMessageRequest>,
 ) -> ApiResult<Json<AppendDesktopMessageResponse>> {
-    // Intercept WeChat URLs: fetch via Playwright, ingest, and replace message
-    let final_message = intercept_url(&payload.message).await
-        .unwrap_or_else(|| payload.message.clone());
-
     let session = state
         .desktop()
-        .append_user_message(&id, final_message)
+        .append_user_message(&id, payload.message)
         .await
         .map_err(into_api_error)?;
     Ok(Json(AppendDesktopMessageResponse { session }))
-}
-
-/// If the message contains a URL, try to fetch and ingest it.
-/// WeChat URLs → Playwright + defuddle; other URLs → simple HTTP fetch.
-/// Returns None if no URL found or all fetch methods fail.
-async fn intercept_url(message: &str) -> Option<String> {
-    // Quick check: does the message contain any URL?
-    let url = message.split_whitespace()
-        .find(|w| w.starts_with("http://") || w.starts_with("https://"))?;
-    let url = url.trim_end_matches(|c: char| !c.is_ascii() || matches!(c, '.' | ',' | ')' | ']'));
-
-    eprintln!("[intercept_url] URL detected: {url}");
-
-    let is_wechat = url.contains("weixin.qq.com");
-
-    // Strategy 1: For non-WeChat URLs, try simple HTTP fetch first (fast)
-    if !is_wechat {
-        if let Ok(result) = wiki_ingest::url::fetch_and_body(url).await {
-            // v2 bugfix: unified quality check from wiki_ingest.
-            if wiki_ingest::validate_fetched_content(&result.body).is_ok() {
-                eprintln!("[intercept_url] simple fetch OK: title={}", result.title);
-                if let Ok(paths) = resolve_wiki_root_for_handler() {
-                    let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
-                    if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
-                        let _ = wiki_store::append_new_raw_task(&paths, &entry, "url-fetch");
-                        eprintln!("[intercept_url] ingested as raw #{}", entry.id);
-                    }
-                }
-                return Some(format!(
-                    "[系统：用户发送了链接，已抓取内容并入库。请基于以下内容回答用户。]\n\n\
-                     标题：{}\n\n{}\n\n---\n用户原始消息：{}",
-                    result.title, &result.body[..result.body.len().min(6000)], message
-                ));
-            } else {
-                eprintln!("[intercept_url] simple fetch rejected by quality check, trying Playwright...");
-            }
-        } else {
-            eprintln!("[intercept_url] simple fetch failed, trying Playwright...");
-        }
-    }
-
-    // Strategy 2: Playwright fetch (for WeChat or failed simple fetch)
-    eprintln!("[intercept_url] Playwright fetch: {url}");
-    match wiki_ingest::wechat_fetch::fetch_wechat_article(url).await {
-        Ok(result) => {
-            // v2 bugfix: quality check.
-            if let Err(reason) = wiki_ingest::validate_fetched_content(&result.body) {
-                eprintln!("[intercept_url] Playwright rejected by quality check: {reason}");
-                return Some(format!(
-                    "[系统通知] 链接抓取失败（{reason}）。请告知用户手动复制内容粘贴。\n\n\
-                     用户原始消息：{message}",
-                ));
-            }
-            eprintln!("[intercept_url] Playwright fetch OK: title={}", result.title);
-
-            // Ingest to raw library
-            if let Ok(paths) = resolve_wiki_root_for_handler() {
-                let fm = wiki_store::RawFrontmatter::for_paste(&result.source, result.source_url.clone());
-                if let Ok(entry) = wiki_store::write_raw_entry(&paths, &result.source, &result.title, &result.body, &fm) {
-                    let _ = wiki_store::append_new_raw_task(&paths, &entry, "wechat-fetch");
-                    eprintln!("[append_message] ingested as raw #{}", entry.id);
-                }
-            }
-
-            // Return enriched message for LLM
-            Some(format!(
-                "[系统：用户发送了微信文章链接，已通过 Playwright 抓取并入库。请基于以下内容回答用户。]\n\n\
-                 标题：{}\n\n{}\n\n---\n用户原始消息：{}",
-                result.title,
-                &result.body[..result.body.len().min(6000)],
-                message
-            ))
-        }
-        Err(e) => {
-            eprintln!("[append_message] WeChat fetch failed: {e}");
-            None
-        }
-    }
 }
 
 async fn stream_session_events(
@@ -3572,6 +3490,89 @@ mod tests {
             }
         }
     }
+
+    // ── P0-2 regression: query_wiki SSE payload builders ─────────────
+    //
+    // `query_wiki_handler` used to emit a payload-less
+    // `{ "type": "query_done" }` because the JoinHandle was dropped;
+    // the fix extracts the JSON construction into two pure helpers so
+    // they can be tested without standing up a broker / mpsc / Sse
+    // stream. These tests pin the wire format the frontend
+    // `useWikiQuery` depends on.
+
+    use super::{make_query_done_payload, make_query_error_payload};
+    use wiki_maintainer::{QueryResult, QuerySource};
+
+    #[test]
+    fn query_done_payload_carries_sources_and_total_tokens() {
+        let result = QueryResult {
+            sources: vec![
+                QuerySource {
+                    slug: "claude-code-skill-best-practices".to_string(),
+                    title: "Claude Code 技能最佳实践".to_string(),
+                    relevance_score: 0.87,
+                    snippet: "关于如何组织 skill 的指南".to_string(),
+                },
+                QuerySource {
+                    slug: "rust-async".to_string(),
+                    title: "Rust 异步入门".to_string(),
+                    relevance_score: 0.52,
+                    snippet: "Future / Pin / Unpin".to_string(),
+                },
+            ],
+            total_tokens: 1234,
+        };
+        let payload = make_query_done_payload(&result);
+        assert_eq!(payload["type"], "query_done");
+        assert_eq!(payload["total_tokens"], 1234);
+        let sources = payload["sources"]
+            .as_array()
+            .expect("sources should be a JSON array");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0]["slug"], "claude-code-skill-best-practices");
+        assert_eq!(sources[0]["title"], "Claude Code 技能最佳实践");
+        // f32 → JSON Number roundtrip has precision loss; compare within
+        // tolerance instead of equality.
+        let score = sources[1]["relevance_score"]
+            .as_f64()
+            .expect("relevance_score should be a number");
+        assert!(
+            (score - 0.52).abs() < 1e-5,
+            "expected ≈0.52, got {score}"
+        );
+    }
+
+    #[test]
+    fn query_done_payload_keeps_empty_sources_array() {
+        let result = QueryResult { sources: vec![], total_tokens: 0 };
+        let payload = make_query_done_payload(&result);
+        assert_eq!(payload["type"], "query_done");
+        assert_eq!(payload["total_tokens"], 0);
+        assert!(payload["sources"].is_array());
+        assert_eq!(payload["sources"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn query_error_payload_shape() {
+        let payload = make_query_error_payload("wiki is empty");
+        assert_eq!(payload["type"], "query_error");
+        assert_eq!(payload["error"], "wiki is empty");
+        // Confirm no accidental `sources` leakage — frontend branches
+        // on `type` and shouldn't see a sources field on errors.
+        assert!(payload.get("sources").is_none());
+        assert!(payload.get("total_tokens").is_none());
+    }
+
+    #[test]
+    fn query_error_payload_preserves_join_error_message() {
+        let payload = make_query_error_payload(
+            "query task failed: JoinError::Panic(...)",
+        );
+        assert!(payload["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("query task failed:"));
+    }
 }
 
 // ── Multi-provider registry handlers (generic compatible gateways) ──
@@ -4291,25 +4292,28 @@ async fn query_wiki_handler(
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
 
-    // Spawn query in background, collect result for done event.
+    // Spawn query in background. We MUST retain the JoinHandle so the
+    // SSE stream can await the final result (sources + total_tokens) or
+    // surface the error — discarding it silently dropped those fields
+    // and left the frontend with a sources-less `query_done`.
     let paths_clone = paths.clone();
     let question_clone = question.clone();
-    tokio::spawn(async move {
-        let result = wiki_maintainer::query_wiki(
+    let query_task = tokio::spawn(async move {
+        wiki_maintainer::query_wiki(
             &paths_clone,
             &question_clone,
             max_sources,
             &adapter,
             tx,
         )
-        .await;
-        // result is consumed by the SSE stream via the channel
-        result
+        .await
     });
 
-    // SSE stream: forward chunks from rx, then emit done.
+    // SSE stream: forward chunks from rx, then emit exactly one of
+    // query_done / query_error based on the awaited JoinHandle.
     let sse_stream = async_stream::stream! {
-        // Forward query_chunk events.
+        // Phase 1: forward query_chunk events until the sender drops
+        // (which happens when query_wiki finishes — Ok or Err).
         while let Some(chunk) = rx.recv().await {
             let data = serde_json::json!({
                 "type": "query_chunk",
@@ -4318,13 +4322,43 @@ async fn query_wiki_handler(
             });
             yield Ok(Event::default().event("skill").data(data.to_string()));
         }
-        // Channel closed → query finished. Emit done.
-        yield Ok(Event::default().event("skill").data(
-            serde_json::json!({"type": "query_done"}).to_string()
-        ));
+
+        // Phase 2: join the task to read the final Result.
+        let final_payload = match query_task.await {
+            Ok(Ok(result)) => make_query_done_payload(&result),
+            Ok(Err(maintainer_err)) => {
+                make_query_error_payload(&maintainer_err.to_string())
+            }
+            Err(join_err) => make_query_error_payload(&format!(
+                "query task failed: {join_err}"
+            )),
+        };
+        yield Ok(Event::default().event("skill").data(final_payload.to_string()));
     };
 
     Ok(Sse::new(sse_stream))
+}
+
+// ── Query SSE payload builders (pure, unit-tested) ──────────────────
+//
+// Extracted as tiny pure functions so they can be exercised without
+// spinning up a broker + mpsc + axum router (Option B in the task
+// spec). The SSE stream calls them exactly once each, in
+// `query_wiki_handler`.
+
+fn make_query_done_payload(result: &wiki_maintainer::QueryResult) -> serde_json::Value {
+    serde_json::json!({
+        "type": "query_done",
+        "sources": result.sources,
+        "total_tokens": result.total_tokens,
+    })
+}
+
+fn make_query_error_payload(error: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "query_error",
+        "error": error,
+    })
 }
 
 // ── §2.3 POST /api/wiki/cleanup ─────────────────────────────────────
