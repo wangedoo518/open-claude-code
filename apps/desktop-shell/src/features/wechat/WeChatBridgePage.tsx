@@ -177,7 +177,7 @@ export function WeChatBridgePage() {
     !isTerminalLoginStatus(loginStatus.status);
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* Hero */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <h1 className="text-lg text-foreground">

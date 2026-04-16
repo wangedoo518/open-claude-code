@@ -85,53 +85,10 @@
    (--background, --card, --primary, --chart-1, --sidebar, --ring...)
    so components using either naming convention keep working.
    ═══════════════════════════════════════════════════════════════ */
-:root {
-  /* Text — shorthand palette */
-  --background: oklch(0.9660 0.0093 100.0);
-  --foreground: oklch(0.4161 0.0067 95.2);
-  --card: oklch(0.9818 0.0054 95.1);
-  --card-foreground: oklch(0.4161 0.0067 95.2);
-  --popover: oklch(0.9818 0.0054 95.1);
-  --popover-foreground: oklch(0.4161 0.0067 95.2);
-  --primary: oklch(0.6171 0.1375 39.0);
-  --primary-foreground: oklch(0.9818 0.0054 95.1);
-  --secondary: oklch(0.9237 0.0135 97.5);
-  --secondary-foreground: oklch(0.4161 0.0067 95.2);
-  --muted: oklch(0.9237 0.0135 97.5);
-  --muted-foreground: oklch(0.4780 0.0064 95.2);
-  --accent: oklch(0.9237 0.0135 97.5);
-  --accent-foreground: oklch(0.4161 0.0067 95.2);
-  --destructive: oklch(0.5191 0.1669 25.1);
-  --destructive-foreground: oklch(0.9818 0.0054 95.1);
-  --border: oklch(0.9485 0.0109 95.2);
-  --input: oklch(0.9237 0.0135 97.5);
-  --ring: oklch(0.6634 0.1531 248.9);
-
-  --chart-1: oklch(0.6171 0.1375 39.0);
-  --chart-2: oklch(0.6724 0.1308 38.8);
-  --chart-3: oklch(0.7000 0.1200 70.0);
-  --chart-4: oklch(0.5500 0.0800 110.0);
-  --chart-5: oklch(0.4500 0.1000 50.0);
-
-  --sidebar: oklch(0.9818 0.0054 95.1);
-  --sidebar-foreground: oklch(0.4161 0.0067 95.2);
-  --sidebar-primary: oklch(0.6171 0.1375 39.0);
-  --sidebar-primary-foreground: oklch(0.9818 0.0054 95.1);
-  --sidebar-accent: oklch(0.9237 0.0135 97.5);
-  --sidebar-accent-foreground: oklch(0.4161 0.0067 95.2);
-  --sidebar-border: oklch(0.9485 0.0109 95.2);
-  --sidebar-ring: oklch(0.6634 0.1531 248.9);
-
-  /* Tertiary text and emphasized link color (not in shadcn core) */
-  --stone-gray: oklch(0.6188 0.0104 100.1);                 /* #87867f */
-  --dark-warm: oklch(0.3590 0.0051 106.6);                  /* #3d3d3a */
-  --coral: oklch(0.6724 0.1308 38.8);                       /* #d97757 */
-
-  /* Warm-ring shadow tokens (1px warm border, whisper elevation) */
-  --shadow-warm-ring:        0 0 0 1px oklch(0.8533 0.0138 97.5);
-  --shadow-warm-ring-hover:  0 0 0 1px oklch(0.8066 0.0140 97.5);
-  --shadow-whisper:          0 4px 24px oklch(0 0 0 / 0.05);
-}
+/* NOTE: the :root shorthand block lives INSIDE @layer base (below)
+   — NOT here — so that .dark overrides in the same layer can win by
+   specificity. Placing it unlayered would break dark mode because CSS
+   cascade: unlayered > layered. See S5-1 fix. */
 
 @theme inline {
   /* Expose radius + shadcn names to Tailwind utility generation */
@@ -145,6 +102,52 @@
 }
 
 @layer base {
+  /* ── Shorthand vars (light) ───────────────────────────────────
+     Must be inside @layer base so .dark overrides below win by
+     specificity. Placing these on :root OUTSIDE @layer would make
+     them unlayered, which CSS cascade always ranks higher than any
+     @layer declaration — breaking dark mode. (S5-1 fix) */
+  :root {
+    --background: oklch(0.9660 0.0093 100.0);
+    --foreground: oklch(0.4161 0.0067 95.2);
+    --card: oklch(0.9818 0.0054 95.1);
+    --card-foreground: oklch(0.4161 0.0067 95.2);
+    --popover: oklch(0.9818 0.0054 95.1);
+    --popover-foreground: oklch(0.4161 0.0067 95.2);
+    --primary: oklch(0.6171 0.1375 39.0);
+    --primary-foreground: oklch(0.9818 0.0054 95.1);
+    --secondary: oklch(0.9237 0.0135 97.5);
+    --secondary-foreground: oklch(0.4161 0.0067 95.2);
+    --muted: oklch(0.9237 0.0135 97.5);
+    --muted-foreground: oklch(0.4780 0.0064 95.2);
+    --accent: oklch(0.9237 0.0135 97.5);
+    --accent-foreground: oklch(0.4161 0.0067 95.2);
+    --destructive: oklch(0.5191 0.1669 25.1);
+    --destructive-foreground: oklch(0.9818 0.0054 95.1);
+    --border: oklch(0.9485 0.0109 95.2);
+    --input: oklch(0.9237 0.0135 97.5);
+    --ring: oklch(0.6634 0.1531 248.9);
+    --chart-1: oklch(0.6171 0.1375 39.0);
+    --chart-2: oklch(0.6724 0.1308 38.8);
+    --chart-3: oklch(0.7000 0.1200 70.0);
+    --chart-4: oklch(0.5500 0.0800 110.0);
+    --chart-5: oklch(0.4500 0.1000 50.0);
+    --sidebar: oklch(0.9818 0.0054 95.1);
+    --sidebar-foreground: oklch(0.4161 0.0067 95.2);
+    --sidebar-primary: oklch(0.6171 0.1375 39.0);
+    --sidebar-primary-foreground: oklch(0.9818 0.0054 95.1);
+    --sidebar-accent: oklch(0.9237 0.0135 97.5);
+    --sidebar-accent-foreground: oklch(0.4161 0.0067 95.2);
+    --sidebar-border: oklch(0.9485 0.0109 95.2);
+    --sidebar-ring: oklch(0.6634 0.1531 248.9);
+    --stone-gray: oklch(0.6188 0.0104 100.1);
+    --dark-warm: oklch(0.3590 0.0051 106.6);
+    --coral: oklch(0.6724 0.1308 38.8);
+    --shadow-warm-ring:        0 0 0 1px oklch(0.8533 0.0138 97.5);
+    --shadow-warm-ring-hover:  0 0 0 1px oklch(0.8066 0.0140 97.5);
+    --shadow-whisper:          0 4px 24px oklch(0 0 0 / 0.05);
+  }
+
   .dark {
     /* ── ClawWiki v3 dark palette (OkLCH) ──────────────────────────
      * Near-Black page bg, Dark Surface cards, Warm Silver text.
