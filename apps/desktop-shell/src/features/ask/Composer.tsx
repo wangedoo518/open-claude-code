@@ -55,7 +55,6 @@ import {
   type SlashCommand,
 } from "./SlashCommandPalette";
 import { fetchJson } from "@/lib/desktop/transport";
-import { ingestRawEntry } from "@/features/ingest/persist";
 
 /* ─── MarkItDown constants ──────────────────────────────────────── */
 
@@ -501,82 +500,26 @@ export function Composer({
       finalMessage = `# Attached files\n\n${attachmentBlock}\n${trimmed}`;
     }
 
-    // URL detection: fetch content → ingest to Raw Library → send to AI with context
-    const urlMatch = finalMessage.match(/https?:\/\/[^\s，。！？]+/);
-    console.log("[composer:url-detect] finalMessage:", finalMessage.slice(0, 100), "urlMatch:", urlMatch?.[0]);
-    if (urlMatch) {
-      const detectedUrl = urlMatch[0];
-
-      // WeChat links: try Playwright fetch first, fallback to guidance
-      if (detectedUrl.includes("mp.weixin.qq.com") || detectedUrl.includes("weixin.qq.com")) {
-        resetComposer();
-        try {
-          console.log("[composer] fetching WeChat article via Playwright:", detectedUrl);
-          const result = await fetchJson<{ ok: boolean; title: string; markdown: string; raw_id?: number }>(
-            "/api/desktop/wechat-fetch",
-            { method: "POST", body: JSON.stringify({ url: detectedUrl, ingest: true }) },
-            120_000, // 2 min timeout for Playwright
-          );
-          if (result.ok && result.markdown && result.markdown.length > 100) {
-            console.log("[composer] WeChat fetch OK, title:", result.title);
-            const enriched = `[系统：用户发送了微信文章链接，系统已通过 Playwright 抓取内容并入库 (Raw #${result.raw_id ?? "?"})。请基于以下内容回答用户。]\n\n标题：${result.title}\n\n${result.markdown.slice(0, 6000)}\n\n---\n用户原始消息：${finalMessage}`;
-            await onSend(enriched);
-            return;
-          }
-        } catch (err) {
-          console.warn("[composer] WeChat Playwright fetch failed:", err);
-        }
-        // Fallback: guidance
-        await onSend("用户发送了一个微信公众号链接，但 Playwright 抓取失败。请告诉用户：1. 在微信中将文章转发给 ClawBot 自动入库；2. 或手动复制文章内容粘贴到输入框。不要给出代码示例。");
-        return;
-      }
-
-      // Non-WeChat URL: clear input first so the user sees responsiveness,
-      // then await the fetch → ingest → onSend pipeline sequentially.
-      resetComposer();
-
-      try {
-        console.log("[composer] fetching URL:", detectedUrl);
-        const preview = await fetchJson<{ title: string; body: string; source_url: string }>(
-          "/api/wiki/fetch",
-          {
-            method: "POST",
-            body: JSON.stringify({ url: detectedUrl }),
-          },
-          60_000, // 60s timeout for large pages
-        );
-        console.log("[composer] fetch OK, title:", preview.title, "body length:", preview.body.length);
-
-        // Check if content is valid (not a CAPTCHA page)
-        if (preview.body.length < 200 || preview.body.includes("环境异常") || preview.body.includes("完成验证")) {
-          await onSend(`用户想将链接 ${detectedUrl} 的内容入库到知识库，但抓取到的内容被反爬拦截。请告诉用户：去 Raw Library 页面，选择 URL 标签，粘贴链接后点击 Ingest 入库；或手动复制文章内容粘贴到输入框。不要给出代码示例。`);
-          return;
-        }
-
-        // Ingest to Raw Library (non-fatal — don't block AI message on ingest failure)
-        try {
-          await ingestRawEntry({
-            source: "url",
-            title: preview.title || detectedUrl,
-            body: preview.body,
-            source_url: detectedUrl,
-          });
-        } catch (ingestErr) {
-          console.warn("[composer] Raw Library ingest failed (non-fatal):", ingestErr);
-        }
-
-        // Send fetched content to AI with clear instruction
-        const enriched = `[系统：用户发送了一个链接，系统已自动抓取内容并入库到 Raw Library。请基于以下抓取内容回答用户，确认入库成功，并简要总结文章要点。不要说"无法访问链接"。]\n\n标题：${preview.title}\n来源：${detectedUrl}\n\n${preview.body.slice(0, 6000)}\n\n---\n用户原始消息：${finalMessage}`;
-        await onSend(enriched);
-      } catch (err) {
-        console.warn("[composer] URL fetch failed:", err);
-        // Fetch failed — guide user to Raw Library page instead
-        await onSend(`用户想将链接 ${detectedUrl} 的内容入库到知识库，但系统自动抓取失败。请告诉用户：去 Raw Library 页面，选择 URL 标签，粘贴链接后点击 Ingest 入库。不要给出代码示例。`);
-      }
-      return;
-    }
-
-    // Normal (non-URL) message path
+    // Composer does NOT perform URL / WeChat fetch or Raw ingest here.
+    //
+    // The canonical Ask pipeline owns URL ingest exactly once:
+    //   Ask send
+    //     → desktop-core::append_user_message
+    //       → maybe_enrich_url      (wiki_ingest fetch + wiki_store raw write +
+    //                                append_new_raw_task Inbox item)
+    //       → enriched context injected into the agent system prompt
+    //     → user's original message text stays as-is in session history
+    //
+    // A previous revision of this file called `/api/desktop/wechat-fetch`
+    // and `/api/wiki/fetch` + `ingestRawEntry` BEFORE `onSend`, which
+    // double-wrote Raw / Inbox entries and raced the backend enrichment.
+    // The progress hint ("⏳ 正在抓取 ...") is emitted by
+    // `AskWorkbench.handleSendWithUrlFetch` as a pure UI affordance and
+    // does NOT imply any frontend fetch.
+    //
+    // Raw Library still has its own explicit ingest button that calls
+    // `ingestRawEntry` via `features/ingest/adapters/url.ts` — that path
+    // is unchanged and intentional (user opts in to ingest a specific URL).
     resetComposer();
     await onSend(finalMessage);
   }, [value, attachments, isBusy, onSend, textareaRef, resetComposer]);
