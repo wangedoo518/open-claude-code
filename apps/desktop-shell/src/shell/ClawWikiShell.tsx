@@ -16,6 +16,7 @@ import { WeChatBridgePage } from "@/features/wechat/WeChatBridgePage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SettingsModal } from "@/features/settings/SettingsModal";
 import { ConnectWeChatModal } from "@/features/wechat-kefu/ConnectWeChatModal";
+import { ConnectWeChatPipelinePage } from "@/features/wechat-kefu/ConnectWeChatPipelinePage";
 import { ChannelStatusModal } from "@/features/wechat-kefu/ChannelStatusModal";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/state/settings-store";
@@ -161,6 +162,14 @@ export function ClawWikiShell() {
                     element={
                       <PageTransition>
                         <SettingsPage />
+                      </PageTransition>
+                    }
+                  />
+                  <Route
+                    path="/connect-wechat"
+                    element={
+                      <PageTransition>
+                        <ConnectWeChatPipelinePage />
                       </PageTransition>
                     }
                   />
