@@ -3,240 +3,308 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Connect 微信客服 · 嵌入式 Pipeline — Wireframe</title>
+<title>Connect 微信客服 · Pipeline v3（抽屉浏览器）</title>
 <style>
 :root{--bg:#faf9f6;--panel:#fff;--input:#f4f4f5;--text:#18181b;--text2:#52525b;--text3:#a1a1aa;--accent:#4f46e5;--accent-bg:#eef2ff;--green:#22c55e;--green-bg:#dcfce7;--orange:#f59e0b;--orange-bg:#fef3c7;--red:#ef4444;--border:#e4e4e7;--r:12px;--rs:8px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;--mono:'SF Mono','Fira Code',monospace}
 *{margin:0;padding:0;box-sizing:border-box}body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px}
 
-/* App shell */
 .app{display:flex;flex-direction:column;height:100vh}
 .topbar{display:flex;align-items:center;height:44px;background:var(--panel);border-bottom:1px solid var(--border);padding:0 16px;gap:12px}
 .topbar .back{background:none;border:none;font-size:14px;color:var(--text3);cursor:pointer;padding:4px 8px;border-radius:6px}
 .topbar .back:hover{background:var(--input)}
 .topbar .title{flex:1;text-align:center;font-size:15px;font-weight:600}
 .topbar .cancel{background:none;border:1px solid var(--border);color:var(--text2);cursor:pointer;padding:4px 14px;border-radius:6px;font-size:13px}
-.topbar .cancel:hover{background:var(--input)}
 
-/* Progress bar (Replit style) */
-.progress-bar{display:flex;height:36px;align-items:center;background:var(--panel);border-bottom:1px solid var(--border);padding:0 16px;gap:4px}
-.progress-step{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:28px;border-radius:14px;font-size:12px;font-weight:500;transition:all .3s}
+/* Progress bar */
+.progress-bar{display:flex;height:40px;align-items:center;background:var(--panel);border-bottom:1px solid var(--border);padding:0 16px;gap:4px}
+.progress-step{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:28px;border-radius:14px;font-size:11px;font-weight:500;transition:all .3s;cursor:pointer}
 .progress-step.done{background:var(--green);color:white}
 .progress-step.active{background:var(--accent);color:white;animation:glow 2s infinite}
+.progress-step.manual{background:var(--orange);color:white;animation:glow 2s infinite}
 .progress-step.pending{background:var(--input);color:var(--text3)}
-.progress-step .icon{font-size:13px}
-@keyframes glow{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(79,70,229,.3)}50%{opacity:.9;box-shadow:0 0 12px 2px rgba(79,70,229,.2)}}
+@keyframes glow{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(79,70,229,.2)}50%{opacity:.9;box-shadow:0 0 10px 2px rgba(79,70,229,.15)}}
 
 /* Main layout */
-.main{display:flex;flex:1;overflow:hidden}
+.main-area{display:flex;flex:1;overflow:hidden;position:relative}
 
-/* Left panel */
-.left-panel{width:340px;min-width:340px;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--panel)}
-.step-header{padding:20px;border-bottom:1px solid var(--border)}
-.step-header .step-num{font-size:12px;color:var(--accent);font-weight:600;margin-bottom:4px}
-.step-header h2{font-size:16px;font-weight:600;margin-bottom:8px}
-.step-header p{font-size:13px;color:var(--text2);line-height:1.6}
+/* Left panel — always visible, expands when drawer closed */
+.left-panel{display:flex;flex-direction:column;background:var(--panel);transition:all 300ms ease;overflow:hidden;flex:1;min-width:340px}
+.left-panel.with-drawer{flex:0 0 340px;min-width:340px;border-right:1px solid var(--border)}
 
-.step-list{flex:1;overflow-y:auto;padding:12px}
-.step-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--rs);margin-bottom:4px;font-size:13px;cursor:pointer;transition:background .15s}
+.step-header{padding:20px 24px;border-bottom:1px solid var(--border)}
+.step-header .step-num{font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+.step-header h2{font-size:17px;font-weight:600;margin-bottom:4px}
+
+.step-body{padding:16px 24px;flex:1;overflow-y:auto}
+
+.manual-callout{background:var(--orange-bg);border:1px solid #fde68a;border-radius:var(--rs);padding:12px 14px;margin-bottom:16px;font-size:13px;color:#92400e;line-height:1.6}
+.manual-callout strong{color:#78350f}
+.auto-callout{background:var(--green-bg);border:1px solid #bbf7d0;border-radius:var(--rs);padding:12px 14px;margin-bottom:16px;font-size:13px;color:#166534;line-height:1.6}
+
+.step-body ol{padding-left:18px;margin:8px 0;font-size:13px;color:var(--text2);line-height:2}
+.step-body p{font-size:13px;color:var(--text2);line-height:1.8;margin:8px 0}
+.step-body .hint{margin-top:12px;padding:10px 12px;background:var(--input);border-radius:6px;font-size:12px;color:var(--text3)}
+
+/* Auto-step center layout */
+.auto-center{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;text-align:center}
+.auto-center h2{font-size:18px;margin-bottom:8px}
+.auto-center p{font-size:13px;color:var(--text2);margin-bottom:20px}
+.progress-ring{width:80px;height:80px;border-radius:50%;border:4px solid var(--input);border-top-color:var(--accent);animation:spin 1s linear infinite;margin-bottom:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.auto-center code{font-size:12px;background:var(--input);padding:3px 8px;border-radius:4px;font-family:var(--mono)}
+
+/* Step list */
+.step-list{padding:12px 16px;border-top:1px solid var(--border)}
+.step-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;margin-bottom:2px;cursor:pointer}
 .step-item:hover{background:var(--input)}
-.step-item.active{background:var(--accent-bg)}
-.step-item .s-icon{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
-.step-item .s-icon.done{background:var(--green-bg);color:var(--green)}
-.step-item .s-icon.running{background:var(--accent-bg);color:var(--accent);animation:pulse 1.5s infinite}
-.step-item .s-icon.wait{background:var(--orange-bg);color:var(--orange)}
-.step-item .s-icon.pending{background:var(--input);color:var(--text3)}
-.step-item .s-label{flex:1}
-.step-item .s-status{font-size:11px;color:var(--text3)}
-.step-item .s-status.done{color:var(--green)}
-.step-item .s-status.running{color:var(--accent)}
-.step-item .s-status.wait{color:var(--orange)}
+.step-item .si{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
+.step-item .si.done{background:var(--green-bg);color:var(--green)}
+.step-item .si.active{background:var(--accent-bg);color:var(--accent);animation:pulse 1.5s infinite}
+.step-item .si.manual{background:var(--orange-bg);color:var(--orange);animation:pulse 1.5s infinite}
+.step-item .si.pending{background:var(--input);color:var(--text3)}
+.step-item .ss{margin-left:auto;font-size:10px}
+.step-item .badge-manual{font-size:9px;background:var(--orange-bg);color:#92400e;padding:1px 5px;border-radius:8px;margin-left:3px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
-.log-section{border-top:1px solid var(--border);padding:0}
-.log-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;font-size:12px;font-weight:600;color:var(--text2);cursor:pointer}
+/* Log */
+.log-section{border-top:1px solid var(--border)}
+.log-header{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:12px;font-weight:500;color:var(--text2);cursor:pointer}
 .log-header:hover{background:var(--input)}
-.log-body{background:#1e1e2e;color:#a6adc8;font-family:var(--mono);font-size:11px;max-height:180px;overflow-y:auto;padding:12px 16px}
-.log-body .time{color:#585b70}.log-body .ok{color:var(--green)}.log-body .warn{color:var(--orange)}.log-body .err{color:var(--red)}
+.log-body{background:#1e1e2e;color:#a6adc8;font-family:var(--mono);font-size:11px;max-height:120px;overflow-y:auto;padding:8px 14px;line-height:1.6}
+.log-body .time{color:#585b70}.log-body .ok{color:var(--green)}.log-body .warn{color:var(--orange)}
 
-.left-footer{padding:12px 16px;border-top:1px solid var(--border)}
-.left-footer button{width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--rs);font-size:13px;cursor:pointer;background:var(--panel);color:var(--text2)}
-.left-footer button:hover{background:var(--input)}
+.left-footer{padding:8px 16px;border-top:1px solid var(--border);display:flex;gap:8px}
+.left-footer button{flex:1;padding:7px;border-radius:var(--rs);font-size:12px;cursor:pointer}
+.btn-cancel{background:none;border:1px solid var(--border);color:var(--text2)}
+.btn-next{background:var(--accent);border:none;color:white}
 
-/* Right panel (webview) */
-.right-panel{flex:1;display:flex;flex-direction:column;background:#f8f8f8}
-.webview-toolbar{display:flex;align-items:center;height:36px;background:var(--panel);border-bottom:1px solid var(--border);padding:0 8px;gap:4px}
-.webview-toolbar button{background:none;border:none;color:var(--text3);cursor:pointer;padding:4px 6px;border-radius:4px;font-size:13px}
-.webview-toolbar button:hover{background:var(--input);color:var(--text2)}
-.webview-toolbar .url{flex:1;font-size:12px;color:var(--text3);padding:4px 10px;background:var(--input);border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.webview-content{flex:1;display:flex;align-items:center;justify-content:center;background:white;margin:8px;border-radius:var(--rs);border:1px solid var(--border);overflow:hidden;position:relative}
+/* ===== RIGHT DRAWER ===== */
+.drawer{display:flex;flex-direction:column;background:#f0f0f0;transition:width 300ms ease,min-width 300ms ease,opacity 200ms ease;overflow:hidden;position:relative}
+.drawer.open{width:55%;min-width:400px;opacity:1}
+.drawer.closed{width:0;min-width:0;opacity:0}
+
+.drawer-toggle{position:absolute;left:-28px;top:50%;transform:translateY(-50%);width:28px;height:56px;background:var(--panel);border:1px solid var(--border);border-right:none;border-radius:6px 0 0 6px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;color:var(--text3);z-index:5;box-shadow:-2px 0 4px rgba(0,0,0,.04)}
+.drawer-toggle:hover{background:var(--input);color:var(--text2)}
+
+.webview-toolbar{display:flex;align-items:center;height:34px;background:var(--panel);border-bottom:1px solid var(--border);padding:0 8px;gap:4px;flex-shrink:0}
+.webview-toolbar button{background:none;border:none;color:var(--text3);cursor:pointer;padding:3px 6px;border-radius:4px;font-size:12px}
+.webview-toolbar button:hover{background:var(--input)}
+.webview-toolbar .url{flex:1;font-size:11px;color:var(--text3);padding:3px 8px;background:var(--input);border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.webview-content{flex:1;display:flex;align-items:center;justify-content:center;background:white;margin:6px;border-radius:var(--rs);border:1px solid var(--border)}
 .webview-placeholder{text-align:center;color:var(--text3);font-size:13px;line-height:2}
-.webview-placeholder .big-icon{font-size:64px;margin-bottom:16px;opacity:.5}
+.webview-placeholder .big{font-size:48px;margin-bottom:8px;opacity:.6}
 
-/* Congrats page */
+/* Congrats */
 .congrats{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:var(--panel)}
 .congrats.active{display:flex}
-.congrats .emoji{font-size:64px;margin-bottom:16px}
-.congrats h1{font-size:24px;font-weight:600;margin-bottom:24px}
-.congrats-card{border:1px solid var(--border);border-radius:var(--r);padding:24px;width:100%;max-width:520px;display:flex;gap:20px;align-items:center;margin-bottom:20px}
-.congrats-card .qr{width:120px;height:120px;background:var(--input);border-radius:var(--rs);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text3);flex-shrink:0;border:1px solid var(--border)}
+.congrats .emoji{font-size:56px;margin-bottom:12px}
+.congrats h1{font-size:22px;font-weight:600;margin-bottom:20px}
+.congrats-card{border:1px solid var(--border);border-radius:var(--r);padding:20px;width:100%;max-width:480px;display:flex;gap:16px;align-items:center;margin-bottom:16px}
+.congrats-card .qr{width:100px;height:100px;background:var(--input);border-radius:var(--rs);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3);flex-shrink:0;border:1px solid var(--border)}
 .congrats-card .info{font-size:13px;color:var(--text2);line-height:1.8}
 .congrats-card .info strong{color:var(--text)}
-.link-row{display:flex;align-items:center;gap:8px;width:100%;max-width:520px;margin-bottom:20px}
-.link-row input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:var(--rs);font-size:13px;background:var(--input);color:var(--text2)}
-.link-row button{padding:8px 16px;border:1px solid var(--accent);color:var(--accent);border-radius:var(--rs);font-size:13px;cursor:pointer;background:none;white-space:nowrap}
-.tips-box{background:var(--input);border-radius:var(--rs);padding:16px 20px;width:100%;max-width:520px;font-size:12px;color:var(--text2);line-height:2;margin-bottom:24px}
+.link-row{display:flex;align-items:center;gap:8px;width:100%;max-width:480px;margin-bottom:16px}
+.link-row input{flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:var(--rs);font-size:12px;background:var(--input);color:var(--text2)}
+.link-row button{padding:7px 14px;border:1px solid var(--accent);color:var(--accent);border-radius:var(--rs);font-size:12px;cursor:pointer;background:none;white-space:nowrap}
+.tips-box{background:var(--input);border-radius:var(--rs);padding:14px 18px;width:100%;max-width:480px;font-size:12px;color:var(--text2);line-height:2;margin-bottom:20px}
 .tips-box strong{color:var(--text)}
-.finish-btn{padding:10px 32px;background:var(--accent);color:white;border:none;border-radius:var(--rs);font-size:14px;font-weight:500;cursor:pointer}
-.finish-btn:hover{opacity:.9}
+.finish-btn{padding:10px 28px;background:var(--accent);color:white;border:none;border-radius:var(--rs);font-size:14px;font-weight:500;cursor:pointer}
 
-/* Tab switching */
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal-box{background:var(--panel);border-radius:16px;width:420px;padding:32px;box-shadow:0 20px 60px rgba(0,0,0,.15);text-align:center}
+.modal-box h2{font-size:20px;font-weight:600;margin-bottom:8px}
+.modal-box .desc{font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6}
+.modal-box .info-card{background:var(--input);border-radius:var(--rs);padding:16px;text-align:left;margin-bottom:20px;font-size:13px;color:var(--text2);line-height:2}
+.modal-box .num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--accent);color:white;font-size:11px;font-weight:600;margin-right:6px}
+.start-btn{padding:10px 32px;background:var(--accent);color:white;border:none;border-radius:var(--rs);font-size:15px;font-weight:500;cursor:pointer;width:100%}
+
 .view{display:none}.view.active{display:flex}
 </style>
 </head>
 <body>
 
-<div class="app">
-  <!-- Topbar -->
+<!-- ===== CONFIRM MODAL ===== -->
+<div class="modal-overlay" id="confirm-modal" onclick="if(event.target===this){startApp()}">
+<div class="modal-box">
+  <div style="font-size:40px;margin-bottom:12px">🚀</div>
+  <h2>一键接入微信客服</h2>
+  <div class="desc">自动完成 Cloudflare 中继部署 + 微信客服配置<br>全程约 3 分钟</div>
+  <div class="info-card">
+    <strong>你只需要完成 2 次手动操作：</strong><br><br>
+    <span class="num">1</span> <strong>🤖 Cloudflare 真人验证</strong><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 注册时完成验证，浏览器会自动弹出<br><br>
+    <span class="num">2</span> <strong>📱 微信扫码授权</strong><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 用手机微信扫码，浏览器会自动弹出<br><br>
+    <span style="font-size:12px;color:var(--text3)">其余步骤全部自动化 ✨</span>
+  </div>
+  <button class="start-btn" onclick="startApp()">开始接入 →</button>
+</div>
+</div>
+
+<!-- ===== PIPELINE APP ===== -->
+<div class="app" id="app" style="display:none">
   <div class="topbar">
-    <button class="back" onclick="showView('pipeline')">◀ 返回</button>
+    <button class="back">◀ 返回</button>
     <span class="title">一键接入微信客服</span>
     <button class="cancel">取消</button>
   </div>
 
-  <!-- Progress Bar (Replit style) -->
-  <div class="progress-bar" id="progress-bar">
-    <div class="progress-step done" data-step="1"><span class="icon">✓</span> CF 账号</div>
-    <div class="progress-step done" data-step="2"><span class="icon">✓</span> 部署中继</div>
-    <div class="progress-step active" data-step="3" id="step3-bar"><span class="icon">◎</span> 微信授权</div>
-    <div class="progress-step pending" data-step="4"><span class="icon">○</span> 回调配置</div>
-    <div class="progress-step pending" data-step="5"><span class="icon">○</span> 创建账号</div>
+  <div class="progress-bar">
+    <div class="progress-step manual" id="pb1" onclick="showPhase(1)">⚠ CF 账号</div>
+    <div class="progress-step pending" id="pb2" onclick="showPhase(2)">○ 部署中继</div>
+    <div class="progress-step pending" id="pb3" onclick="showPhase(3)">○ 微信授权</div>
+    <div class="progress-step pending" id="pb4" onclick="showPhase(4)">○ 回调配置</div>
+    <div class="progress-step pending" id="pb5" onclick="showPhase(5)">○ 创建账号</div>
   </div>
 
-  <!-- VIEW: Pipeline (left+right) -->
-  <div class="main view active" id="view-pipeline">
+  <!-- Pipeline view -->
+  <div class="main-area view active" id="view-pipeline">
+
     <!-- Left Panel -->
-    <div class="left-panel">
+    <div class="left-panel" id="left-panel">
       <div class="step-header">
-        <div class="step-num">步骤 3 / 5</div>
-        <h2>扫码授权企微</h2>
-        <p>请使用手机微信扫描右侧页面中的二维码，授权 ClaudeWiki 接入你的企业微信客服。</p>
+        <div class="step-num" id="step-num">步骤 1 / 5</div>
+        <h2 id="step-title">Cloudflare 账号注册</h2>
       </div>
 
-      <div class="step-list">
-        <div class="step-item" onclick="loadUrl('https://dash.cloudflare.com/sign-up','① CF 账号')">
-          <span class="s-icon done">✓</span>
-          <span class="s-label">① Cloudflare 账号</span>
-          <span class="s-status done">已跳过</span>
+      <div class="step-body" id="step-body">
+        <div class="manual-callout">
+          <strong>⚠ 需要你手动操作</strong><br>
+          请在右侧浏览器中完成注册和真人验证
         </div>
-        <div class="step-item" onclick="loadUrl('https://dash.cloudflare.com/workers','② 部署中继')">
-          <span class="s-icon done">✓</span>
-          <span class="s-label">② 部署中继服务器</span>
-          <span class="s-status done">已完成</span>
-        </div>
-        <div class="step-item active" onclick="loadUrl('https://kf.weixin.qq.com','③ 微信授权')">
-          <span class="s-icon wait">◎</span>
-          <span class="s-label"><strong>③ 扫码授权企微</strong></span>
-          <span class="s-status wait">等待扫码</span>
-        </div>
-        <div class="step-item">
-          <span class="s-icon pending">○</span>
-          <span class="s-label">④ 回调 URL 配置</span>
-          <span class="s-status">待执行</span>
-        </div>
-        <div class="step-item">
-          <span class="s-icon pending">○</span>
-          <span class="s-label">⑤ 创建客服账号</span>
-          <span class="s-status">待执行</span>
-        </div>
+        <ol>
+          <li>输入邮箱和密码</li>
+          <li>完成真人验证（拖动滑块/点击图片）</li>
+          <li>注册成功后自动继续下一步</li>
+        </ol>
+        <div class="hint">💡 真人验证（CAPTCHA）无法自动完成，需要你手动操作</div>
+      </div>
+
+      <div class="step-list" id="step-list">
+        <div class="step-item" onclick="showPhase(1)"><span class="si manual" id="si1">◎</span><strong>① CF 账号</strong><span class="badge-manual">需手动</span><span class="ss" id="ss1" style="color:var(--orange)">验证中</span></div>
+        <div class="step-item" onclick="showPhase(2)"><span class="si pending" id="si2">○</span>② 部署中继<span class="ss" id="ss2">待执行</span></div>
+        <div class="step-item" onclick="showPhase(3)"><span class="si pending" id="si3">○</span>③ 微信授权<span class="badge-manual">需手动</span><span class="ss" id="ss3">待执行</span></div>
+        <div class="step-item" onclick="showPhase(4)"><span class="si pending" id="si4">○</span>④ 回调配置<span class="ss" id="ss4">待执行</span></div>
+        <div class="step-item" onclick="showPhase(5)"><span class="si pending" id="si5">○</span>⑤ 创建账号<span class="ss" id="ss5">待执行</span></div>
       </div>
 
       <div class="log-section">
-        <div class="log-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
-          📋 执行日志 <span>▼</span>
-        </div>
-        <div class="log-body">
-          <div><span class="time">[15:03:01]</span> Cloudflare: 检测到已有 API token，<span class="ok">跳过注册</span></div>
-          <div><span class="time">[15:03:02]</span> 开始部署 Cloudflare Worker...</div>
-          <div><span class="time">[15:03:03]</span> Worker 部署成功: <span class="ok">relay.cw-xxx.workers.dev</span></div>
-          <div><span class="time">[15:03:04]</span> 回调 URL: https://relay.cw-xxx.workers.dev/callback</div>
-          <div><span class="time">[15:03:05]</span> 打开微信客服授权页面...</div>
-          <div><span class="time">[15:03:06]</span> <span class="warn">等待用户扫码授权...</span></div>
-        </div>
+        <div class="log-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">📋 执行日志 <span>▼</span></div>
+        <div class="log-body" style="display:none"><div><span class="time">[15:03]</span> 打开 CF 注册页面...</div><div><span class="time">[15:03]</span> <span class="warn">等待用户完成真人验证...</span></div></div>
       </div>
 
       <div class="left-footer">
-        <button onclick="showView('congrats')">模拟完成 →</button>
+        <button class="btn-cancel">取消接入</button>
+        <button class="btn-next" onclick="nextPhase()">下一步 →</button>
       </div>
     </div>
 
-    <!-- Right Panel (Webview) -->
-    <div class="right-panel">
+    <!-- Right Drawer -->
+    <div class="drawer open" id="drawer">
+      <div class="drawer-toggle" onclick="toggleDrawer()" id="drawer-btn" title="收起浏览器">◀</div>
       <div class="webview-toolbar">
-        <button title="后退">◀</button>
-        <button title="前进">▶</button>
-        <button title="刷新">🔄</button>
-        <div class="url" id="webview-url">kf.weixin.qq.com</div>
+        <button>◀</button><button>▶</button><button>🔄</button>
+        <div class="url" id="wv-url">dash.cloudflare.com/sign-up</div>
         <button title="在浏览器中打开">🔗</button>
       </div>
-      <div class="webview-content" id="webview-content">
-        <div class="webview-placeholder">
-          <div class="big-icon">📱</div>
-          <strong>微信客服授权页面</strong><br>
-          请使用手机微信扫描此页面中的二维码<br><br>
-          <div style="width:160px;height:160px;border:2px dashed var(--border);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:var(--text3);font-size:11px">
-            QR Code<br>扫码区域
-          </div><br><br>
-          <span style="font-size:11px;color:var(--text3)">（实际运行时此处渲染 webview/iframe）</span>
+      <div class="webview-content">
+        <div class="webview-placeholder" id="wv-ph">
+          <div class="big" id="wv-icon">🤖</div>
+          <strong id="wv-title2">Cloudflare 注册页面</strong><br><br>
+          <div id="wv-captcha" style="border:2px dashed var(--orange);border-radius:8px;padding:16px 32px;color:var(--orange);display:inline-block">
+            ☑ 真人验证 (CAPTCHA)<br><span style="font-size:11px">需要手动操作</span>
+          </div>
+          <br><br><span style="font-size:10px;color:var(--text3)">（实际运行时渲染 webview）</span>
         </div>
       </div>
     </div>
+
   </div>
 
-  <!-- VIEW: Congrats -->
+  <!-- Congrats view -->
   <div class="congrats view" id="view-congrats">
     <div class="emoji">🎉</div>
     <h1>微信客服接入完成！</h1>
-
     <div class="congrats-card">
-      <div class="qr">QR Code<br><span style="font-size:9px">客服二维码</span></div>
-      <div class="info">
-        <strong>ClaudeWiki 助手</strong><br>
-        扫码添加到微信<br><br>
-        中继服务器: <code style="font-size:11px;background:var(--input);padding:2px 6px;border-radius:4px">relay.cw-xxx.workers.dev</code><br>
-        监听状态: <span style="color:var(--green)">● 运行中</span>
-      </div>
+      <div class="qr">QR Code</div>
+      <div class="info"><strong>ClaudeWiki 助手</strong><br>扫码添加到微信<br><br>中继: <code style="font-size:11px;background:var(--input);padding:2px 6px;border-radius:4px">relay.cw-xxx.workers.dev</code><br>监听: <span style="color:var(--green)">● 运行中</span></div>
     </div>
-
-    <div class="link-row">
-      <input value="https://work.weixin.qq.com/kfid/kfcxxxxx" readonly>
-      <button>📋 复制链接</button>
-    </div>
-
-    <div class="tips-box">
-      <strong>💡 使用方法:</strong><br>
-      · 发送链接 → 自动入库 &nbsp;&nbsp;&nbsp; · ?提问 → 查询知识库<br>
-      · 发送文本 → 记录笔记 &nbsp;&nbsp;&nbsp; · /recent → 最近摄入<br>
-      · 发送文件 → 文件提取 &nbsp;&nbsp;&nbsp; · /stats → 知识统计
-    </div>
-
+    <div class="link-row"><input value="https://work.weixin.qq.com/kfid/kfcxxxxx" readonly><button>📋 复制链接</button></div>
+    <div class="tips-box"><strong>💡 使用方法:</strong><br>· 发送链接 → 自动入库 &nbsp; · ?提问 → 查询知识库<br>· 发送文本 → 记录笔记 &nbsp; · /recent → 最近摄入</div>
     <button class="finish-btn">完成，回到主页 →</button>
   </div>
 </div>
 
 <script>
-function showView(id) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById('view-' + id).classList.add('active');
-  if (id === 'congrats') {
-    document.querySelectorAll('.progress-step').forEach(s => {
-      s.className = 'progress-step done';
-      s.querySelector('.icon').textContent = '✓';
-    });
+function startApp(){document.getElementById('confirm-modal').style.display='none';document.getElementById('app').style.display='flex'}
+
+const PHASES=[
+  {n:1,title:"Cloudflare 账号注册",manual:true,url:"dash.cloudflare.com/sign-up",icon:"🤖",wvTitle:"Cloudflare 注册页面",captcha:true,
+   body:'<div class="manual-callout"><strong>⚠ 需要你手动操作</strong><br>请在右侧浏览器中完成注册和真人验证</div><ol><li>输入邮箱和密码</li><li>完成真人验证（拖动滑块/点击图片）</li><li>注册成功后自动继续下一步</li></ol><div class="hint">💡 真人验证（CAPTCHA）无法自动完成，需要你手动操作</div>'},
+  {n:2,title:"部署中继服务器",manual:false,url:"",icon:"☁️",wvTitle:"",captcha:false,
+   body:'<div class="auto-center"><div class="progress-ring"></div><h2>正在部署中继服务器</h2><p>自动执行中，无需操作</p><code>relay.cw-xxx.workers.dev</code><div class="hint" style="margin-top:20px;text-align:left">正在将 Cloudflare Worker 部署到你的账号下<br>此步骤完全自动化，请稍候...</div></div>'},
+  {n:3,title:"扫码授权企微",manual:true,url:"kf.weixin.qq.com",icon:"📱",wvTitle:"微信客服授权页面",captcha:false,
+   body:'<div class="manual-callout"><strong>⚠ 需要你手动操作</strong><br>请用手机微信扫描右侧二维码</div><p>扫码后在手机上确认授权<br>授权成功后自动继续下一步</p>'},
+  {n:4,title:"回调 URL 配置",manual:false,url:"",icon:"🔗",wvTitle:"",captcha:false,
+   body:'<div class="auto-center"><div class="progress-ring"></div><h2>正在配置回调 URL</h2><p>自动执行中，无需操作</p><div class="hint" style="margin-top:20px;text-align:left">正在将 Worker URL 注册到微信客服回调</div></div>'},
+  {n:5,title:"创建客服账号",manual:false,url:"",icon:"✨",wvTitle:"",captcha:false,
+   body:'<div class="auto-center"><div class="progress-ring"></div><h2>正在创建客服账号</h2><p>自动执行中，无需操作</p><div class="hint" style="margin-top:20px;text-align:left">正在调用微信 API 创建 "ClaudeWiki 助手"</div></div>'}
+];
+const LABELS=["CF 账号","部署中继","微信授权","回调配置","创建账号"];
+const STATUS_ACTIVE=["验证中","部署中","扫码中","配置中","创建中"];
+let cur=0;
+
+function showPhase(n){
+  cur=n-1;const p=PHASES[cur];
+  document.getElementById('step-num').textContent=`步骤 ${p.n} / 5`;
+  document.getElementById('step-title').textContent=p.title;
+  document.getElementById('step-body').innerHTML=p.body;
+
+  // Drawer: open for manual, closed for auto
+  const d=document.getElementById('drawer');
+  const lp=document.getElementById('left-panel');
+  if(p.manual){
+    d.className='drawer open';lp.className='left-panel with-drawer';
+    document.getElementById('drawer-btn').textContent='◀';
+    document.getElementById('wv-url').textContent=p.url;
+    document.getElementById('wv-icon').textContent=p.icon;
+    document.getElementById('wv-title2').textContent=p.wvTitle;
+    document.getElementById('wv-captcha').style.display=p.captcha?'inline-block':'none';
+  } else {
+    d.className='drawer closed';lp.className='left-panel';
+    document.getElementById('drawer-btn').textContent='▶';
+  }
+
+  // Progress bar
+  for(let i=0;i<5;i++){
+    const el=document.getElementById('pb'+(i+1));
+    if(i<cur){el.className='progress-step done';el.textContent='✓ '+LABELS[i]}
+    else if(i===cur){el.className=p.manual?'progress-step manual':'progress-step active';el.textContent=(p.manual?'⚠ ':'◎ ')+LABELS[i]}
+    else{el.className='progress-step pending';el.textContent='○ '+LABELS[i]}
+  }
+  // Step list
+  for(let i=0;i<5;i++){
+    const si=document.getElementById('si'+(i+1)),ss=document.getElementById('ss'+(i+1));
+    if(i<cur){si.className='si done';si.textContent='✓';ss.textContent='已完成';ss.style.color='var(--green)'}
+    else if(i===cur){si.className=PHASES[i].manual?'si manual':'si active';si.textContent='◎';ss.textContent=STATUS_ACTIVE[i];ss.style.color=PHASES[i].manual?'var(--orange)':'var(--accent)'}
+    else{si.className='si pending';si.textContent='○';ss.textContent='待执行';ss.style.color='var(--text3)'}
   }
 }
-function loadUrl(url, label) {
-  document.getElementById('webview-url').textContent = url.replace('https://','');
-  document.querySelector('.webview-placeholder strong').textContent = label + ' 页面';
+
+function nextPhase(){
+  if(cur<4){showPhase(cur+2)}
+  else{
+    for(let i=0;i<5;i++){const el=document.getElementById('pb'+(i+1));el.className='progress-step done';el.textContent='✓ '+LABELS[i]}
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById('view-congrats').classList.add('active');
+  }
+}
+
+function toggleDrawer(){
+  const d=document.getElementById('drawer'),lp=document.getElementById('left-panel'),btn=document.getElementById('drawer-btn');
+  if(d.classList.contains('open')){d.className='drawer closed';lp.className='left-panel';btn.textContent='▶'}
+  else{d.className='drawer open';lp.className='left-panel with-drawer';btn.textContent='◀'}
 }
 </script>
 </body>
