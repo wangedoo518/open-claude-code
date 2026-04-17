@@ -5,7 +5,8 @@
  * Search, batch actions, expandable detail, multi-select delete.
  */
 
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import {
@@ -86,7 +87,11 @@ function formatSize(bytes: number): string {
 /* ─── Main page ──────────────────────────────────────────────────── */
 
 export function RawLibraryPage() {
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [expandedId, setExpandedId] = useState<number | null>(() => {
+    const param = searchParams.get("entry");
+    return param ? Number(param) || null : null;
+  });
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -104,7 +109,10 @@ export function RawLibraryPage() {
     },
     onSuccess: (_data, deletedId) => {
       void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
-      if (expandedId === deletedId) setExpandedId(null);
+      if (expandedId === deletedId) {
+        setExpandedId(null);
+        setSearchParams({}, { replace: true });
+      }
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(deletedId);
@@ -124,6 +132,7 @@ export function RawLibraryPage() {
       void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
       setSelectedIds(new Set());
       setExpandedId(null);
+      setSearchParams({}, { replace: true });
     },
   });
 
@@ -148,6 +157,7 @@ export function RawLibraryPage() {
         )
       ) {
         setExpandedId(null);
+        setSearchParams({}, { replace: true });
       }
       setSelectedIds(new Set());
       void count;
@@ -180,8 +190,20 @@ export function RawLibraryPage() {
 
   const handleIngested = (entry: RawEntry) => {
     setExpandedId(entry.id);
+    setSearchParams({ entry: String(entry.id) }, { replace: true });
     setShowAddPanel(false);
   };
+
+  // Scroll deep-linked entry into view on initial mount
+  useEffect(() => {
+    if (expandedId !== null) {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`raw-entry-${expandedId}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only on mount — not on every selection change
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -286,7 +308,15 @@ export function RawLibraryPage() {
           isLoading={listQuery.isLoading}
           error={listQuery.error}
           expandedId={expandedId}
-          onToggleExpand={(id) => setExpandedId(expandedId === id ? null : id)}
+          onToggleExpand={(id) => {
+            const next = expandedId === id ? null : id;
+            setExpandedId(next);
+            if (next !== null) {
+              setSearchParams({ entry: String(next) }, { replace: true });
+            } else {
+              setSearchParams({}, { replace: true });
+            }
+          }}
           onDelete={(id) => deleteMutation.mutate(id)}
           deletingId={deleteMutation.isPending ? (deleteMutation.variables ?? null) : null}
           selectedIds={selectedIds}
@@ -676,6 +706,7 @@ function EntryCard({
 
   return (
     <div
+      id={`raw-entry-${entry.id}`}
       className="group rounded-xl border bg-card p-4 shadow-warm-ring transition-shadow hover:shadow-warm-ring-hover"
       style={{
         borderLeft: isExpanded ? "3px solid var(--color-primary)" : undefined,

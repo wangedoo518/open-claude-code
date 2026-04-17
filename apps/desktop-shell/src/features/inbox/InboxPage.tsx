@@ -39,7 +39,7 @@ import {
   Sparkles,
   Save,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   approveInboxWithWrite,
   listInboxEntries,
@@ -78,7 +78,17 @@ function translateStatus(status: string): string {
 
 export function InboxPage() {
   const queryClient = useQueryClient();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    const param = searchParams.get("task");
+    return param ? Number(param) || null : null;
+  });
+
+  /** Select an inbox entry and sync URL query param. */
+  const handleSelect = (id: number) => {
+    setSelectedId(id);
+    setSearchParams({ task: String(id) }, { replace: true });
+  };
 
   const listQuery = useQuery({
     queryKey: inboxKeys.list(),
@@ -107,8 +117,20 @@ export function InboxPage() {
     const stillExists = entries.some((e) => e.id === selectedId);
     if (!stillExists) {
       setSelectedId(null);
+      setSearchParams({}, { replace: true });
     }
-  }, [entries, selectedId, listQuery.isLoading]);
+  }, [entries, selectedId, listQuery.isLoading, setSearchParams]);
+
+  // Scroll deep-linked task into view on initial mount.
+  useEffect(() => {
+    if (selectedId !== null) {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`inbox-task-${selectedId}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -159,7 +181,7 @@ export function InboxPage() {
             isLoading={listQuery.isLoading}
             error={listQuery.error}
             selectedId={selectedId}
-            onSelect={(id) => setSelectedId(id)}
+            onSelect={handleSelect}
           />
         </aside>
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
@@ -254,7 +276,7 @@ function EntryList({
       {sorted.map((entry) => {
         const isActive = entry.id === selectedId;
         return (
-          <li key={entry.id}>
+          <li key={entry.id} id={`inbox-task-${entry.id}`}>
             <button
               type="button"
               onClick={() => onSelect(entry.id)}
@@ -406,7 +428,7 @@ function EntryDetail({ entry }: { entry: InboxEntry }) {
           {entry.resolved_at && <span>处理于: {entry.resolved_at}</span>}
           {entry.source_raw_id != null && (
             <Link
-              to="/raw"
+              to={`/raw?entry=${entry.source_raw_id}`}
               className="inline-flex items-center gap-1 text-primary hover:underline"
               style={{ fontSize: 11 }}
             >

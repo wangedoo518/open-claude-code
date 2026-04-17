@@ -96,16 +96,15 @@ export function WikiFileTree({ embedded = false }: { embedded?: boolean }) {
       linkTo: "/inbox",
     };
 
-    // Raw section (latest 20) — click navigates to /raw page.
-    // Entry-level deep-link (#/raw?entry=N) is a follow-up; for now
-    // every raw node lands on the library list page.
+    // Raw section (latest 20) — click navigates to /raw?entry=N,
+    // deep-linking directly to the specific raw entry.
     const rawNodes: TreeNode[] = raws
       .slice(0, 20)
       .filter((r) => matchesFilter(r.slug) || matchesFilter(r.source))
       .map((r) => ({
         id: `raw-${r.id}`,
         label: `${r.slug} (${r.source})`,
-        action: { type: "navigate" as const, to: "/raw" },
+        action: { type: "navigate" as const, to: `/raw?entry=${r.id}` },
       }));
 
     const rawSection: TreeSection = {
