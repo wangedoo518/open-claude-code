@@ -53,7 +53,7 @@ interface TreeNode {
 }
 
 /* ── Component ─────────────────────────────────────────────────── */
-export function WikiFileTree() {
+export function WikiFileTree({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const openTab = useWikiTabStore((s) => s.openTab);
   const [filter, setFilter] = useState("");
@@ -220,7 +220,11 @@ export function WikiFileTree() {
 
   /* ── Render ────────────────────────────────────────────────── */
   return (
-    <div className="flex h-full w-[240px] min-w-[180px] max-w-[360px] flex-col border-r border-[var(--color-sidebar-border)] bg-[var(--color-sidebar-background)]">
+    <div className={
+      embedded
+        ? "flex h-full w-full flex-col"
+        : "flex h-full w-[240px] min-w-[180px] max-w-[360px] flex-col border-r border-[var(--color-sidebar-border)] bg-[var(--color-sidebar-background)]"
+    }>
       {/* Search bar — per component-spec.md §2.3 */}
       <div className="sticky top-0 z-10 p-2">
         <div className="relative">

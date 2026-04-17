@@ -1,26 +1,23 @@
 import { useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { useSettingsStore } from "@/state/settings-store";
 import {
   CLAWWIKI_ROUTES,
   type ClawWikiRoute,
   type ClawWikiSection,
 } from "./clawwiki-routes";
-import { listInboxEntries } from "@/features/ingest/persist";
+import { useAskSessionContext } from "@/features/ask/AskSessionContext";
+import { SessionSidebar } from "@/features/ask/SessionSidebar";
+import { WikiFileTree } from "@/features/wiki/WikiFileTree";
 import {
   Sidebar as UiSidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
 } from "@/components/ui/sidebar";
 
 /**
@@ -49,14 +46,6 @@ import {
  *   static `badge` field on the route definition (currently none).
  */
 
-/** Section label text shown as a caps-lock divider. */
-const SECTION_LABELS: Record<ClawWikiSection, string | null> = {
-  primary: "PRIMARY",
-  funnel: "FUNNEL",
-  // Settings gets its own footer slot, no caps-lock label.
-  settings: null,
-};
-
 function groupBySection(
   routes: readonly ClawWikiRoute[],
 ): Record<ClawWikiSection, ClawWikiRoute[]> {
@@ -79,28 +68,11 @@ function isActive(currentPath: string, itemPath: string): boolean {
 
 export function AppSidebar() {
   const location = useLocation();
+  const appMode = useSettingsStore((s) => s.appMode);
   const grouped = useMemo(() => groupBySection(CLAWWIKI_ROUTES), []);
 
-  // S4: Inbox badge shows live pending count. The useQuery is cheap
-  // (15-second stale time, light 30s refetch) and the Sidebar is
-  // always mounted so it's the natural owner of this cross-page data.
-  const inboxQuery = useQuery({
-    queryKey: ["wiki", "inbox", "list"] as const,
-    queryFn: () => listInboxEntries(),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-  });
-  const inboxBadge = (() => {
-    const pending = inboxQuery.data?.pending_count;
-    if (pending === undefined || pending === 0) return undefined;
-    return pending > 99 ? "99+" : String(pending);
-  })();
-
-  const badgeOverrides: Record<string, string | undefined> = {
-    inbox: inboxBadge,
-  };
-
   const settingsRoute = grouped.settings[0];
+  const wechatRoute = grouped.funnel.find((r) => r.key === "wechat");
 
   return (
     <UiSidebar collapsible="icon">
@@ -122,53 +94,28 @@ export function AppSidebar() {
         <ModeToggle />
       </SidebarHeader>
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>{SECTION_LABELS.primary}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {grouped.primary.map((route) => (
-                <RouteItem
-                  key={route.key}
-                  route={route}
-                  active={isActive(location.pathname, route.path)}
-                  badge={resolveBadge(route, badgeOverrides)}
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarSeparator />
-
-        <SidebarGroup>
-          <SidebarGroupLabel>{SECTION_LABELS.funnel}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {grouped.funnel.map((route) => (
-                <RouteItem
-                  key={route.key}
-                  route={route}
-                  active={isActive(location.pathname, route.path)}
-                  badge={resolveBadge(route, badgeOverrides)}
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      <SidebarContent className="group-data-[collapsible=icon]:hidden">
+        {appMode === "chat" ? <ChatSidebarContent /> : <WikiSidebarContent />}
       </SidebarContent>
 
-      {settingsRoute ? (
-        <SidebarFooter>
-          <SidebarMenu>
+      <SidebarFooter>
+        <SidebarMenu>
+          {wechatRoute && (
+            <RouteItem
+              route={wechatRoute}
+              active={isActive(location.pathname, wechatRoute.path)}
+              badge={undefined}
+            />
+          )}
+          {settingsRoute && (
             <RouteItem
               route={settingsRoute}
               active={isActive(location.pathname, settingsRoute.path)}
-              badge={resolveBadge(settingsRoute, badgeOverrides)}
+              badge={undefined}
             />
-          </SidebarMenu>
-        </SidebarFooter>
-      ) : null}
+          )}
+        </SidebarMenu>
+      </SidebarFooter>
     </UiSidebar>
   );
 }
@@ -177,20 +124,40 @@ export function AppSidebar() {
 // `Sidebar` — keep the alias so other call sites (if any) don't break.
 export { AppSidebar as Sidebar };
 
-function resolveBadge(
-  route: ClawWikiRoute,
-  overrides: Record<string, string | undefined>,
-): string | undefined {
-  const hasOverride = Object.prototype.hasOwnProperty.call(overrides, route.key);
-  // Override wins even when it's `undefined` — that means "live data
-  // says zero, hide the static placeholder".
-  return hasOverride ? overrides[route.key] : route.badge;
+/**
+ * Chat mode sidebar content — renders SessionSidebar (conversation list).
+ */
+function ChatSidebarContent() {
+  const { sessionId, onSwitchSession, onResetSession } =
+    useAskSessionContext();
+  const navigate = useNavigate();
+
+  return (
+    <SessionSidebar
+      activeSessionId={sessionId}
+      onSelectSession={(id) => {
+        onSwitchSession(id);
+        navigate("/ask");
+      }}
+      onNewSession={() => {
+        onResetSession();
+        navigate("/ask");
+      }}
+    />
+  );
+}
+
+/**
+ * Wiki mode sidebar content — renders WikiFileTree (Inbox/Raw/Wiki/Schema).
+ */
+function WikiSidebarContent() {
+  return <WikiFileTree embedded />;
 }
 
 interface RouteItemProps {
   route: ClawWikiRoute;
   active: boolean;
-  badge: string | undefined;
+  badge?: string;
 }
 
 function RouteItem({ route, active, badge }: RouteItemProps) {
@@ -237,11 +204,13 @@ function ModeToggle() {
     } else if (
       path.startsWith("/wiki") ||
       path.startsWith("/graph") ||
-      path.startsWith("/schema")
+      path.startsWith("/schema") ||
+      path.startsWith("/inbox") ||
+      path.startsWith("/raw")
     ) {
       if (appMode !== "wiki") setAppMode("wiki");
     }
-    // Other routes (dashboard, inbox, raw, wechat, settings) preserve
+    // Other routes (dashboard, wechat, settings) preserve
     // whichever mode the user last chose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);

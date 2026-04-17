@@ -385,39 +385,123 @@ ClaudeWiki 当前的问题：7 个独立页面（Ask/Raw/Wiki/Graph/Schema/Inbox
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.3 Chat Tab（对话模式）
+### 5.3 Chat Tab（对话模式）— 全部对话分类显示
 
-对应 Rowboat 的 Chat Tab。用户在这里与 Wiki 对话（/query）。
+> **现存问题**（截图实测 2026-04-17 发现）：
+>
+> `SessionSidebar` 显示所有 session，但存在三个问题：
+> 1. 所有 session 用同一个 `MessageSquare` 图标，**无法区分类型**
+> 2. 客服 session 标题是 openid（`wmbeQYRgAAxm`），**不是人话**
+> 3. **没有过滤器**，各类 session 混在一起找不到
+>
+> 所有 session 都是对话，都应该显示。问题不是"显示了太多"，
+> 而是"视觉上区分不出来"。
+
+#### 设计原则
+
+**全部显示，分类区分，可过滤。**
+
+所有 session 类型都有用户价值：
+- `ask` — 用户自己的问答，核心场景
+- `kefu` — 微信用户通过客服问了什么、系统怎么回的
+- `wechat` — iLink 投喂进来的内容
+- `patrol` — 自动巡检发现了什么
+- `system` — 调试/测试（可隐藏）
+
+#### 后端改动
+
+`DesktopSessionSummary` 增加 `source` 字段：
+
+```rust
+pub struct DesktopSessionSummary {
+    // ... 现有字段 ...
+    /// 对话来源，用于前端分类显示
+    pub source: SessionSource,  // "ask" | "kefu" | "wechat" | "patrol" | "system"
+}
+```
+
+#### 前端：分类图标 + 颜色 + 过滤器
+
+每种 source 使用不同图标和颜色，一眼区分：
+
+```
+source    图标          颜色       标题处理
+────────────────────────────────────────────────────────
+ask       💬 (对话)     默认色     从第一条消息提取 ≤15 字
+kefu      📱 (手机)     绿色       "微信用户: " + 第一条消息摘要
+wechat    🔗 (链接)     蓝色       "收到: " + 内容摘要
+patrol    🔄 (循环)     橙色       "巡检: " + 发现摘要
+system    ⚙ (齿轮)     灰色       保持原 title
+```
+
+#### 过滤器栏
+
+对话历史顶部增加过滤 pills，点击切换显示/隐藏：
+
+```
+┌─ 对话历史 ─────── + ✦ ✕ ─┐
+│ [全部] [💬Ask] [📱客服]    │  ← 过滤 pills，可多选
+│ [🔗微信] [🔄巡检]          │
+├──────────────────────────┤
+│ 今天                      │
+│  💬 Transformer vs RNN    │  ← Ask: 自动提取标题
+│  💬 认知复利分析            │
+│  📱 "RAG 还是 Wiki？"     │  ← Kefu: 微信用户的提问
+│  📱 "帮我总结这篇文章"     │
+│  🔗 收到: Karpathy 文章   │  ← WeChat: 投喂内容
+│  🔄 巡检: 3 页过期         │  ← Patrol: 巡检结果
+│                           │
+│ 昨天                      │
+│  💬 Karpathy 方法论总结    │
+│  📱 "Rust 所有权怎么理解"  │
+│  🔄 巡检: 发现 2 个冲突    │
+└──────────────────────────┘
+```
+
+#### 线框图
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  ◀ ▶  │                    New chat                          │ ⬜   │
 ├────────┴─────────────────────────────────────────────────────────────┤
-│ ┌────────────┐                                                       │
-│ │[Chat][Wiki]│                                                       │
-│ ├────────────┤                                                       │
-│ │            │     ┌─────────────────────────────────────────────┐   │
-│ │ 今天        │     │                                             │   │
-│ │  Transformer│     │                                             │   │
-│ │  vs RNN    │     │          Ask anything...                    │   │
-│ │            │     │                                             │   │
-│ │ 昨天        │     │                                             │   │
-│ │  LLM Wiki  │     │                                             │   │
-│ │  方法论     │     └─────────────────────────────────────────────┘   │
-│ │            │                                                       │
-│ │ 本周        │     ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
-│ │  Karpathy  │     │ 投喂 URL  │ │ 查询知识  │ │ 查看最近摄入     │   │
-│ │  认知复利   │     └──────────┘ └──────────┘ └──────────────────┘   │
-│ │            │                                                       │
-│ │            │     ┌─────────────────────────────────────────────┐   │
-│ │            │     │ ＋  🌐                          gpt-5.4 ▼  │   │
-│ │            │     └─────────────────────────────────────────────┘   │
-│ ├────────────┤                                                       │
-│ │ 微信助手 ●  │                                                       │
-│ │ Settings   │                                                       │
-│ └────────────┘                                                       │
+│ ┌────────────────┐                                                   │
+│ │ [Chat] [Wiki]  │                                                   │
+│ ├────────────────┤                                                   │
+│ │ 对话历史  + ✦ ✕ │                                                   │
+│ │[全部][💬][📱][🔄]│                                                   │
+│ ├────────────────┤  ┌─────────────────────────────────────────────┐  │
+│ │ 今天            │  │                                             │  │
+│ │ 💬 Transformer  │  │                                             │  │
+│ │    vs RNN       │  │          Ask anything...                    │  │
+│ │ 💬 认知复利分析  │  │                                             │  │
+│ │ 📱 "RAG还是Wiki"│  └─────────────────────────────────────────────┘  │
+│ │ 🔗 收到:Karpathy│                                                   │
+│ │ 🔄 巡检:3页过期 │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │
+│ │                 │  │ 投喂 URL  │ │ 查询知识  │ │ 查看最近摄入     │  │
+│ │ 昨天            │  └──────────┘ └──────────┘ └──────────────────┘  │
+│ │ 💬 Karpathy方法 │                                                   │
+│ │ 📱 "Rust所有权" │  ┌─────────────────────────────────────────────┐  │
+│ │ 🔄 巡检:2个冲突 │  │ ＋  🌐                       Claude 4.6 ▼  │  │
+│ │                 │  └─────────────────────────────────────────────┘  │
+│ ├────────────────┤                                                   │
+│ │ 微信助手 ●      │                                                   │
+│ │ Settings        │                                                   │
+│ └────────────────┘                                                   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+#### 改造前后对比
+
+| 改造前（当前） | 改造后 |
+|--------------|--------|
+| 💬 Ask · new conversation | 💬 Transformer vs RNN |
+| 💬 Ask · new conversation | 💬 认知复利分析 |
+| 💬 客服 · wmbeQYRgAAxm | 📱 "RAG 还是 Wiki？" |
+| 💬 客服 · wmbeQYRgAAxm | 📱 "帮我总结这篇文章" |
+| 💬 WeChat · vrv8rXkg | 🔗 收到: Karpathy 文章 |
+| 💬 Morning sweep | 🔄 巡检: 3 页过期 |
+| 💬 debug-test | ⚙ debug-test（可过滤隐藏） |
+| 同一图标、openid 标题、无法区分 | 分类图标 + 人话标题 + 可过滤 |
 
 **Quick Actions**（替换 Rowboat 的 Draft an email / Prep for meeting）：
 - **投喂 URL** → 粘贴链接，机械摄入 + /absorb
@@ -530,25 +614,102 @@ ClaudeWiki 当前的问题：7 个独立页面（Ask/Raw/Wiki/Graph/Schema/Inbox
 | Tools Library | **SKILL 编辑器**（SKILL.md 查看/编辑） |
 | Note Tagging | **Schema 模板**（TEMPLATES.md 编辑） |
 
-### 5.7 Rowboat → ClaudeWiki 信息架构映射总结
+### 5.7 侧边栏内容随 Tab 切换 — 不共享 PRIMARY 导航
+
+> **关键设计决策**：Chat Tab 和 Wiki Tab 的侧边栏内容**完全不同**。
+> 不是同一个 PRIMARY 列表在两种模式下都显示。
+> 当前代码 `clawwiki-routes.ts` 定义了 7 个 PRIMARY 路由全部平铺，
+> 需要拆散分配到对应 Tab。
+
+#### 旧的 7 个 PRIMARY 路由如何分配
+
+| 旧路由 | 归属 | 如何呈现 |
+|-------|------|---------|
+| **Dashboard** | Wiki Tab | 📊 工具栏按钮（统计面板），不是独立页 |
+| **Ask** | ~~删除~~ | **Chat Tab 本身就是 Ask**，不需要单独入口 |
+| **Inbox** | Wiki Tab | 文件树顶部 `Inbox (3)` badge |
+| **Raw Library** | Wiki Tab | 文件树 `▾ Raw 素材` 折叠节点 |
+| **Wiki Pages** | Wiki Tab | 文件树 `▾ Wiki 知识` 折叠节点 |
+| **Graph** | Wiki Tab | 文件树底部 `Graph View` 或顶部 Tab |
+| **Schema** | Wiki Tab | 文件树 `▸ Schema` 折叠节点 |
+| **WeChat Bridge** | Settings Modal | `微信助手` 配置页 |
+| **Settings** | 侧边栏底部 | 固定，两种模式都显示 |
+
+#### 两种模式的侧边栏对比
+
+```
+  Chat Tab 侧边栏                    Wiki Tab 侧边栏
+┌────────────────────┐            ┌────────────────────┐
+│ [Chat]  [Wiki]     │            │ [Chat]  [Wiki]     │
+├────────────────────┤            ├────────────────────┤
+│ 对话历史   + ✦ ✕   │            │ 📄 🗂 🔗 📊 ✕      │
+│ [全部][💬][📱][🔄]  │            ├────────────────────┤
+├────────────────────┤            │ Inbox          (3) │
+│ 今天               │            │                    │
+│  💬 Transformer    │            │ ▾ Raw 素材     247 │
+│  📱 "RAG还是Wiki"  │            │   Karpathy 文章    │
+│  🔗 收到:文章       │            │   Q1 财务报告      │
+│  🔄 巡检:3页过期    │            │                    │
+│ 昨天               │            │ ▾ Wiki 知识     89 │
+│  💬 Karpathy方法   │            │   ▸ concepts   34  │
+│  📱 "Rust所有权"   │            │   ▸ people     12  │
+│                    │            │   ▸ topics     28  │
+│  没有 Dashboard    │            │   _index.md        │
+│  没有 Inbox        │            │                    │
+│  没有 Raw Library  │            │ ▸ Schema           │
+│  没有 Wiki Pages   │            │   SKILL.md         │
+│  没有 Graph        │            │                    │
+│  没有 Schema       │            │ 没有对话历史列表     │
+├────────────────────┤            ├────────────────────┤
+│ 微信助手 ●          │            │ 微信助手 ●          │
+│ Settings           │            │ Settings           │
+└────────────────────┘            └────────────────────┘
+
+  只有对话列表                       只有文件树
+  没有页面导航                       没有对话列表
+```
+
+#### `clawwiki-routes.ts` 改造方案
+
+```typescript
+// 旧：7 个 PRIMARY 平铺
+// 新：按 Tab 分组，侧边栏根据当前 Tab 渲染不同内容
+
+// Chat Tab 不需要路由列表 — 侧边栏由 SessionSidebar 渲染
+// Wiki Tab 不需要路由列表 — 侧边栏由 WikiFileTree 渲染
+
+// 只保留固定项：
+export const FIXED_FOOTER = [
+  { key: "wechat-status", icon: "🔗", label: "微信助手" },
+  { key: "settings", path: "/settings", icon: "⚙️", label: "Settings" },
+];
+
+// 原来的 7 个 PRIMARY 路由 → 全部删除
+// Dashboard → Wiki Tab 📊 工具栏
+// Ask → 删除（Chat Tab 本身）
+// Inbox → Wiki Tab 文件树节点
+// Raw → Wiki Tab 文件树节点
+// Wiki → Wiki Tab 文件树节点
+// Graph → Wiki Tab 文件树节点 / 顶部 Tab
+// Schema → Wiki Tab 文件树节点
+// WeChat → Settings Modal
+```
+
+### 5.8 信息架构映射总结
 
 | Rowboat | ClaudeWiki | 改动 |
 |---------|-----------|------|
-| Chat Tab | Chat Tab | Quick Actions 替换为投喂/查询/统计 |
-| Knowledge Tab | **Wiki Tab** | Agent Notes→Raw, My Notes→Wiki, 新增 Schema+Inbox |
-| Graph View | Graph View | 基于 _backlinks.json，不变 |
-| 顶部多 Tab | 顶部多 Tab | 不变，打开的 Wiki 页并排 |
-| Settings Modal | Settings Modal | 新增微信助手、SKILL 编辑器、Schema 模板 |
-| Connect Accounts | **微信助手** | 只接微信，不接 Google/Gmail |
-| Starter Plan | — | 去掉，单用户本地优先 |
-| gpt-5.4 选择器 | Claude 选择器 | 切换 LLM Provider |
+| Chat Tab 侧边栏 | **对话列表**（分类图标 + 过滤器） | 无页面导航 |
+| Knowledge Tab 侧边栏 | **文件树**（Inbox/Raw/Wiki/Schema） | 无对话列表 |
+| Graph View | 顶部 Tab 或文件树入口 | 不变 |
+| 顶部多 Tab | 顶部多 Tab | 打开的 Wiki 页 + Graph + 对话 |
+| Settings Modal | Settings Modal | 含微信助手、SKILL 编辑器 |
+| 7 个 PRIMARY 路由 | **全部删除** | 分散到文件树和工具栏 |
 
-**砍掉的独立页面**：Dashboard、WeChat Hub、SKILL Editor 不再是独立页面，
-全部收敛进 Wiki Tab 的文件树、Settings Modal、或统计面板。
-
-**用户心智模型变成**：
-- 打开 App → **Chat**（对话/查询）或 **Wiki**（浏览/编辑知识）
-- 两件事，不是七件事
+**用户心智模型**：
+- **Chat Tab** = 我和 Wiki 的所有对话（Ask + 客服 + 巡检）
+- **Wiki Tab** = 我的知识资产（Raw + Wiki + Schema + Inbox）
+- 两件事，不是七件事，**侧边栏内容随 Tab 完全切换**
 
 ---
 

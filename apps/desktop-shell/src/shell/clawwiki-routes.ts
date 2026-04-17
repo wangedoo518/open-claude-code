@@ -43,14 +43,8 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     section: "primary",
     sprint: "S3",
   },
-  {
-    key: "ask",
-    path: "/ask",
-    icon: "💬",
-    label: "Ask",
-    section: "primary",
-    sprint: "S3",
-  },
+  // "Ask" removed from PRIMARY — Chat Tab IS the Ask interface.
+  // The /ask route still works in ClawWikiShell route table.
   {
     key: "inbox",
     path: "/inbox",

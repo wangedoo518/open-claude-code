@@ -21,7 +21,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useSettingsStore } from "@/state/settings-store";
 import { useStreamingStore } from "@/state/streaming-store";
-import { useAskSession } from "./useAskSession";
+import { useAskSessionContext } from "./AskSessionContext";
 import { useAskSSE } from "./useAskSSE";
 import { AskWorkbench } from "./AskWorkbench";
 import { listProviders, activateProvider } from "@/features/settings/api/client";
@@ -77,7 +77,7 @@ function ChatSidePanelBody() {
     errorMessage,
     onSend,
     onResetSession,
-  } = useAskSession();
+  } = useAskSessionContext();
 
   useAskSSE(sessionId, isTurnActive);
 

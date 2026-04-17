@@ -7,7 +7,6 @@
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import { useNavigate } from "react-router-dom";
-import { WikiFileTree } from "./WikiFileTree";
 import { WikiTabBar } from "./WikiTabBar";
 import { WikiArticle } from "./WikiArticle";
 import { SkillProgressCard } from "./SkillProgressCard";
@@ -137,19 +136,17 @@ function WikiContent() {
 }
 
 /* ── Main container ────────────────────────────────────────────── */
+/**
+ * WikiTab — v3: file tree moved to shell Sidebar (Wiki mode).
+ * This component now only renders the tab bar + content area.
+ */
 export function WikiTab() {
   return (
-    <div className="flex h-full">
-      {/* Left: File tree — 02-wiki-explorer.md §6.1 */}
-      <WikiFileTree />
-
-      {/* Center: Tab bar + content area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <WikiTabBar />
-        <SkillProgressCard />
-        <div className="flex-1 overflow-y-auto">
-          <WikiContent />
-        </div>
+    <div className="flex h-full flex-col overflow-hidden">
+      <WikiTabBar />
+      <SkillProgressCard />
+      <div className="flex-1 overflow-y-auto">
+        <WikiContent />
       </div>
     </div>
   );

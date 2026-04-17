@@ -1,13 +1,15 @@
 /**
- * Ask · CCD 工作台 + 流式会话 + 会话侧边栏
+ * Ask · CCD 工作台 + 流式会话
+ *
+ * Session sidebar has been lifted to the shell Sidebar (Chat mode).
+ * AskPage now reads shared session state from AskSessionContext.
  */
 
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AskWorkbench } from "./AskWorkbench";
-import { SessionSidebar } from "./SessionSidebar";
-import { useAskSession } from "./useAskSession";
+import { useAskSessionContext } from "./AskSessionContext";
 import { useAskSSE } from "./useAskSSE";
 import { listProviders, activateProvider } from "@/features/settings/api/client";
 
@@ -21,10 +23,7 @@ export function AskPage() {
     errorMessage,
     onSend,
     onResetSession,
-    onSwitchSession,
-  } = useAskSession();
-
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  } = useAskSessionContext();
 
   // Wire SSE subscription for real-time streaming + permission requests
   useAskSSE(sessionId, isTurnActive);
@@ -120,13 +119,6 @@ export function AskPage() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      <SessionSidebar
-        activeSessionId={sessionId}
-        onSelectSession={onSwitchSession}
-        onNewSession={onResetSession}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
-      />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {content}
       </div>

@@ -13,8 +13,6 @@ import {
   X,
   MessageSquare,
   Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -34,7 +32,9 @@ interface SessionSidebarProps {
   activeSessionId: string | null;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
+  /** @deprecated Shell sidebar now handles collapse. Ignored. */
   collapsed?: boolean;
+  /** @deprecated Shell sidebar now handles collapse. Ignored. */
   onToggleCollapse?: () => void;
 }
 
@@ -42,8 +42,6 @@ export function SessionSidebar({
   activeSessionId,
   onSelectSession,
   onNewSession,
-  collapsed = false,
-  onToggleCollapse,
 }: SessionSidebarProps) {
   const queryClient = useQueryClient();
 
@@ -79,32 +77,8 @@ export function SessionSidebar({
   const yesterday = sessions.filter((s) => s.bucket === "yesterday");
   const older = sessions.filter((s) => s.bucket === "older");
 
-  // Collapsed state: show only a narrow strip with expand button
-  if (collapsed) {
-    return (
-      <div className="flex h-full w-10 shrink-0 flex-col items-center border-r border-border/50 bg-sidebar-background pt-2.5">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-          title="展开对话历史"
-        >
-          <PanelLeftOpen className="size-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onNewSession}
-          className="mt-2 rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-          title="新建对话"
-        >
-          <Plus className="size-4" />
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-full w-[180px] shrink-0 flex-col border-r border-border/50 bg-sidebar-background">
+    <div className="flex h-full w-full flex-col">
       {/* Header + collapse + new button */}
       <div className="flex items-center justify-between border-b border-border/50 px-3 py-2.5">
         <span className="text-[12px] font-semibold text-sidebar-foreground">
@@ -136,14 +110,7 @@ export function SessionSidebar({
               <Sparkles className="size-3.5" />
             )}
           </button>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-            title="收起"
-          >
-            <PanelLeftClose className="size-3.5" />
-          </button>
+          {/* Collapse is now handled by the shell sidebar */}
         </div>
       </div>
 

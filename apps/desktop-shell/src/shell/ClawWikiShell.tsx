@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { AskSessionProvider } from "@/features/ask/AskSessionContext";
 import { AppSidebar } from "./Sidebar";
 import { CLAWWIKI_DEFAULT_ROUTE } from "./clawwiki-routes";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
@@ -68,6 +69,7 @@ export function ClawWikiShell() {
 
   return (
     <ErrorBoundary>
+      <AskSessionProvider>
       <SidebarProvider defaultOpen={true}>
         <AppSidebar />
         <SidebarInset className="flex min-h-0 flex-row overflow-hidden">
@@ -175,6 +177,7 @@ export function ClawWikiShell() {
           {showChatPanel && <ChatSidePanel />}
         </SidebarInset>
       </SidebarProvider>
+      </AskSessionProvider>
       {/* Global Settings Modal — 08-settings-modal.md */}
       <SettingsModal />
     </ErrorBoundary>
