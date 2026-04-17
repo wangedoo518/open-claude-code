@@ -2422,6 +2422,22 @@ pub fn append_inbox_pending(
     source_raw_id: Option<u32>,
 ) -> Result<InboxEntry> {
     let _guard = lock_inbox_writes();
+    append_inbox_pending_locked(paths, kind, title, description, source_raw_id)
+}
+
+/// Internal helper: same as `append_inbox_pending`, but assumes the
+/// caller already holds `INBOX_WRITE_GUARD`. Used by
+/// `append_new_raw_task` so its dedupe check (read) and the append
+/// (write) happen in a single critical section — without this the
+/// two ops would race across the guard boundary (TOCTOU), letting a
+/// concurrent caller slip a duplicate NewRaw entry between them.
+fn append_inbox_pending_locked(
+    paths: &WikiPaths,
+    kind: InboxKind,
+    title: &str,
+    description: &str,
+    source_raw_id: Option<u32>,
+) -> Result<InboxEntry> {
     let mut entries = load_inbox_file(paths)?;
     let next_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
     let entry = InboxEntry {
@@ -2627,11 +2643,39 @@ fn find_byte_from(haystack: &[u8], needle: u8, from: usize) -> Option<usize> {
 ///
 /// `origin` is a short, human-readable tag such as `"paste"` or
 /// `"WeChat user abcd1234"` that lands inside the description.
+///
+/// Idempotent on `source_raw_id`: if a **Pending** `NewRaw` inbox
+/// entry already references `entry.id`, this returns the existing
+/// entry untouched instead of creating a duplicate. Scope of the
+/// check is deliberately narrow — same raw id, same kind, pending
+/// status. It does NOT dedupe across `source_url` (Raw Library
+/// manual re-ingest produces a new `entry.id`, so those always get
+/// a fresh Inbox task) and does NOT suppress when the prior task
+/// was already resolved (a re-ingest should surface again). See
+/// Explorer B's 2026-04 scope note: "只在已经有相同 source_raw_id
+/// 的 pending inbox 时才跳过".
 pub fn append_new_raw_task(
     paths: &WikiPaths,
     entry: &RawEntry,
     origin: &str,
 ) -> Result<InboxEntry> {
+    // Hold the inbox write guard across the dedupe read and the
+    // subsequent append so a concurrent caller can't slip a duplicate
+    // between the check and the write.
+    let _guard = lock_inbox_writes();
+
+    // Dedupe: if a pending NewRaw for this raw id already exists,
+    // return it without appending. Intentionally no-op rather than an
+    // error — callers treat Ok as "inbox state is consistent".
+    let existing = load_inbox_file(paths)?;
+    if let Some(prior) = existing.iter().find(|e| {
+        e.kind == InboxKind::NewRaw
+            && e.status == InboxStatus::Pending
+            && e.source_raw_id == Some(entry.id)
+    }) {
+        return Ok(prior.clone());
+    }
+
     let (display_title, description) = match read_raw_entry(paths, entry.id) {
         Ok((_entry, body)) => {
             // Pull a clean title from the body (skips images / metadata).
@@ -2658,7 +2702,7 @@ pub fn append_new_raw_task(
             format!("来源：{origin}。建议操作：总结为概念知识页面。"),
         ),
     };
-    append_inbox_pending(
+    append_inbox_pending_locked(
         paths,
         InboxKind::NewRaw,
         &display_title,

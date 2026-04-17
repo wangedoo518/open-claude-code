@@ -287,7 +287,16 @@ export function AskWorkbench({
         <WelcomeScreen onShowDemo={() => setShowDemo(true)} />
       ) : (
         <ConversationScroller>
-          <div className="flex min-h-full flex-col justify-end">
+          {/*
+            Layout note: `justify-end` on a flex column does NOT work when the
+            child MessageList is a @tanstack/react-virtual absolute-positioned
+            list whose `totalSize` (from estimateSize ≈ 80) frequently exceeds
+            the scroller height. Instead, use a spacer `<div className="flex-1" />`
+            at the top to push content to the bottom for short conversations,
+            while still letting MessageList grow naturally when content is long.
+          */}
+          <div className="flex min-h-full flex-col">
+          <div className="flex-1" aria-hidden="true" />
           {showDemo && (
             <div className="mb-2 flex items-center justify-between rounded-lg border border-border/30 bg-muted/10 px-3 py-1.5">
               <span className="text-label text-muted-foreground">

@@ -543,6 +543,17 @@ impl KefuDesktopHandler {
             }
         };
 
+        // Step 2.5: Append Inbox `NewRaw` task so the maintainer surfaces
+        // this entry in the review queue. Without this, kefu URL ingests
+        // land in raw/ but the Inbox never lights up — users think their
+        // link was silently dropped. Non-fatal: an Inbox append failure
+        // must NOT block the ingest / absorb path.
+        let short_userid = &userid[..8.min(userid.len())];
+        let origin = format!("WeChat kefu · {short_userid}");
+        if let Err(err) = wiki_store::append_new_raw_task(&paths, &raw_entry, &origin) {
+            eprintln!("[kefu handler] URL inbox append failed: {err}");
+        }
+
         // Step 3: Trigger absorb.
         let absorb_reply = trigger_absorb_internal(raw_entry.id).await;
 
@@ -606,6 +617,14 @@ impl KefuDesktopHandler {
                 return;
             }
         };
+
+        // Append Inbox `NewRaw` task so kefu text ingests also surface in
+        // the maintainer queue. Same rationale as handle_url_ingest above —
+        // Inbox append must not block the reply / absorb path.
+        let origin = format!("WeChat kefu · {short_id}");
+        if let Err(err) = wiki_store::append_new_raw_task(&paths, &raw_entry, &origin) {
+            eprintln!("[kefu handler] text inbox append failed: {err}");
+        }
 
         let absorb_reply = trigger_absorb_internal(raw_entry.id).await;
 

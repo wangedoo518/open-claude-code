@@ -109,6 +109,19 @@ pub type Result<T> = std::result::Result<T, IngestError>;
 /// than loose terms — an article about "Captcha识别综述" shouldn't
 /// be rejected, but a page literally saying "完成验证后即可继续访问"
 /// is never anything but an anti-bot block.
+///
+/// Added 2026-04 round B:
+///   * Cloudflare challenge pages commonly show "Just a moment..." /
+///     "Checking your browser" — these are pre-JS-challenge shells
+///     that pass length/meaningful-char gates but contain zero content.
+///   * WeChat app-only share URLs opened in a browser render "请在微信
+///     客户端打开链接" instead of the article body.
+///   * 知乎 login-wall shells show "知乎，让每一次点击都充满意义" as
+///     the brand copy. (This string is the logged-out homepage tagline
+///     and only appears on unauthenticated walls — logged-in article
+///     pages do not surface it.)
+///   * Deleted WeChat articles show "该内容已被发布者删除" — not an
+///     anti-bot block per se, but definitively empty; reject early.
 const ANTI_BOT_MARKERS: &[&str] = &[
     "环境异常",
     "完成验证后即可继续访问",
@@ -120,6 +133,11 @@ const ANTI_BOT_MARKERS: &[&str] = &[
     "Access Denied",
     "Please enable JavaScript",
     "403 Forbidden",
+    "Just a moment...",
+    "Checking your browser",
+    "请在微信客户端打开链接",
+    "知乎，让每一次点击都充满意义",
+    "该内容已被发布者删除",
 ];
 
 /// Minimum raw body length to accept.

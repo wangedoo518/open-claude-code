@@ -283,7 +283,8 @@ export function WeChatBridgePage() {
               color: "var(--color-error)",
             }}
           >
-            Failed to start login: {String(startLoginMutation.error)}
+            启动登录失败：
+            {formatWeChatBridgeErrorMessage(String(startLoginMutation.error))}
           </div>
         )}
       </section>
@@ -385,7 +386,7 @@ function AccountList({
           color: "var(--color-error)",
         }}
       >
-        Failed to list WeChat accounts: {error.message}
+        列出微信账号失败：{formatWeChatBridgeErrorMessage(error.message)}
       </div>
     );
   }
@@ -747,7 +748,8 @@ function KefuSection() {
             </div>
             {createMutation.error && (
               <div className="mt-2 text-caption" style={{ color: "var(--color-error)" }}>
-                {String(createMutation.error)}
+                创建客服账号失败：
+                {formatWeChatBridgeErrorMessage(String(createMutation.error))}
               </div>
             )}
           </div>
@@ -967,7 +969,8 @@ function KefuConfigForm({ onSaved }: { onSaved: () => void }) {
           </button>
           {saveMutation.error && (
             <span className="text-caption" style={{ color: "var(--color-error)" }}>
-              {String(saveMutation.error)}
+              保存配置失败：
+              {formatWeChatBridgeErrorMessage(String(saveMutation.error))}
             </span>
           )}
         </div>

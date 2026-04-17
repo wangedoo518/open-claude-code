@@ -41,7 +41,7 @@ export function ConversationScroller({ children }: { children: ReactNode }) {
   const checkBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+    setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -49,12 +49,11 @@ export function ConversationScroller({ children }: { children: ReactNode }) {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, []);
 
-  // Auto-scroll on content change if user was at bottom
-  useEffect(() => {
-    if (isAtBottom && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  });
+  // NOTE: the previous dependency-less useEffect that forced scrollTop on every
+  // render has been removed. It raced with MessageList's own
+  // virtualizer.scrollToIndex (see MessageList.tsx), causing the scroll position
+  // to jitter during streaming. MessageList now owns auto-scroll and uses
+  // `isAtBottom` from this context to decide whether to stick.
 
   useEffect(() => {
     const el = scrollRef.current;

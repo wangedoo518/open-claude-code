@@ -93,12 +93,17 @@ export const MessageList = memo(function MessageList({
     overscan: 5,
   });
 
-  // Auto-scroll to bottom when new items arrive
+  // Auto-scroll to bottom when new items arrive or streaming token appended.
+  // NOTE: `streamingContent` must be in deps — during streaming `items.length`
+  // is stable (the trailing streaming item exists for the whole turn) and only
+  // the content grows. Without this dep the list would not follow the token
+  // tail. `isStreaming` is also included for symmetry when the streaming item
+  // is first appended / removed.
   useEffect(() => {
     if (items.length > 0 && isAtBottom) {
       virtualizer.scrollToIndex(items.length - 1, { align: "end" });
     }
-  }, [items.length, virtualizer, isAtBottom]);
+  }, [items.length, streamingContent, isStreaming, virtualizer, isAtBottom]);
 
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
