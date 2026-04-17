@@ -40,6 +40,14 @@ export interface SettingsState {
   settingsModalOpen: boolean;
   openSettingsModal: () => void;
   closeSettingsModal: () => void;
+  /** Connect WeChat modal (kefu onboarding flow). */
+  connectWeChatModalOpen: boolean;
+  openConnectWeChatModal: () => void;
+  closeConnectWeChatModal: () => void;
+  /** Channel status modal (kefu runtime status). */
+  channelStatusModalOpen: boolean;
+  openChannelStatusModal: () => void;
+  closeChannelStatusModal: () => void;
 
   theme: ThemeMode;
   warwolfTheme: boolean;
@@ -165,6 +173,12 @@ export const useSettingsStore = create<SettingsState>()(
       settingsModalOpen: false,
       openSettingsModal: () => set({ settingsModalOpen: true }),
       closeSettingsModal: () => set({ settingsModalOpen: false }),
+      connectWeChatModalOpen: false,
+      openConnectWeChatModal: () => set({ connectWeChatModalOpen: true }),
+      closeConnectWeChatModal: () => set({ connectWeChatModalOpen: false }),
+      channelStatusModalOpen: false,
+      openChannelStatusModal: () => set({ channelStatusModalOpen: true }),
+      closeChannelStatusModal: () => set({ channelStatusModalOpen: false }),
       setTheme: (theme) => set({ theme }),
       setWarwolfTheme: (warwolfTheme) => set({ warwolfTheme }),
       setLanguage: (language) => set({ language }),

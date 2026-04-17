@@ -9,6 +9,7 @@ import {
 import { useAskSessionContext } from "@/features/ask/AskSessionContext";
 import { SessionSidebar } from "@/features/ask/SessionSidebar";
 import { WikiFileTree } from "@/features/wiki/WikiFileTree";
+import { WeChatStatusBadge } from "@/features/wechat-kefu/WeChatStatusBadge";
 import {
   Sidebar as UiSidebar,
   SidebarContent,
@@ -72,7 +73,6 @@ export function AppSidebar() {
   const grouped = useMemo(() => groupBySection(CLAWWIKI_ROUTES), []);
 
   const settingsRoute = grouped.settings[0];
-  const wechatRoute = grouped.funnel.find((r) => r.key === "wechat");
 
   return (
     <UiSidebar collapsible="icon">
@@ -100,13 +100,7 @@ export function AppSidebar() {
 
       <SidebarFooter>
         <SidebarMenu>
-          {wechatRoute && (
-            <RouteItem
-              route={wechatRoute}
-              active={isActive(location.pathname, wechatRoute.path)}
-              badge={undefined}
-            />
-          )}
+          <WeChatStatusBadge />
           {settingsRoute && (
             <RouteItem
               route={settingsRoute}

@@ -15,6 +15,8 @@ import { SchemaEditorPage } from "@/features/schema/SchemaEditorPage";
 import { WeChatBridgePage } from "@/features/wechat/WeChatBridgePage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SettingsModal } from "@/features/settings/SettingsModal";
+import { ConnectWeChatModal } from "@/features/wechat-kefu/ConnectWeChatModal";
+import { ChannelStatusModal } from "@/features/wechat-kefu/ChannelStatusModal";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useSettingsStore } from "@/state/settings-store";
 import {
@@ -181,6 +183,8 @@ export function ClawWikiShell() {
       </AskSessionProvider>
       {/* Global Settings Modal — 08-settings-modal.md */}
       <SettingsModal />
+      <ConnectWeChatModal />
+      <ChannelStatusModal />
       <CommandPalette />
     </ErrorBoundary>
   );
