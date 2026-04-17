@@ -86,6 +86,28 @@ function isSafeQrDataUrl(src: string): boolean {
   return src.startsWith("data:image/");
 }
 
+function formatWeChatBridgeErrorMessage(
+  message: string | null | undefined
+): string {
+  const raw = (message ?? "").trim();
+  if (!raw) return "";
+
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("npx not found")) {
+    return `未找到 npx。通常是本机还没有安装 Node.js，或者安装后终端 PATH 还没生效。请先确认终端里能正常运行 node -v 和 npx -v。原始错误：${raw}`;
+  }
+
+  if (normalized.includes("node.js not found")) {
+    return `未找到 Node.js。这个流程需要 Node.js 来执行接入脚本，请先安装 Node.js，并确认终端里能正常运行 node -v。原始错误：${raw}`;
+  }
+
+  if (normalized.includes("opencli unavailable")) {
+    return `未找到 OpenCLI。请先确认 OpenCLI 已正确安装，并且当前桌面应用继承到了它所在的 PATH。原始错误：${raw}`;
+  }
+
+  return raw;
+}
+
 export function WeChatBridgePage() {
   const queryClient = useQueryClient();
 
@@ -470,7 +492,11 @@ function QrLoginCard({
       case "expired":
         return "⏳ 二维码已过期，请重新开始";
       case "failed":
-        return `✗ 登录失败${status.error ? ": " + status.error : ""}`;
+        return `✗ 登录失败${
+          status.error
+            ? ": " + formatWeChatBridgeErrorMessage(status.error)
+            : ""
+        }`;
       default:
         return "";
     }
@@ -1165,7 +1191,7 @@ function KefuPipelineSection() {
           </button>
           {startMutation.error && (
             <div className="text-caption" style={{ color: "var(--color-error)" }}>
-              {String(startMutation.error)}
+              {formatWeChatBridgeErrorMessage(String(startMutation.error))}
             </div>
           )}
         </div>
@@ -1196,7 +1222,7 @@ function KefuPipelineSection() {
               )}
               {p.error && (
                 <span className="truncate text-caption" style={{ color: "var(--color-error)" }}>
-                  {p.error}
+                  {formatWeChatBridgeErrorMessage(p.error)}
                 </span>
               )}
             </div>
@@ -1232,7 +1258,9 @@ function KefuPipelineSection() {
             <div className="max-h-56 overflow-auto rounded-md bg-background px-3 py-2">
               {visibleLogs.length > 0 ? (
                 <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted-foreground">
-                  {visibleLogs.join("\n")}
+                  {visibleLogs
+                    .map((line) => formatWeChatBridgeErrorMessage(line))
+                    .join("\n")}
                 </pre>
               ) : (
                 <div className="text-caption text-muted-foreground">

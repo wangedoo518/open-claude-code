@@ -67,7 +67,8 @@ export function ConversationScroller({ children }: { children: ReactNode }) {
     <ScrollContext.Provider value={{ isAtBottom, scrollToBottom, scrollElement }}>
       <div
         ref={scrollRef}
-        style={{ flex: "1 1 0%", overflowY: "auto", minHeight: 0 }}
+        className="relative flex-1 overflow-y-auto"
+        style={{ minHeight: 0 }}
       >
         {children}
       </div>

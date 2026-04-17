@@ -536,17 +536,46 @@ fn ingest_wechat_text_to_wiki(
     let extracted_url = extract_first_url(trimmed);
 
     let (source_tag, slug_seed, body, source_url) = if let Some(url) = extracted_url {
-        eprintln!("[wechat agent] detected URL in message, fetching: {url}");
+        // B4 (2026-04-17): WeChat URLs must go through the Playwright path
+        // (`wechat_fetch::fetch_wechat_article`) rather than the generic
+        // HTTP fetch. Reason: `mp.weixin.qq.com` / `weixin.qq.com` are
+        // aggressively anti-bot and a raw HTTP GET almost always lands on
+        // an "环境异常 / 完成验证后即可继续访问" interstitial. When the
+        // validator missed that page (pre-LR anti-bot markers), it wrote
+        // a junk `wechat-url` raw + inbox task; the user then had to
+        // manually trigger `/api/desktop/wechat-fetch` to get the real
+        // article, producing a SECOND raw + inbox entry for the same
+        // URL. Routing WeChat URLs through Playwright here collapses both
+        // calls to a single high-quality `wechat-article` raw + inbox,
+        // matching the /api/desktop/wechat-fetch handler's behaviour so
+        // the user never has any reason to double-trigger.
+        //
+        // Non-WeChat URLs keep the existing `wiki_ingest::url::fetch_and_body`
+        // generic path — those sites don't have the anti-bot storyline
+        // and generic fetch works fine for them. Their source tag also
+        // stays `"wechat-url"` for historical compatibility with the
+        // ilink ingest context.
+        let is_wechat = url.contains("weixin.qq.com");
+        eprintln!(
+            "[wechat agent] detected URL in message, fetching: {url} (wechat={is_wechat})"
+        );
         // Use tokio runtime to run the async fetch synchronously
         // (we're already inside spawn_blocking).
         let rt = tokio::runtime::Handle::try_current();
         match rt {
             Ok(handle) => {
-                match std::thread::spawn(move || {
-                    handle.block_on(wiki_ingest::url::fetch_and_body(&url))
+                // Both fetchers return `Result<IngestResult, IngestError>`
+                // so the thread closure's return type is identical in
+                // either branch.
+                let fetched = std::thread::spawn(move || {
+                    if is_wechat {
+                        handle.block_on(wiki_ingest::wechat_fetch::fetch_wechat_article(&url))
+                    } else {
+                        handle.block_on(wiki_ingest::url::fetch_and_body(&url))
+                    }
                 })
-                .join()
-                {
+                .join();
+                match fetched {
                     Ok(Ok(result)) => {
                         eprintln!(
                             "[wechat agent] URL fetched OK: title={:?} body_len={}",
@@ -559,12 +588,25 @@ fn ingest_wechat_text_to_wiki(
                         // suspenders) but we'd prefer never to reach it
                         // with a known-bad body.
                         match wiki_ingest::validate_fetched_content(&result.body) {
-                            Ok(()) => (
-                                "wechat-url".to_string(),
-                                result.title,
-                                result.body,
-                                result.source_url,
-                            ),
+                            Ok(()) => {
+                                // For WeChat URLs the Playwright adapter
+                                // returns source = "wechat-article" — use
+                                // it directly. For non-WeChat URLs keep
+                                // the historical "wechat-url" tag (the
+                                // ilink context implies the URL arrived
+                                // via a WeChat account forwarding it).
+                                let source_tag = if is_wechat {
+                                    result.source.clone()
+                                } else {
+                                    "wechat-url".to_string()
+                                };
+                                (
+                                    source_tag,
+                                    result.title,
+                                    result.body,
+                                    result.source_url,
+                                )
+                            }
                             Err(reason) => {
                                 eprintln!(
                                     "[wechat agent] URL body rejected by validator: {reason} — storing raw text instead"

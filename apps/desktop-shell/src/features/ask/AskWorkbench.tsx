@@ -287,6 +287,7 @@ export function AskWorkbench({
         <WelcomeScreen onShowDemo={() => setShowDemo(true)} />
       ) : (
         <ConversationScroller>
+          <div className="flex min-h-full flex-col justify-end">
           {showDemo && (
             <div className="mb-2 flex items-center justify-between rounded-lg border border-border/30 bg-muted/10 px-3 py-1.5">
               <span className="text-label text-muted-foreground">
@@ -367,6 +368,7 @@ export function AskWorkbench({
             </div>
           )}
 
+          </div>
           <ScrollToBottomButton />
         </ConversationScroller>
       )}
