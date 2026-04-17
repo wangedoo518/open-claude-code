@@ -146,6 +146,23 @@
     --shadow-warm-ring:        0 0 0 1px oklch(0.8533 0.0138 97.5);
     --shadow-warm-ring-hover:  0 0 0 1px oklch(0.8066 0.0140 97.5);
     --shadow-whisper:          0 4px 24px oklch(0 0 0 / 0.05);
+
+    /* ── Brand / feature tokens (light) ─────────────────────────
+       Legacy token names used across 14+ active files. Defined here
+       so naked var() calls (no fallback) resolve. S5.1 audit found
+       21 undefined tokens; these 11 are the ones with active usage
+       that either lack fallbacks or appear in ≥5 files. */
+    --claude-orange: oklch(0.6171 0.1375 39.0);                /* = --primary (Terracotta) */
+    --claude-orange-shimmer: oklch(0.6724 0.1308 38.8);        /* = --coral (lighter pulse) */
+    --claude-blue: oklch(0.6634 0.1531 248.9);                 /* = --ring (Focus Blue) */
+    --deeptutor-primary: oklch(0.6171 0.1375 39.0);            /* = --primary */
+    --deeptutor-primary-hi: oklch(0.6724 0.1308 38.8);         /* = --coral */
+    --deeptutor-purple: oklch(0.55 0.15 300);                  /* = --color-permission */
+    --agent-purple: oklch(0.55 0.15 300);                      /* = --color-permission */
+    --agent-cyan: oklch(0.60 0.10 200);                        /* warm cyan for agent tools */
+    --deeptutor-ok: oklch(0.55 0.14 155);                      /* = --color-success */
+    --deeptutor-ok-soft: color-mix(in srgb, oklch(0.55 0.14 155) 8%, transparent);
+    --deeptutor-warn: oklch(0.75 0.12 75);                     /* = --color-warning */
   }
 
   .dark {
@@ -240,6 +257,19 @@
     --shadow-warm-ring:        0 0 0 1px oklch(0.3590 0.0051 106.6);
     --shadow-warm-ring-hover:  0 0 0 1px oklch(0.4161 0.0067 95.2);
     --shadow-whisper:          0 4px 24px oklch(0 0 0 / 0.20);
+
+    /* ── Brand / feature tokens (dark) ──────────────────────────── */
+    --claude-orange: oklch(0.6171 0.1375 39.0);
+    --claude-orange-shimmer: oklch(0.6724 0.1308 38.8);
+    --claude-blue: oklch(0.6634 0.1531 248.9);
+    --deeptutor-primary: oklch(0.6171 0.1375 39.0);
+    --deeptutor-primary-hi: oklch(0.6724 0.1308 38.8);
+    --deeptutor-purple: oklch(0.65 0.15 300);
+    --agent-purple: oklch(0.65 0.15 300);
+    --agent-cyan: oklch(0.65 0.10 200);
+    --deeptutor-ok: oklch(0.65 0.14 155);
+    --deeptutor-ok-soft: color-mix(in srgb, oklch(0.65 0.14 155) 8%, transparent);
+    --deeptutor-warn: oklch(0.80 0.10 75);
   }
 }
 
