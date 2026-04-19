@@ -82,6 +82,7 @@ import { TargetCandidatePicker } from "@/features/inbox/components/TargetCandida
 import { DuplicateGuardBanner } from "@/features/inbox/components/DuplicateGuardBanner";
 import { DuplicateGuardDialog } from "@/features/inbox/components/DuplicateGuardDialog";
 import { SharedTargetBadge } from "@/features/inbox/components/SharedTargetBadge";
+import { InboxLineageSummary } from "@/features/inbox/components/InboxLineageSummary";
 import {
   computeQueueIntelligence,
   groupAndSortByAction,
@@ -1841,6 +1842,12 @@ function EvidenceSection({
           </div>
         </div>
       )}
+
+      {/* 4. Lineage summary — P1 sprint.
+          Compact 2-arm (upstream / downstream) lineage block for the
+          inbox task. Capped height so §1 Evidence doesn't drift when
+          the backend returns a long lineage chain. */}
+      <InboxLineageSummary entryId={entry.id} />
     </div>
   );
 }

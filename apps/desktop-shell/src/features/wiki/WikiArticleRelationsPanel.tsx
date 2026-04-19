@@ -32,6 +32,7 @@ import { ExternalLink, Link2, Sparkles } from "lucide-react";
 import { getWikiPageGraph, type PageGraphNode, type RelatedPageHit } from "@/lib/tauri";
 import { EmptyState } from "@/components/ui/empty-state";
 import { navigateToWikiPage, type WikiNavContext } from "./navigate-helpers";
+import { WikiLineagePanel } from "./WikiLineagePanel";
 
 interface WikiArticleRelationsPanelProps {
   slug: string;
@@ -52,6 +53,8 @@ export function WikiArticleRelationsPanel({ slug }: WikiArticleRelationsPanelPro
   // EmptyState instead of hiding the section entirely. Keeps the G1
   // three-panel feature discoverable and teaches the user the two
   // ways relations get populated (explicit links + shared raw source).
+  // P1 sprint — WikiLineagePanel is rendered as a 4th section below
+  // regardless of whether the G1 relations list is empty.
   if (outgoing.length === 0 && backlinks.length === 0 && related.length === 0) {
     return (
       <section className="wiki-relations-panel mt-12 border-t border-[var(--color-border)] pt-6">
@@ -78,6 +81,7 @@ export function WikiArticleRelationsPanel({ slug }: WikiArticleRelationsPanelPro
             </>
           }
         />
+        <WikiLineagePanel slug={slug} />
       </section>
     );
   }
@@ -107,6 +111,11 @@ export function WikiArticleRelationsPanel({ slug }: WikiArticleRelationsPanelPro
       {related.length > 0 && (
         <RelatedList items={related} />
       )}
+
+      {/* P1 sprint — 4th section: lineage timeline. Rendered below the
+          existing G1 relations lists so provenance history is visible
+          on every wiki page without altering the G1 logic. */}
+      <WikiLineagePanel slug={slug} />
     </section>
   );
 }

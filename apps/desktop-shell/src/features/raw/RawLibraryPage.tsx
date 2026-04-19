@@ -42,6 +42,7 @@ import {
   DeepLinkFocusChip,
   DeepLinkNotFoundBanner,
 } from "@/components/deep-link";
+import { RawLineageBadge } from "@/features/raw/RawLineageBadge";
 
 const rawKeys = {
   list: () => ["wiki", "raw", "list"] as const,
@@ -914,6 +915,8 @@ function EntryCard({
               <span className="text-muted-foreground/30" style={{ fontSize: 11 }}>
                 {formatSize(entry.byte_size)}
               </span>
+              {/* P1 sprint — downstream lineage status badge. */}
+              <RawLineageBadge rawId={entry.id} />
             </div>
             {/* Title */}
             <div
