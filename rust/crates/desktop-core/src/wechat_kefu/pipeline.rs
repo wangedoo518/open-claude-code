@@ -1319,6 +1319,13 @@ impl KefuPipeline {
     }
 
     /// Unified opencli command execution.
+    ///
+    /// U2 fix: Use `run_node_tool` so the sibling-path derivation from
+    /// D1 (node.exe's directory → npm.cmd / npx.cmd on Windows) also
+    /// covers the pipeline path. Without this, Environment Doctor can
+    /// report OpenCLI as available while "一键接入" still errors with
+    /// "OpenCLI unavailable" because the desktop launch doesn't have
+    /// npx in PATH.
     async fn opencli(&self, args: &[&str]) -> Result<String, PipelineError> {
         if self.cancel.is_cancelled() {
             return Err(PipelineError::Cancelled);
@@ -1330,12 +1337,15 @@ impl KefuPipeline {
             )
         })?;
 
-        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let args_owned: Vec<String> = prefix_args
+            .iter()
+            .map(|s| s.to_string())
+            .chain(args.iter().map(|s| s.to_string()))
+            .collect();
+        let program_owned = program.to_string();
         let output = tokio::task::spawn_blocking(move || {
-            let mut command = std::process::Command::new(program);
-            command.args(prefix_args);
-            command.args(&args_owned);
-            command.output()
+            let args_ref: Vec<&str> = args_owned.iter().map(String::as_str).collect();
+            super::deployer::run_node_tool(&program_owned, &args_ref)
         })
         .await
         .map_err(|e| PipelineError::OpenCli(e.to_string()))?
@@ -1365,21 +1375,25 @@ impl KefuPipeline {
         })
     }
 
+    /// U2 fix: Probe via `run_node_tool` so sibling-path derivation
+    /// covers desktop-launched processes that inherit only a partial
+    /// Node PATH. See `deployer::run_node_tool` and the 4/19 observation
+    /// ("desktop-launched backend inherits only part of the Node
+    /// toolchain PATH") for the root-cause rationale.
     fn resolve_opencli_command(&self) -> Option<(&'static str, Vec<&'static str>)> {
-        let opencli_ok = std::process::Command::new("opencli")
-            .arg("--version")
-            .output()
+        let opencli_ok = super::deployer::run_node_tool("opencli", &["--version"])
             .map(|o| o.status.success())
             .unwrap_or(false);
         if opencli_ok {
             return Some(("opencli", vec![]));
         }
 
-        let npx_ok = std::process::Command::new("npx")
-            .args(["--yes", "@jackwener/opencli", "--version"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        let npx_ok = super::deployer::run_node_tool(
+            "npx",
+            &["--yes", "@jackwener/opencli", "--version"],
+        )
+        .map(|o| o.status.success())
+        .unwrap_or(false);
         if npx_ok {
             return Some(("npx", vec!["--yes", "@jackwener/opencli"]));
         }

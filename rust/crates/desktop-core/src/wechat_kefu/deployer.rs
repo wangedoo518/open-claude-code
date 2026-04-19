@@ -1,7 +1,8 @@
 //! wrangler CLI deployer — scaffolds and deploys Worker to user's CF account.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use super::pipeline_types::{DeployResult, PipelineError};
 
@@ -22,6 +23,47 @@ pub struct WranglerDeployer {
     project_dir: PathBuf,
 }
 
+fn node_exec_path() -> Option<PathBuf> {
+    let output = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+fn sibling_node_tool_path(tool: &str) -> Option<PathBuf> {
+    let node_path = node_exec_path()?;
+    let parent = node_path.parent()?;
+    let file_name = if cfg!(windows) {
+        format!("{tool}.cmd")
+    } else {
+        tool.to_string()
+    };
+    let candidate = parent.join(file_name);
+    candidate.exists().then_some(candidate)
+}
+
+pub fn run_node_tool(tool: &str, args: &[&str]) -> std::io::Result<Output> {
+    Command::new(tool)
+        .args(args)
+        .output()
+        .or_else(|direct_error| {
+            let Some(path) = sibling_node_tool_path(tool) else {
+                return Err(direct_error);
+            };
+            let owned_args: Vec<OsString> = args.iter().map(OsString::from).collect();
+            Command::new(path).args(&owned_args).output()
+        })
+}
+
 impl WranglerDeployer {
     pub fn new(cf_api_token: Option<&str>) -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -38,24 +80,28 @@ impl WranglerDeployer {
     }
 
     pub fn check_prerequisites() -> PrereqStatus {
-        let node = Command::new("node")
-            .arg("--version")
-            .output()
-            .ok();
-        let npx = Command::new("npx")
-            .arg("--version")
-            .output()
-            .ok();
+        let node = run_node_tool("node", &["--version"]).ok();
+        let npx = run_node_tool("npx", &["--version"]).ok();
+        let npm = run_node_tool("npm", &["--version"]).ok();
 
         PrereqStatus {
             node_ok: node
                 .as_ref()
                 .map(|o| o.status.success())
                 .unwrap_or(false),
+            // On some Windows desktop launches `npx` is not directly
+            // discoverable even though the same Node install can still
+            // execute packages via `npm exec`. Treat either path as a
+            // valid package runner so the doctor panel reflects the
+            // user's real capability instead of a PATH quirk.
             npx_ok: npx
                 .as_ref()
                 .map(|o| o.status.success())
-                .unwrap_or(false),
+                .unwrap_or(false)
+                || npm
+                    .as_ref()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false),
             node_version: node
                 .and_then(|o| String::from_utf8(o.stdout).ok())
                 .map(|s| s.trim().to_string()),
@@ -184,7 +230,9 @@ impl WranglerDeployer {
     }
 
     fn wrangler_command<const N: usize>(&self, args: [&str; N]) -> Command {
-        let mut command = Command::new("npx");
+        let mut command = sibling_node_tool_path("npx")
+            .map(Command::new)
+            .unwrap_or_else(|| Command::new("npx"));
         command.args(["--yes", "wrangler"]);
         command.args(args);
         if let Some(token) = &self.cf_api_token {

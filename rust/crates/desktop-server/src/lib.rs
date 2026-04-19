@@ -5839,9 +5839,10 @@ async fn opencli_check_handler() -> Json<serde_json::Value> {
             }
         }
 
-        let npx = std::process::Command::new("npx")
-            .args(["--yes", "@jackwener/opencli", "--version"])
-            .output();
+        let npx = desktop_core::wechat_kefu::deployer::run_node_tool(
+            "npx",
+            &["--yes", "@jackwener/opencli", "--version"],
+        );
         match npx {
             Ok(output) if output.status.success() => {
                 let version = String::from_utf8_lossy(&output.stdout)
@@ -5849,13 +5850,65 @@ async fn opencli_check_handler() -> Json<serde_json::Value> {
                     .to_string();
                 Ok(format!("opencli (npx) {version}"))
             }
-            Ok(output) => Err(format!(
-                "opencli probe failed via npx: {}",
-                String::from_utf8_lossy(&output.stderr).trim(),
-            )),
-            Err(e) => Err(format!(
-                "opencli not reachable. Install it globally (`npm i -g @jackwener/opencli`) or ensure `npx` is on PATH: {e}"
-            )),
+            Ok(output) => {
+                let npx_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let npm_exec = desktop_core::wechat_kefu::deployer::run_node_tool(
+                    "npm",
+                    &[
+                        "exec",
+                        "--yes",
+                        "--package",
+                        "@jackwener/opencli",
+                        "opencli",
+                        "--",
+                        "--version",
+                    ],
+                );
+                match npm_exec {
+                    Ok(output) if output.status.success() => {
+                        let version = String::from_utf8_lossy(&output.stdout)
+                            .trim()
+                            .to_string();
+                        Ok(format!("opencli (npm exec) {version}"))
+                    }
+                    Ok(output) => Err(format!(
+                        "opencli probe failed via npx ({npx_error}) and npm exec ({}).",
+                        String::from_utf8_lossy(&output.stderr).trim(),
+                    )),
+                    Err(e) => Err(format!(
+                        "opencli probe failed via npx ({npx_error}) and npm exec ({e}). Install it globally (`npm i -g @jackwener/opencli`) or ensure Node package runners are on PATH."
+                    )),
+                }
+            }
+            Err(e) => {
+                let npm_exec = desktop_core::wechat_kefu::deployer::run_node_tool(
+                    "npm",
+                    &[
+                        "exec",
+                        "--yes",
+                        "--package",
+                        "@jackwener/opencli",
+                        "opencli",
+                        "--",
+                        "--version",
+                    ],
+                );
+                match npm_exec {
+                    Ok(output) if output.status.success() => {
+                        let version = String::from_utf8_lossy(&output.stdout)
+                            .trim()
+                            .to_string();
+                        Ok(format!("opencli (npm exec) {version}"))
+                    }
+                    Ok(output) => Err(format!(
+                        "opencli not reachable via npx ({e}) and npm exec ({}). Install it globally (`npm i -g @jackwener/opencli`) or ensure Node package runners are on PATH.",
+                        String::from_utf8_lossy(&output.stderr).trim(),
+                    )),
+                    Err(npm_err) => Err(format!(
+                        "opencli not reachable. Install it globally (`npm i -g @jackwener/opencli`) or ensure `npx` / `npm exec` is on PATH: npx={e}; npm={npm_err}"
+                    )),
+                }
+            }
         }
     })
     .await;
