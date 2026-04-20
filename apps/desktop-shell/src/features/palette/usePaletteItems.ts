@@ -753,7 +753,7 @@ export function useGroupedPaletteItems(query: string): PaletteGroup[] {
     // Wiki — live fetch from /api/wiki/pages + context graph neighbors.
     result.push({
       id: "wiki",
-      heading: "Wiki",
+      heading: "知识库",
       items: matchedWikis,
       isLoading:
         pagesQuery.isLoading ||
@@ -767,7 +767,7 @@ export function useGroupedPaletteItems(query: string): PaletteGroup[] {
     // paste a known id like "17" to land on it directly.
     result.push({
       id: "raw",
-      heading: "素材",
+      heading: "素材库",
       items: matchedRaws,
       isLoading: rawQuery.isLoading,
       isError: rawQuery.isError,
@@ -776,7 +776,7 @@ export function useGroupedPaletteItems(query: string): PaletteGroup[] {
     // Inbox — same deal, numeric id searchable.
     result.push({
       id: "inbox",
-      heading: "Inbox 任务",
+      heading: "待整理",
       items: matchedInbox,
       isLoading: inboxQuery.isLoading,
       isError: inboxQuery.isError,

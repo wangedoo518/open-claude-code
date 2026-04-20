@@ -97,10 +97,10 @@ export function SchemaEditorPage() {
       {/* Hero */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <h1 className="text-lg text-foreground">
-          Schema Editor
+          整理规则
         </h1>
         <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-          <code>schema/CLAUDE.md</code> 是维护 agent 的唯一行为契约 · 人写优先
+          <code>schema/CLAUDE.md</code> 是维护 AI 整理知识时遵循的唯一规则文件 · 仅人工编辑
         </p>
       </div>
 
@@ -109,7 +109,7 @@ export function SchemaEditorPage() {
         {schemaQuery.isLoading ? (
           <div className="flex items-center gap-2 text-caption text-muted-foreground">
             <Loader2 className="size-3 animate-spin" />
-            加载 Schema…
+            加载整理规则…
           </div>
         ) : schemaQuery.error ? (
           <div
@@ -213,11 +213,9 @@ function SchemaBody({
             style={{ color: "var(--claude-orange)" }}
           />
           <div className="text-caption text-foreground/90">
-            <div className="mb-0.5 font-semibold">Editing</div>
+            <div className="mb-0.5 font-semibold">编辑中</div>
             <div className="text-muted-foreground">
-              Save commits the change directly to disk. The maintainer
-              agent will pick up the new rules on the next ingest.
-              Cancel discards your changes.
+              点击保存会直接写入磁盘，整理 AI 会在下一次处理新素材时读取到新规则。取消则丢弃本次修改。
             </div>
           </div>
         </div>
@@ -236,16 +234,15 @@ function SchemaBody({
             style={{ color: "var(--color-warning)" }}
           />
           <div className="text-caption text-foreground/90">
-            <div className="mb-0.5 font-semibold">Human-owned file</div>
+            <div className="mb-0.5 font-semibold">仅人工编辑</div>
             <div className="text-muted-foreground">
-              Per canonical §10 the <code>schema/</code> directory is
-              human-only. Click <strong>Edit</strong> to change the
-              maintainer's rules; the agent never writes here directly
-              (it can only PROPOSE changes via the{" "}
+              <code>schema/</code> 目录只允许你手动修改。点「编辑」
+              可以改写整理 AI 的规则；AI 自己不会直接写这里，如需调整它会把修改提案丢到
+              {" "}
               <a href="#/inbox" className="text-primary hover:underline">
-                Inbox
+                待整理
               </a>
-              ).
+              。
             </div>
           </div>
         </div>

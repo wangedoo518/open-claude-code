@@ -261,7 +261,7 @@ export function RawLibraryPage() {
               素材库
             </h1>
             <p className="mt-0.5 text-muted-foreground/60" style={{ fontSize: 11 }}>
-              所有入库的素材 — 微信文章、链接、文件、粘贴内容
+              所有原始素材按时间排列 · 微信文章、网页链接、文件、手动粘贴内容都会落在这里
             </p>
           </div>
           <div className="flex items-center gap-2">

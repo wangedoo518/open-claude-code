@@ -412,7 +412,7 @@ export function InboxPage() {
       <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-6 py-4">
         <div>
           <h1 className="text-lg text-foreground">
-            Inbox
+            待整理
           </h1>
           <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
             新素材自动入队 · AI 生成知识页面 · 审批后写入 Wiki
@@ -455,7 +455,7 @@ export function InboxPage() {
               className="font-mono uppercase tracking-widest text-muted-foreground/60"
               style={{ fontSize: 10 }}
             >
-              队列 · Queue
+              待整理队列
             </span>
             <button
               type="button"

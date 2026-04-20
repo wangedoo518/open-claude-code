@@ -232,7 +232,7 @@ export function WeChatBridgePage() {
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-lg text-foreground">WeChat Bridge</h1>
+            <h1 className="text-lg text-foreground">微信接入</h1>
             <p
               className="mt-1 text-muted-foreground/60"
               style={{ fontSize: 11 }}
@@ -284,7 +284,7 @@ export function WeChatBridgePage() {
       <section className="border-b border-border/50 px-6 py-5">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
-            Connected accounts
+            已连接账号
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -296,14 +296,14 @@ export function WeChatBridgePage() {
               }
               disabled={accountsQuery.isFetching}
               className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-caption text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-              title="Refresh list"
+              title="刷新账号列表"
             >
               <RefreshCw
                 className={
                   "size-3 " + (accountsQuery.isFetching ? "animate-spin" : "")
                 }
               />
-              Refresh
+              刷新
             </button>
             <button
               type="button"
@@ -316,7 +316,7 @@ export function WeChatBridgePage() {
               ) : (
                 <Plus className="size-3" />
               )}
-              Add account
+              扫码绑定
             </button>
           </div>
         </div>
@@ -359,7 +359,7 @@ export function WeChatBridgePage() {
       {loginHandle && loginStatus && (
         <section className="border-b border-border/50 px-6 py-5">
           <h2 className="mb-3 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
-            QR login
+            扫码登录
           </h2>
           <QrLoginCard
             handle={loginHandle}
@@ -379,37 +379,33 @@ export function WeChatBridgePage() {
       {/* Pipeline info */}
       <section className="px-6 py-5">
         <h2 className="mb-3 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
-          Pipeline (D2 override)
+          消息流水线
         </h2>
         <div className="rounded-md border border-border/40 p-4">
           <div className="mb-2 text-foreground" style={{ fontSize: 14, fontWeight: 500 }}>
-            Personal WeChat → Raw → Inbox → Ask
+            微信个人号 → 素材库 → 待整理 → 问问题
           </div>
           <ol className="ml-5 list-decimal space-y-1.5 text-muted-foreground/70" style={{ fontSize: 13, lineHeight: 1.6 }}>
             <li>
-              Add an account above — scan the QR code in the WeChat ClawBot
-              plugin.
+              先在上方「扫码绑定」添加账号，打开 WeChat ClawBot 插件里扫描二维码。
             </li>
             <li>
-              Text messages to the bot are written to{" "}
-              <code>~/.clawwiki/raw/NNNNN_wechat-text_*.md</code> with schema-v1
-              frontmatter.
+              发给 bot 的文本消息会写入{" "}
+              <code>~/.clawwiki/raw/</code>，按统一 schema 存档。
             </li>
             <li>
-              Each new raw entry auto-queues a pending task in the{" "}
+              每条新素材会自动排进{" "}
               <a href="#/inbox" className="text-primary hover:underline">
-                Maintenance Inbox
+                待整理
               </a>
-              .
+              队列，等你审阅后写入知识库。
             </li>
             <li>
-              The original reply path still runs, so users also get an immediate
-              chat response from the existing DesktopState agent.
+              原有回复链路照常运行，手机端仍能即时收到 AI 回复，桌面这里同步留底。
             </li>
           </ol>
           <div className="mt-3 text-muted-foreground/40" style={{ fontSize: 11 }}>
-            S6 will layer adapters on top (voice → whisper, image → Vision
-            caption, PPT → slides-per-section). S5 only ships the text path.
+            当前版本仅支持文本与链接；语音 / 图片 / PPT 等将在后续版本接入。
           </div>
         </div>
       </section>
@@ -483,7 +479,7 @@ function AccountList({
             <>
               暂未连接任何微信账号。
               <br />
-              点击顶部的「Add account」可以开始绑定。
+              点击顶部的「扫码绑定」开始接入。
             </>
           }
         />
@@ -510,7 +506,7 @@ function AccountList({
                 token: {account.bot_token_preview}
               </span>
               {account.last_active_at && (
-                <span>last active: {account.last_active_at}</span>
+                <span>最近活跃：{account.last_active_at}</span>
               )}
               <span className="truncate">{account.base_url}</span>
             </div>
@@ -624,7 +620,7 @@ function QrLoginCard({
                 className="flex size-[192px] items-center justify-center rounded text-center text-caption"
                 style={{ color: "var(--color-error)" }}
               >
-                QR payload is not a data:image/ URL — refusing to render
+                无法显示二维码（payload 不是 data:image/ URL）
               </div>
             )}
             {status.status === "confirmed" && (
@@ -637,7 +633,7 @@ function QrLoginCard({
             )}
           </div>
           <div className="mt-2 text-center text-muted-foreground/40" style={{ fontSize: 11 }}>
-            expires {handle.expires_at}
+            {formatExpiresAt(handle.expires_at)}
           </div>
         </div>
 
@@ -655,7 +651,7 @@ function QrLoginCard({
           <p className="mt-1.5 text-foreground/80" style={{ fontSize: 14, lineHeight: 1.6 }}>{helpText}</p>
           {status.account_id && (
             <p className="mt-1.5 font-mono text-muted-foreground/40" style={{ fontSize: 11 }}>
-              account_id: {status.account_id}
+              账号：{status.account_id}
             </p>
           )}
           <div className="mt-4 flex items-center gap-2">
@@ -667,13 +663,12 @@ function QrLoginCard({
                 className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-caption text-muted-foreground transition-colors hover:border-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
               >
                 {isCancelling ? <Loader2 className="size-3 animate-spin" /> : null}
-                Cancel login
+                取消登录
               </button>
             )}
             {status.status === "confirmed" && (
               <p className="text-caption text-muted-foreground">
-                The monitor is now running — send a message from WeChat to
-                test the pipeline.
+                监听已启动 — 在微信里给 bot 发一条消息，就能看到消息进入待整理。
               </p>
             )}
           </div>
@@ -686,20 +681,50 @@ function QrLoginCard({
 function statusLabel(status: string): string {
   switch (status) {
     case "waiting":
-      return "Waiting for scan…";
+      return "等待扫码…";
     case "scanned":
-      return "Scanned — confirm on phone";
+      return "已扫描，请在手机上确认";
     case "confirmed":
-      return "Connected";
+      return "已连接";
     case "cancelled":
-      return "Cancelled";
+      return "已取消";
     case "expired":
-      return "Expired";
+      return "二维码已过期";
     case "failed":
-      return "Failed";
+      return "登录失败";
     default:
       return status;
   }
+}
+
+/**
+ * Render `handle.expires_at` as a human-readable "有效期至 HH:MM" or
+ * remaining-seconds countdown. The backend may emit either a Unix
+ * epoch seconds value (sometimes suffixed with "s"), an ISO-8601
+ * timestamp, or an already-formatted string; we try the first two
+ * parses and fall back to the raw value so the caller never sees
+ * a missing row.
+ */
+function formatExpiresAt(raw: string): string {
+  if (!raw) return "";
+  const trimmed = raw.replace(/s$/, "").trim();
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric) && numeric > 1_000_000_000) {
+    const ms =
+      numeric < 10_000_000_000 ? numeric * 1000 : numeric; // sec→ms heuristic
+    const d = new Date(ms);
+    const hh = d.getHours().toString().padStart(2, "0");
+    const mm = d.getMinutes().toString().padStart(2, "0");
+    return `有效期至 ${hh}:${mm}`;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) {
+    const d = new Date(parsed);
+    const hh = d.getHours().toString().padStart(2, "0");
+    const mm = d.getMinutes().toString().padStart(2, "0");
+    return `有效期至 ${hh}:${mm}`;
+  }
+  return `有效期 ${raw}`;
 }
 
 /* ─── Channel B: Official WeChat Customer Service ──────────────── */

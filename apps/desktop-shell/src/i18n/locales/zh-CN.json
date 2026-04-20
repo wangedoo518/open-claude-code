@@ -281,10 +281,10 @@
     "title": "设置",
     "general": "常规",
     "provider": "模型服务",
-    "mcp": "MCP 服务",
+    "mcp": "工具插件",
     "permissions": "权限",
     "shortcuts": "快捷键",
-    "data": "数据",
+    "data": "路径信息",
     "about": "关于",
     "loading": "正在加载桌面设置...",
     "comingSoon": "即将支持"
