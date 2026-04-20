@@ -31,7 +31,7 @@
  * essentially reimplementing that hook under the Ask namespace.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Regression fix for 2026-04 "empty conversation pile-up": no auto-create on mount.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -326,7 +326,62 @@ export function useAskSession(): UseAskSessionResult {
     ensureMutation.isPending ||
     (detailQuery.isLoading && activeId !== null);
   const isSending = sendMutation.isPending;
-  const isTurnActive = session?.turn_state === "running" || isSending;
+
+  // P1 soft-recovery: when backend `turn_state` is stuck at `running`
+  // for > 30 s past a non-trivial assistant message, the finalize SSE
+  // event was almost certainly dropped (tokio task panic, bug, network
+  // hiccup, or provider-side truncation that never closed the stream).
+  // Without this the Composer replaces Send with Stop forever and the
+  // user can't send the next message — the "ChatSidePanel 永久 disabled"
+  // symptom reported in the P1 bug bash. We treat the session as idle
+  // locally so the UI unblocks; a future sprint can wire an explicit
+  // server-side reconciler for the mid-process (no-restart) case. See
+  // `memory/corrections.jsonl` 2026-04-20 ChatSidePanel-stale-recovery.
+  //
+  // NOTE: we intentionally do NOT send a cancel / reset request to the
+  // backend. If the real turn is actually still running (rare but
+  // possible under heavy load with very long model latency), letting
+  // it finish naturally is safe — our local "idle" is cosmetic.
+  const isStale = useMemo(() => {
+    if (!session || session.turn_state !== "running") return false;
+    const msgs = session.session?.messages ?? [];
+    const last = msgs[msgs.length - 1];
+    if (!last || last.role !== "assistant") return false;
+    // Only trust the "stale" verdict if the assistant actually produced
+    // real content — a finalize-dropped stream with only a placeholder
+    // could just be the natural "still thinking" phase.
+    const lastText = (last.blocks ?? [])
+      .map((b) => (b as { text?: string }).text ?? "")
+      .join("");
+    if (lastText.length < 10) return false;
+    return Date.now() - session.updated_at > 30_000;
+  }, [session]);
+
+  // Edge-triggered warning so logs don't spam on every poll tick while
+  // the session remains stale.
+  const staleLoggedRef = useRef(false);
+  useEffect(() => {
+    if (isStale && !staleLoggedRef.current && session) {
+      console.warn(
+        "[ask] session",
+        session.id,
+        "marked stale — turn_state stuck at running, last assistant msg > 30s old",
+        {
+          updated_at: session.updated_at,
+          ageMs: Date.now() - session.updated_at,
+        },
+      );
+      staleLoggedRef.current = true;
+    }
+    if (!isStale) {
+      staleLoggedRef.current = false;
+    }
+  }, [isStale, session]);
+
+  const effectiveTurnState: "idle" | "running" = isStale
+    ? "idle"
+    : (session?.turn_state ?? "idle");
+  const isTurnActive = effectiveTurnState === "running" || isSending;
 
   return useMemo(
     () => ({
