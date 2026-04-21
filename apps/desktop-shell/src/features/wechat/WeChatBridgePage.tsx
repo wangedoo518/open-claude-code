@@ -228,19 +228,58 @@ export function WeChatBridgePage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Hero */}
-      <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-lg text-foreground">微信接入</h1>
-            <p
-              className="mt-1 text-muted-foreground/60"
-              style={{ fontSize: 11 }}
-            >
-              个微 iLink 登录 · 长轮询监听 · 文本消息自动入{" "}
-              <code>~/.clawwiki/raw/</code>
-            </p>
-          </div>
+      {/* Hero — DS1-C reframed as user onboarding.
+          Pre-DS1 the hero subtitle was technical runtime jargon
+          ("iLink 登录 · 长轮询 · 文本自动入 ~/.clawwiki/raw/"). The
+          v2 design language wants the default layer to answer
+          "我现在该怎么接微信？" — so the subtitle now describes the
+          outcome in plain Chinese, and the raw control ("配置群组") is
+          tucked behind the 高级信息 panel below. */}
+      <div className="shrink-0 border-b border-border/50 px-6 py-5">
+        <h1 className="text-lg text-foreground">微信接入</h1>
+        <p
+          className="mt-1 text-muted-foreground"
+          style={{ fontSize: 13, lineHeight: 1.6 }}
+        >
+          把微信当成外脑入口 —— 转发文章、语音、图片到绑定的小号，ClawWiki 会自动接收并整理进知识库。
+        </p>
+      </div>
+
+      {/* Onboarding 3-step — default layer.
+          Mirrors v2 kit's Connect.jsx "step-row" treatment without
+          forking its imperative state: each step is purely illustrative,
+          and the "Start" CTA jumps the user into the concrete action
+          (扫码绑定 / 打开 Inbox) that the detailed sections below
+          already own. No new backend logic, no new mutations. */}
+      <OnboardingSteps
+        hasConnectedAccount={accounts.length > 0}
+        onStartBind={() => startLoginMutation.mutate()}
+        bindPending={startLoginMutation.isPending || hasLoginInFlight}
+      />
+
+      {/* 高级信息 — all pre-DS1 technical content lives here.
+          `<details>` is uncontrolled (browser-native) so no extra state
+          and no HMR surprises. Users who need the bridge health, env
+          doctor, account list, QR, kefu pipeline, or pipeline flow
+          diagram expand one toggle. */}
+      <details className="group min-h-0 flex-1 overflow-hidden border-b border-border/50 [&[open]]:flex [&[open]]:flex-col">
+        <summary
+          className="flex cursor-pointer items-center gap-2 border-b border-border/30 px-6 py-3 text-[12px] text-muted-foreground transition-colors hover:bg-accent/40"
+        >
+          <Settings className="size-3.5" />
+          <span className="font-medium">高级信息</span>
+          <span className="text-muted-foreground/60">
+            · 连接状态、环境诊断、账号管理、客服号 Pipeline
+          </span>
+          <span className="ml-auto text-[11px] text-muted-foreground/60 group-open:hidden">
+            展开
+          </span>
+          <span className="ml-auto hidden text-[11px] text-muted-foreground/60 group-open:inline">
+            收起
+          </span>
+        </summary>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex justify-end px-6 py-3">
           <button
             type="button"
             onClick={() => setGroupScopeOpen(true)}
@@ -251,7 +290,6 @@ export function WeChatBridgePage() {
             配置群组
           </button>
         </div>
-      </div>
 
       {/* M5 — dual-channel bridge health summary */}
       {bridgeHealth ? (
@@ -410,8 +448,14 @@ export function WeChatBridgePage() {
         </div>
       </section>
 
+        </div>
+      </details>
+
       {/* M5 — group scope modal. Lives inside the page root so the dialog
-          portal lifts it above every surrounding section. */}
+          portal lifts it above every surrounding section. Stays OUTSIDE
+          the `<details>` so the modal is reachable even when 高级信息
+          is collapsed (the "配置群组" button lives inside 高级信息 but
+          the modal itself uses Radix portal, so separation is fine). */}
       {bridgeHealth ? (
         <GroupScopeModal
           open={groupScopeOpen}
@@ -429,6 +473,141 @@ export function WeChatBridgePage() {
         />
       ) : null}
     </div>
+  );
+}
+
+/* ─── Onboarding steps (DS1-C) ─────────────────────────────────── */
+
+/**
+ * Three-step onboarding strip shown at the top of the WeChat page.
+ * Displays the concrete user journey in plain Chinese; neutral when
+ * nothing is known, "completed" once an account exists.
+ *
+ * The only interactive element is the primary CTA, which dispatches
+ * the existing `startLoginMutation.mutate()` via the `onStartBind`
+ * callback so this component stays dumb and adds no new backend path.
+ */
+function OnboardingSteps({
+  hasConnectedAccount,
+  onStartBind,
+  bindPending,
+}: {
+  hasConnectedAccount: boolean;
+  onStartBind: () => void;
+  bindPending: boolean;
+}) {
+  const steps: ReadonlyArray<{ n: number; title: string; desc: string }> = [
+    {
+      n: 1,
+      title: "连接微信",
+      desc: "用主号扫码，把一个专属小号绑到 ClawWiki 做外脑入口。",
+    },
+    {
+      n: 2,
+      title: "转发一条内容",
+      desc: "任意公众号文章、语音、图片，转发给这个小号即可。",
+    },
+    {
+      n: 3,
+      title: "在待整理里查看",
+      desc: "通常几秒内到达，可以直接在待整理中审阅、归档到知识库。",
+    },
+  ];
+
+  return (
+    <section className="shrink-0 border-b border-border/50 px-6 py-5">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
+          <h2
+            className="uppercase tracking-widest text-muted-foreground/60"
+            style={{ fontSize: 11 }}
+          >
+            三步接入
+          </h2>
+          <p
+            className="mt-1 text-muted-foreground/70"
+            style={{ fontSize: 12 }}
+          >
+            {hasConnectedAccount
+              ? "已绑定至少一个小号；可直接转发内容验证。"
+              : "还没有绑定的微信小号，从第一步开始即可。"}
+          </p>
+        </div>
+        {!hasConnectedAccount && (
+          <button
+            type="button"
+            onClick={onStartBind}
+            disabled={bindPending}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            style={{ fontSize: 13, fontWeight: 500 }}
+          >
+            {bindPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <QrCode className="size-3" />
+            )}
+            开始扫码绑定
+          </button>
+        )}
+      </div>
+      <ol
+        className="grid gap-3 sm:grid-cols-3"
+        aria-label="微信接入的三步流程"
+      >
+        {steps.map((step) => {
+          const done = hasConnectedAccount && step.n === 1;
+          return (
+            <li
+              key={step.n}
+              className="rounded-xl border border-border/50 bg-card px-4 py-3 shadow-warm-ring"
+              style={
+                done
+                  ? { borderLeft: "3px solid var(--color-success)" }
+                  : step.n === 1
+                    ? { borderLeft: "3px solid var(--claude-orange)" }
+                    : undefined
+              }
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-flex size-5 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums"
+                  style={
+                    done
+                      ? {
+                          backgroundColor: "var(--color-success)",
+                          color: "white",
+                        }
+                      : step.n === 1
+                        ? {
+                            backgroundColor: "var(--claude-orange)",
+                            color: "white",
+                          }
+                        : {
+                            backgroundColor: "var(--muted, #e8e6dc)",
+                            color: "var(--color-foreground)",
+                          }
+                  }
+                >
+                  {done ? <CheckCircle2 className="size-3" /> : step.n}
+                </span>
+                <span
+                  className="font-medium text-foreground"
+                  style={{ fontSize: 13 }}
+                >
+                  {step.title}
+                </span>
+              </div>
+              <p
+                className="mt-2 text-muted-foreground/80"
+                style={{ fontSize: 12, lineHeight: 1.6 }}
+              >
+                {step.desc}
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
