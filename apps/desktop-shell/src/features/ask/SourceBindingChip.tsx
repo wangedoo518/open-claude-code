@@ -4,9 +4,9 @@
  * button that clears the binding via `onClear`.
  *
  * Display spec:
- *   - raw   → "#  raw #00123 · Example Domain  [×]"
- *   - wiki  → "📖 wiki:foo-slug · Title [×]"  (BookOpen icon)
- *   - inbox → "📥 inbox #42 · Title [×]"      (Inbox icon)
+ *   - raw   → Hash icon      + "raw #00123 · Example Domain"      + X
+ *   - wiki  → BookOpen icon  + "wiki:foo-slug · Title"            + X
+ *   - inbox → Inbox icon     + "inbox #42 · Title"                + X
  *
  * Tooltip hover reveals the full title + optional `binding_reason` for
  * provenance / debugging (same pattern as ContextBasisLabel).

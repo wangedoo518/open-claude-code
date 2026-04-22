@@ -4,8 +4,8 @@
  *
  * Display spec (Explorer C):
  *   - follow_up    → grey   "继续前文"        (no icon)
- *   - source_first → primary "源优先 🔗"
- *   - combine      → orange  "结合 🔀"
+ *   - source_first → primary "源优先" + Link2 icon
+ *   - combine      → orange  "结合"   + Shuffle icon
  *
  * When `onChange` is supplied, clicking the chip opens a 3-item
  * dropdown so the user can explicitly override the detected mode.

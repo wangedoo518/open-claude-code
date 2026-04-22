@@ -2,7 +2,7 @@
  * WikiQueryMessage — renders a /query result as a special message block.
  * Displayed in the message list when a ?-prefixed question triggers wiki Q&A.
  *
- * Visual: 📚 icon (instead of Bot avatar) + green left border + streaming answer + sources card.
+ * Visual: BookOpen Lucide icon (instead of Bot avatar) + green left border + streaming answer + sources card.
  *
  * The answer body is piped through `preprocessWikilinks` to expand
  * `[[slug|Label]]` syntax, then rendered with a custom `<a>` component
@@ -50,7 +50,7 @@ export function WikiQueryMessage({
 
   return (
     <div className="flex gap-3 py-3">
-      {/* Icon — 📚 instead of Bot avatar */}
+      {/* Icon — BookOpen instead of Bot avatar */}
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--deeptutor-ok,#3F8F5E)]/15 text-[var(--deeptutor-ok,#3F8F5E)]">
         <BookOpen className="size-4" />
       </div>

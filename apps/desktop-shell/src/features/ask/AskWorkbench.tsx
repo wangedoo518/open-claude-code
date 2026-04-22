@@ -357,11 +357,13 @@ export function AskWorkbench({
   const lastEnrichKeyRef = useRef<string | null>(null);
 
   // When the session detail emits a new enrich_status, reconcile it
-  // against the pending optimistic message. Supports (kind = wire value):
-  //  - success             → "✓ 已抓取：<title> (raw #<id>)"
-  //  - rejected_quality    → "⚠ 抓取失败（<reason>）。链接仍在，您可手动重试或继续发送。"
-  //  - fetch_failed        → "⚠ 抓取失败（<reason>）"
-  //  - prerequisite_missing → "⚠ 环境缺依赖（<dep>）：<hint>"
+  // against the pending optimistic message. Supports (kind = wire value,
+  // toast body content — the actual rendered strings below still carry
+  // a leading checkmark / warning glyph as an inline signal):
+  //  - success             → "已抓取：<title> (raw #<id>)"
+  //  - rejected_quality    → "抓取失败（<reason>）。链接仍在，您可手动重试或继续发送。"
+  //  - fetch_failed        → "抓取失败（<reason>）"
+  //  - prerequisite_missing → "环境缺依赖（<dep>）：<hint>"
   //  - none                → drop the optimistic message (nothing to fetch)
   //  - null                → backend reports: no URL worth enriching, drop hint
   //  - undefined           → session not loaded yet; leave pending msg untouched
@@ -502,7 +504,7 @@ export function AskWorkbench({
   }, [session?.id, queryClient]);
 
   // A3 — promote a turn-local auto-binding to a persistent session
-  // binding. Invoked from the inline "📌 固定到会话" button inside
+  // binding. Invoked from the inline "固定到会话" button inside
   // <UsedSourcesBar> on an assistant message with
   // `context_basis.auto_bound === true`. After the POST succeeds the
   // next SSE snapshot will reflect `source_binding` populated +

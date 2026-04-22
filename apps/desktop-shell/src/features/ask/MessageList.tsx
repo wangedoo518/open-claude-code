@@ -30,7 +30,7 @@ interface MessageListProps {
   isStreaming?: boolean;
   /**
    * A3 — forwarded to <Message> → <UsedSourcesBar> so the inline
-   * "📌 固定到会话" action can upgrade an auto-bound turn source
+   * "固定到会话" action can upgrade an auto-bound turn source
    * into a persistent session binding.
    */
   onPromoteToSession?: (source: SourceRef) => void | Promise<void>;

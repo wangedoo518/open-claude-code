@@ -34,7 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * A4 sprint — "✓ Grounded" badge. Rendered next to the source chip in
+ * A4 sprint — "Grounded" badge (with leading check icon). Rendered next to the source chip in
  * UsedSourcesBar when `basis.grounding_applied === true`. The tone
  * (auto blue / manual orange) matches the parent branch via
  * `toneClassName` so the badge reads as part of the same strip.
