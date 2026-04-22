@@ -6,12 +6,14 @@
  *
  * Display policy (Explorer C):
  *
- *   source_first:  "🔗 主要依据：本链接  (≈{n} tokens)"
- *   combine:       "🔀 结合 {k} 轮对话 + 本链接"
- *   follow_up:     "💬 对话上下文（{k} 轮）"  — hidden by default,
- *                  only rendered when `forceShowFollowUp` is true
- *                  (e.g. the user explicitly asked "为什么你是这样回答的?"
- *                  via a 2-click disclosure; default view stays clean).
+ *   source_first:  <Link2 icon/>  主要依据：本链接  (≈{n} tokens)
+ *   combine:       <Shuffle icon/> 结合 {k} 轮对话 + 本链接
+ *   follow_up:     <MessageCircle/> 对话上下文（{k} 轮） — hidden by
+ *                  default, only rendered when `forceShowFollowUp` is
+ *                  true (e.g. the user explicitly asked "为什么你是
+ *                  这样回答的?" via a 2-click disclosure; default view
+ *                  stays clean). DS1.5 — Lucide icons only (stroke 1.5,
+ *                  size-3), zero emoji in product copy.
  *
  * Hover surfaces a tooltip with the full basis dump for transparency.
  *

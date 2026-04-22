@@ -4,6 +4,12 @@
  *
  * Shown when the session has no messages (empty welcome state).
  * 2x2 grid of action buttons; click → prefill Composer or send directly.
+ *
+ * DS1.5: card face only shows one-line action label (+ Lucide icon).
+ * The prompt template that fires on click is NOT rendered as an inline
+ * description — that was a capability-matrix read on DS1. The full
+ * template is carried through `promptTemplate` but only surfaces via
+ * native `title` hover when the user asks.
  */
 
 import { useState } from "react";
@@ -92,6 +98,7 @@ export function QuickActionsBar({ onAction, visible }: QuickActionsBarProps) {
           <div key={action.id}>
             <button
               onClick={() => handleActionClick(action)}
+              title={action.promptTemplate}
               className="flex w-full flex-col items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-[var(--color-foreground)] transition-all hover:scale-[1.02] hover:border-[var(--color-primary)]/30 hover:shadow-sm"
             >
               <span className="text-[var(--color-primary)]">{action.icon}</span>

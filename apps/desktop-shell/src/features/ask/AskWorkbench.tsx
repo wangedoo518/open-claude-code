@@ -607,6 +607,7 @@ export function AskWorkbench({
      <div className="flex flex-1 flex-col overflow-hidden">
       {!hideHeader && (
         <AskHeader
+          title={session?.title}
           projectPath={projectPath}
           modelLabel={modelLabel}
           environmentLabel={environmentLabel}
@@ -837,8 +838,7 @@ function WelcomeScreen({ onShowDemo }: { onShowDemo?: () => void }) {
             有什么我能帮你的？
           </h2>
           <p className="mt-1.5 max-w-md text-sm text-muted-foreground/80">
-            直接在下面输入框发一条问题，或粘贴一条链接、一条微信素材，让 AI
-            帮你整理。
+            发条问题，或粘贴一段素材。
           </p>
         </div>
       </div>
@@ -1061,7 +1061,7 @@ function AskFailureBannerSwitch({
     return (
       <FailureBanner
         severity="warning"
-        title="📝 对话不存在或已过期"
+        title="对话不存在或已过期"
         description="后端找不到这个会话 id。可能是服务重启清空了内存状态，或会话已被删除。新建一个对话即可继续。"
         actions={[
           { label: "新建对话", onClick: onNewSession, variant: "primary" },

@@ -10,9 +10,10 @@
  *     Composer.
  *   - A3 (turn-local auto binding): `basis.bound_source` present AND
  *     `basis.auto_bound === true`. Renders blue-toned "本轮自动锁定:"
- *     badge with a 🔗 icon and an inline "📌 固定到会话" action that
- *     promotes the auto-bound turn source to a persistent session
- *     binding via `onPromoteToSession`.
+ *     badge with a Lucide <Link> icon and an inline "固定到会话"
+ *     action (Lucide <Pin>) that promotes the auto-bound turn source
+ *     to a persistent session binding via `onPromoteToSession`.
+ *     DS1.5 — icons are Lucide only; zero emoji in product copy.
  *   - Falls back to a generic "本链接" badge when `source_included` is
  *     true but no discrete `bound_source` was resolved (A1-era behavior
  *     for a URL-enrich turn without an explicit ref).
@@ -79,7 +80,7 @@ function GroundedBadge({ toneClassName }: { toneClassName?: string }) {
 interface UsedSourcesBarProps {
   basis: ContextBasis | null | undefined;
   /**
-   * A3 — callback when user clicks the 📌 pin button to upgrade
+   * A3 — callback when user clicks the Lucide <Pin> button to upgrade
    * an auto-bound turn source to a persistent session binding.
    * Called with the current bound_source. Parent wires this to
    * `bindSourceToSession`.

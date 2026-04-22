@@ -26,7 +26,7 @@ interface AskHeaderProps {
 }
 
 export function AskHeader({
-  title = "问问题",
+  title,
   projectPath,
   modelLabel = "Codex GPT-5.4",
   environmentLabel = "内置代理",
@@ -37,12 +37,20 @@ export function AskHeader({
   onExportMarkdown,
   onExportJson,
 }: AskHeaderProps) {
+  // DS1.5 — no default placeholder title. When the session has a real
+  // title (derived from the first user message, per A5-Polish), render
+  // it. Otherwise leave the title area blank so it reads as empty-
+  // canvas instead of a generic "问问题" label the product neither
+  // promises nor needs.
+  const hasTitle = typeof title === "string" && title.trim().length > 0;
   return (
     <div className="flex items-start justify-between px-4 pb-1.5 pt-2.5">
       {/* Left: title + project path */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <h1 className="ask-serif text-body text-foreground">{title}</h1>
+          {hasTitle && (
+            <h1 className="ask-serif text-body text-foreground">{title}</h1>
+          )}
           {isStreaming && (
             <span className="flex items-center gap-1 text-caption" style={{ color: "var(--deeptutor-primary, var(--claude-orange))" }}>
               <span
