@@ -7,55 +7,39 @@ import {
 } from "./clawwiki-routes";
 import { useAskSessionContext } from "@/features/ask/AskSessionContext";
 import { SessionSidebar } from "@/features/ask/SessionSidebar";
-import { WikiFileTree } from "@/features/wiki/WikiFileTree";
-import { WeChatStatusBadge } from "@/features/wechat-kefu/WeChatStatusBadge";
-import {
-  Sidebar as UiSidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
 
 /**
- * ClawWiki canonical Sidebar — DS1: user-first primary nav.
+ * AppSidebar — DS1.1 compact rail.
  *
- * Structure (post-DS1):
+ * Replaces the pre-DS1.1 256px shadcn `<Sidebar>` primitive with a
+ * narrow 80px rail that follows `ClawWiki Design System/desktop-shell-v2`:
  *
- *   Header     → logo + title
- *   PrimaryNav → 首页 / 问问题 / 待整理 / 知识库 / 微信接入
- *                (renders `primary` + `funnel` entries from
- *                 CLAWWIKI_ROUTES; `advanced` stays out of the default
- *                 sidebar, reachable via URL + palette.)
- *   Content    → contextual secondary nav:
- *                  - /ask      → SessionSidebar (conversation history)
- *                  - /wiki*    → WikiFileTree (pages tree)
- *                  - else      → empty (just primary nav showing)
- *   Footer     → WeChat status badge + Settings link
+ *   ┌───────┬─────────────────────────┐
+ *   │  C    │                         │
+ *   │ Home  │                         │
+ *   │ Ask   │       (main area)        │
+ *   │ Inbox │                         │
+ *   │ Wiki  │                         │
+ *   │ ⇢     │                         │
+ *   │ Wech. │                         │
+ *   │  ⚙    │                         │
+ *   └───────┴─────────────────────────┘
  *
- * What changed in DS1-A vs. pre-DS1:
- * - The "Chat | Wiki" ModeToggle widget was removed. It was an I4-era
- *   transitional UX that forced users to pick a "mode" before seeing
- *   any primary entry; the v2 design-system IA requires all 5 primary
- *   entries visible at once.
- * - `appMode` state is still kept in sync with the route here (via the
- *   existing useEffect below) so `ClawWikiShell.showChatPanel` — which
- *   gates the right-side ChatSidePanel on `appMode === "wiki"` — keeps
- *   its contract. Nothing about route handling or session management
- *   changed; only the sidebar's visible chrome.
- * - Active-route highlighting uses `isActive()` to match a path or its
- *   sub-paths, same as before. Terracotta accent on active items comes
- *   from the shared `SidebarMenuButton` isActive variant.
- *
- * Design notes:
- * - Expanded width (256px) / icon-mode (48px) come from the shared
- *   sidebar.tsx CSS variables — don't hard-code them here.
- * - Auto-collapse below 760px is handled inside SidebarProvider.
- * - Active state for the Settings footer link reads useLocation
- *   directly (not zustand) so history + deep links work.
+ * - 80px fixed width, icon + small Chinese label (10.5px). Keeps text
+ *   nav per user constraint ("不要切成纯 icon rail"), but the visual
+ *   weight drops from 256px to 80px so the main content is no longer
+ *   squeezed.
+ * - Active state: warm Terracotta pill background (via
+ *   `data-active="true"` + `.ds-rail-btn` in globals.css).
+ * - No more Chat/Wiki ModeToggle.
+ * - No WikiFileTree embedded in the shell — wiki navigation now lives
+ *   inside the `/wiki` Knowledge Hub page itself.
+ * - SessionSidebar only mounts when the route is /ask, and it becomes
+ *   a lightweight second column next to the rail (not a permanent part
+ *   of the shell). Other routes see just the rail.
+ * - `appMode` is kept in sync with the URL so any remaining consumer
+ *   of `useSettingsStore.appMode` (only ChatSidePanel mount gating,
+ *   which DS1.1 also retires) stays consistent if it gets read again.
  */
 
 /** Match the exact path or any subpath (e.g. /ask/:sessionId → /ask). */
@@ -64,34 +48,19 @@ function isActive(currentPath: string, itemPath: string): boolean {
   return currentPath.startsWith(`${itemPath}/`);
 }
 
-/** Which contextual content to show beneath the primary nav. */
-type ContextualPane = "sessions" | "wiki-tree" | "none";
-function paneForRoute(pathname: string): ContextualPane {
-  if (pathname.startsWith("/ask") || pathname.startsWith("/chat")) {
-    return "sessions";
-  }
-  if (
-    pathname.startsWith("/wiki") ||
-    pathname.startsWith("/raw") ||
-    pathname.startsWith("/graph") ||
-    pathname.startsWith("/schema")
-  ) {
-    return "wiki-tree";
-  }
-  return "none";
-}
-
 export function AppSidebar() {
   const location = useLocation();
   const appMode = useSettingsStore((s) => s.appMode);
   const setAppMode = useSettingsStore((s) => s.setAppMode);
-  const settingsRoute = CLAWWIKI_ROUTES.find((r) => r.key === "settings");
-  const pane = paneForRoute(location.pathname);
 
-  // Keep `appMode` auto-synced with the route so the right-side
-  // ChatSidePanel (gated on `appMode === "wiki"`) still appears on
-  // wiki-family routes. The old ModeToggle owned this; DS1 collapsed
-  // ModeToggle into the primary nav, but the sync is still needed.
+  const primaryItems = CLAWWIKI_ROUTES.filter(
+    (r) => r.section === "primary" || r.section === "funnel",
+  );
+  const settingsRoute = CLAWWIKI_ROUTES.find((r) => r.key === "settings");
+
+  // Keep `appMode` auto-synced with the route. Legacy consumers still
+  // read this value; DS1.1 doesn't cancel the contract even though the
+  // right-side ChatSidePanel no longer mounts.
   useEffect(() => {
     const path = location.pathname;
     if (path.startsWith("/ask") || path.startsWith("/chat")) {
@@ -108,46 +77,45 @@ export function AppSidebar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  const onAsk =
+    location.pathname.startsWith("/ask") || location.pathname.startsWith("/chat");
+
   return (
-    <UiSidebar collapsible="icon">
-      <SidebarHeader className="gap-0 p-0">
-        {/* Logo row */}
-        <div className="flex h-14 flex-shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3">
-          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary font-bold text-primary-foreground">
-            C
-          </div>
-          <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="text-sm font-semibold text-foreground">
-              ClawWiki
-            </span>
-            <span className="text-[10px] text-muted-foreground">你的外脑</span>
-          </div>
+    <>
+      <aside className="ds-rail" aria-label="主导航">
+        <Link to="/dashboard" className="ds-rail-brand" title="ClawWiki · 你的外脑">
+          C
+        </Link>
+        <div className="ds-rail-items">
+          {primaryItems.map((route) => (
+            <RailItem
+              key={route.key}
+              route={route}
+              active={isActive(location.pathname, route.path)}
+            />
+          ))}
         </div>
-
-        {/* Primary nav — always visible (5 task entries).
-            Sits in SidebarHeader so it stays fixed above the contextual
-            content pane that scrolls below. */}
-        <PrimaryNav currentPath={location.pathname} />
-      </SidebarHeader>
-
-      <SidebarContent className="group-data-[collapsible=icon]:hidden">
-        {pane === "sessions" && <ChatSidebarContent />}
-        {pane === "wiki-tree" && <WikiSidebarContent />}
-      </SidebarContent>
-
-      <SidebarFooter>
-        <SidebarMenu>
-          <WeChatStatusBadge />
+        <div className="ds-rail-spacer" />
+        {/* Rail footer · just Settings. The pre-DS1.1 `WeChatStatusBadge`
+            used shadcn SidebarMenuButton primitives that expected a 256px
+            sidebar width; at 80px rail it's visually broken. The WeChat
+            status is still reachable one click away via the primary nav
+            「微信接入」 and via the Dashboard 快速开始 card. */}
+        <div className="ds-rail-footer">
           {settingsRoute && (
-            <RouteItem
+            <RailItem
               route={settingsRoute}
               active={isActive(location.pathname, settingsRoute.path)}
-              badge={undefined}
             />
           )}
-        </SidebarMenu>
-      </SidebarFooter>
-    </UiSidebar>
+        </div>
+      </aside>
+
+      {/* Secondary column — session list on /ask only. Keeps Ask users
+          able to switch conversations without re-introducing a 256px
+          sidebar on every other route. */}
+      {onAsk && <AskSecondaryColumn />}
+    </>
   );
 }
 
@@ -155,88 +123,43 @@ export function AppSidebar() {
 // `Sidebar` — keep the alias so other call sites don't break.
 export { AppSidebar as Sidebar };
 
-/**
- * Primary nav list rendered inside SidebarHeader. Pulls the 5 top-level
- * user-task entries (`primary` + `funnel` sections) from the shared
- * CLAWWIKI_ROUTES registry so there's only one source of truth.
- *
- * Advanced routes (raw / graph / schema) are intentionally skipped —
- * users find them via the Knowledge Hub tabs (DS1-B) or the command
- * palette. This matches the v2 design's "default layer vs advanced
- * layer" IA.
- */
-function PrimaryNav({ currentPath }: { currentPath: string }) {
-  const items = CLAWWIKI_ROUTES.filter(
-    (r) => r.section === "primary" || r.section === "funnel",
-  );
+function RailItem({ route, active }: { route: ClawWikiRoute; active: boolean }) {
+  const Icon = route.icon;
   return (
-    <div className="border-b border-sidebar-border px-1 py-1 group-data-[collapsible=icon]:px-0.5">
-      <SidebarMenu>
-        {items.map((route) => (
-          <RouteItem
-            key={route.key}
-            route={route}
-            active={isActive(currentPath, route.path)}
-            badge={route.badge}
-          />
-        ))}
-      </SidebarMenu>
-    </div>
+    <Link
+      to={route.path}
+      className="ds-rail-btn"
+      data-active={active || undefined}
+      title={route.label}
+      aria-current={active ? "page" : undefined}
+    >
+      <Icon aria-hidden="true" className="size-5" strokeWidth={1.5} />
+      <span className="ds-rail-label">{route.label}</span>
+      {route.badge && route.badge !== "—" && (
+        <span className="ds-rail-badge-dot" aria-hidden="true" />
+      )}
+    </Link>
   );
 }
 
-/**
- * Chat mode sidebar content — renders SessionSidebar (conversation list).
- */
-function ChatSidebarContent() {
+function AskSecondaryColumn() {
   const { sessionId, onSwitchSession, onResetSession } =
     useAskSessionContext();
   const navigate = useNavigate();
 
   return (
-    <SessionSidebar
-      activeSessionId={sessionId}
-      onSelectSession={(id) => {
-        onSwitchSession(id);
-        navigate("/ask");
-      }}
-      onNewSession={() => {
-        onResetSession();
-        navigate("/ask");
-      }}
-    />
-  );
-}
-
-/**
- * Wiki mode sidebar content — renders WikiFileTree (Inbox / Raw / Wiki
- * / Schema tree with an opt-in advanced section for power users).
- */
-function WikiSidebarContent() {
-  return <WikiFileTree embedded />;
-}
-
-interface RouteItemProps {
-  route: ClawWikiRoute;
-  active: boolean;
-  badge?: string;
-}
-
-function RouteItem({ route, active, badge }: RouteItemProps) {
-  const Icon = route.icon;
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={active} tooltip={route.label}>
-        <Link to={route.path} aria-current={active ? "page" : undefined}>
-          <Icon
-            aria-hidden="true"
-            className="size-4 shrink-0"
-            strokeWidth={1.5}
-          />
-          <span>{route.label}</span>
-        </Link>
-      </SidebarMenuButton>
-      {badge ? <SidebarMenuBadge>{badge}</SidebarMenuBadge> : null}
-    </SidebarMenuItem>
+    <div className="ds-rail-secondary">
+      <SessionSidebar
+        activeSessionId={sessionId}
+        onSelectSession={(id) => {
+          onSwitchSession(id);
+          navigate("/ask");
+        }}
+        onNewSession={() => {
+          onResetSession();
+          navigate("/ask");
+        }}
+      />
+    </div>
   );
 }

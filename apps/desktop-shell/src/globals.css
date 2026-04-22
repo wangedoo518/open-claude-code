@@ -693,3 +693,757 @@
   pointer-events: none;
   user-select: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   DS1.1 · Visual shell migration utilities
+   Appended (never replaces existing tokens). Ports the minimum
+   surface from `ClawWiki Design System/ui_kits/desktop-shell-v2/kit.css`
+   needed by the compact rail + Home hero + pill-tabs + step-row.
+   All class names are prefixed `ds-` so they can't collide with
+   Tailwind utilities or shadcn internals.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Compact vertical rail (far-left nav) ────────────────────── */
+.ds-rail {
+  width: 80px;
+  flex-shrink: 0;
+  background: var(--color-sidebar, var(--parchment, oklch(0.9660 0.0093 100.0)));
+  border-right: 1px solid var(--color-sidebar-border, var(--color-border));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 10px 0 8px;
+}
+.ds-rail .ds-rail-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  margin: 4px auto 18px;
+  background: linear-gradient(135deg, #e8c7a8, oklch(0.6171 0.1375 39.0));
+  color: #faf9f5;
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 15px;
+  box-shadow: 0 0 0 2px var(--color-background);
+}
+.ds-rail-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px;
+}
+.ds-rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0 7px;
+  border-radius: 10px;
+  color: var(--color-muted-foreground);
+  text-decoration: none;
+  transition: background 150ms ease, color 150ms ease;
+  position: relative;
+}
+.ds-rail-btn:hover {
+  background: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  color: var(--color-foreground);
+}
+.ds-rail-btn[data-active="true"] {
+  background: color-mix(in srgb, var(--claude-orange) 10%, transparent);
+  color: var(--claude-orange);
+}
+.ds-rail-btn[data-active="true"] .ds-rail-label {
+  color: var(--claude-orange);
+  font-weight: 600;
+}
+.ds-rail-btn .ds-rail-label {
+  font-size: 10.5px;
+  line-height: 1.2;
+  letter-spacing: 0.1px;
+  color: var(--color-muted-foreground);
+}
+.ds-rail-btn .ds-rail-badge-dot {
+  position: absolute;
+  top: 5px;
+  right: 16px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--claude-orange);
+}
+.ds-rail-spacer { flex: 1; }
+.ds-rail-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 6px 0;
+  border-top: 1px solid var(--color-sidebar-border, var(--color-border));
+}
+
+/* Secondary column next to the rail (used on /ask for session list). */
+.ds-rail-secondary {
+  width: 224px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-sidebar, var(--parchment, oklch(0.9660 0.0093 100.0)));
+  border-right: 1px solid var(--color-sidebar-border, var(--color-border));
+  overflow: hidden;
+}
+
+/* ── Home hero · center-aligned greet + tagline ─────────────── */
+.ds-home-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 56px 24px 24px;
+  text-align: center;
+}
+.ds-home-hero .ds-greet {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 34px;
+  line-height: 1.15;
+  color: var(--color-foreground);
+  letter-spacing: -0.3px;
+}
+.ds-home-hero .ds-greet .ds-greet-underline {
+  position: relative;
+  display: inline-block;
+}
+.ds-home-hero .ds-greet .ds-greet-underline::after {
+  content: "";
+  position: absolute;
+  left: -4px;
+  right: -6px;
+  bottom: 4px;
+  height: 8px;
+  background: color-mix(in srgb, var(--claude-orange) 18%, transparent);
+  z-index: -1;
+  border-radius: 4px;
+  transform: skewX(-8deg);
+}
+.ds-home-hero .ds-greet .ds-greet-accent {
+  color: var(--claude-orange);
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+}
+.ds-home-hero .ds-tagline {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--color-muted-foreground);
+  letter-spacing: 0.5px;
+  max-width: 620px;
+  line-height: 1.65;
+}
+
+/* ── Skill / action cards (5-column grid, warm pastel tints) ─ */
+.ds-skill-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  max-width: 1040px;
+  margin: 12px auto 0;
+  padding: 0 24px;
+}
+@media (min-width: 768px) {
+  .ds-skill-row { grid-template-columns: repeat(4, 1fr); }
+}
+@media (min-width: 1180px) {
+  .ds-skill-row { grid-template-columns: repeat(4, 1fr); }
+}
+.ds-skill-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 148px;
+  padding: 16px 16px 14px;
+  border-radius: 14px;
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--color-foreground);
+  cursor: pointer;
+  transition: transform 180ms ease-out, box-shadow 180ms ease-out;
+}
+.ds-skill-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(20, 20, 19, 0.08);
+}
+.ds-skill-card .ds-skill-title {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 1.25;
+  color: var(--color-foreground);
+}
+.ds-skill-card .ds-skill-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-muted-foreground);
+}
+.ds-skill-card .ds-skill-ill {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  opacity: 0.75;
+  color: var(--color-foreground);
+}
+.ds-skill-card.ds-skill-c1 { background: #efe7ff; }
+.ds-skill-card.ds-skill-c2 { background: #fff1de; }
+.ds-skill-card.ds-skill-c3 { background: #e7f3e6; }
+.ds-skill-card.ds-skill-c4 { background: #ffe6e0; }
+.ds-skill-card.ds-skill-c5 { background: #e0f0ff; }
+.dark .ds-skill-card.ds-skill-c1 { background: oklch(0.3 0.04 290); }
+.dark .ds-skill-card.ds-skill-c2 { background: oklch(0.32 0.04 65); }
+.dark .ds-skill-card.ds-skill-c3 { background: oklch(0.3 0.04 140); }
+.dark .ds-skill-card.ds-skill-c4 { background: oklch(0.32 0.04 25); }
+.dark .ds-skill-card.ds-skill-c5 { background: oklch(0.3 0.04 230); }
+.dark .ds-skill-card .ds-skill-title { color: oklch(0.98 0 0); }
+.dark .ds-skill-card .ds-skill-sub { color: oklch(0.75 0 0); }
+
+/* ── Pill tabs (Knowledge Hub) ───────────────────────────────── */
+.ds-pill-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--color-muted) 50%, transparent);
+  border-radius: 999px;
+}
+.ds-pill-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+  background: transparent;
+  transition: background 150ms ease, color 150ms ease;
+  cursor: pointer;
+}
+.ds-pill-tab:hover { color: var(--color-foreground); }
+.ds-pill-tab[data-active="true"] {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Today block + proposal cards ────────────────────────────── */
+.ds-today-block {
+  max-width: 1040px;
+  margin: 32px auto 0;
+  padding: 0 24px;
+}
+.ds-today-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ds-today-title {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--color-foreground);
+}
+.ds-today-count {
+  font-size: 11.5px;
+  color: var(--claude-orange);
+  background: color-mix(in srgb, var(--claude-orange) 12%, transparent);
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+/* ── Step-row onboarding (WeChat) ───────────────────────────── */
+.ds-step-row {
+  display: flex;
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.ds-step-row:last-child { border-bottom: 0; }
+.ds-step-n {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-muted);
+  color: var(--color-foreground);
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+}
+.ds-step-row[data-state="done"] .ds-step-n {
+  background: var(--color-success, oklch(0.58 0.14 150));
+  color: #faf9f5;
+}
+.ds-step-row[data-state="active"] .ds-step-n {
+  background: var(--claude-orange);
+  color: #faf9f5;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--claude-orange) 20%, transparent);
+}
+.ds-step-title {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--color-foreground);
+}
+.ds-step-desc {
+  font-size: 13px;
+  color: var(--color-muted-foreground);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+/* ── Content canvas — warm parchment page background ─────────── */
+.ds-canvas {
+  background: var(--color-background);
+  min-height: 100%;
+}
+
+/* Floating "问 AI" CTA (non-Ask routes) */
+.ds-ask-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--claude-orange);
+  color: #faf9f5;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow:
+    0 0 0 1px var(--claude-orange),
+    0 8px 24px color-mix(in srgb, var(--claude-orange) 35%, transparent);
+  text-decoration: none;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+.ds-ask-fab:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px var(--claude-orange),
+    0 12px 28px color-mix(in srgb, var(--claude-orange) 40%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DS1.2 · Knowledge Hub — editorial list + inner-surface polish
+   Appended on top of DS1.1. These classes replace the raw Markdown
+   look of the default `/wiki` pages tab with an editorial list that
+   mirrors `ClawWiki Design System/ui_kits/desktop-shell-v2/KnowledgeBase.jsx`.
+   ═══════════════════════════════════════════════════════════════ */
+
+.ds-kb-shell {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 24px 32px 40px;
+}
+.ds-kb-header {
+  margin-bottom: 18px;
+}
+.ds-kb-header .ds-kb-h {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1.25;
+  color: var(--color-foreground);
+  letter-spacing: -0.2px;
+}
+.ds-kb-header .ds-kb-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-muted-foreground);
+  line-height: 1.6;
+}
+
+.ds-kb-list {
+  display: flex;
+  flex-direction: column;
+}
+.ds-kb-item {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 14px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--color-border);
+  align-items: start;
+  cursor: pointer;
+  transition: background 150ms ease;
+  text-decoration: none;
+  color: inherit;
+}
+.ds-kb-item:hover {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.ds-kb-item:hover .ds-kb-title {
+  color: var(--claude-orange);
+}
+.ds-kb-icon {
+  color: var(--color-muted-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+}
+.ds-kb-item .ds-kb-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-foreground);
+  transition: color 150ms ease;
+  line-height: 1.4;
+}
+.ds-kb-item .ds-kb-summary {
+  font-size: 12.5px;
+  color: var(--color-muted-foreground);
+  margin-top: 3px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ds-kb-item .ds-kb-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+.ds-kb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--color-muted) 60%, transparent);
+  color: var(--color-muted-foreground);
+}
+.ds-kb-badge.ds-kb-badge-concept {
+  background: color-mix(in srgb, var(--claude-orange) 10%, transparent);
+  color: var(--claude-orange);
+}
+.ds-kb-badge.ds-kb-badge-person {
+  background: color-mix(in srgb, var(--color-success, oklch(0.58 0.14 150)) 12%, transparent);
+  color: var(--color-success, oklch(0.58 0.14 150));
+}
+.ds-kb-badge.ds-kb-badge-topic {
+  background: color-mix(in srgb, var(--claude-blue, #3898ec) 10%, transparent);
+  color: var(--claude-blue, #3898ec);
+}
+.ds-kb-item .ds-kb-chevron {
+  color: var(--color-muted-foreground);
+  opacity: 0.4;
+  transition: opacity 150ms ease, transform 150ms ease;
+  align-self: center;
+}
+.ds-kb-item:hover .ds-kb-chevron {
+  opacity: 0.9;
+  transform: translateX(2px);
+}
+
+/* ── Empty state (普通中文) ─────────────────────────────────── */
+.ds-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--color-muted-foreground);
+}
+.ds-empty-state .ds-empty-title {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--color-foreground);
+  margin-bottom: 6px;
+}
+.ds-empty-state .ds-empty-desc {
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 420px;
+}
+
+/* ── Breadcrumb (wiki article detail) ──────────────────────── */
+.ds-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  margin-bottom: 4px;
+}
+.ds-breadcrumb a {
+  color: inherit;
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+.ds-breadcrumb a:hover {
+  color: var(--claude-orange);
+}
+.ds-breadcrumb .ds-breadcrumb-sep {
+  opacity: 0.4;
+}
+.ds-breadcrumb .ds-breadcrumb-current {
+  color: var(--color-foreground);
+  font-weight: 500;
+}
+
+/* ── Inner-surface subtitle strip (for Graph/Raw tab intros) ── */
+.ds-tab-intro {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 18px 32px 8px;
+}
+.ds-tab-intro h2 {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 18px;
+  color: var(--color-foreground);
+  margin: 0;
+}
+.ds-tab-intro p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--color-muted-foreground);
+  line-height: 1.55;
+}
+
+/* ── Muted info panel (soft surface for meta / hints) ───────── */
+.ds-muted-panel {
+  background: color-mix(in srgb, var(--color-muted) 40%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  font-size: 12.5px;
+  color: var(--color-muted-foreground);
+  line-height: 1.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DS1.4 · Settings page — editorial settings center
+   Appended on top of DS1.2. Replaces the pre-DS1.4 "island card
+   in the middle of the screen with a large 200px left menu"
+   layout with a narrower 176px nav + left-aligned content.
+   ═══════════════════════════════════════════════════════════════ */
+
+.ds-settings-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ds-settings-header {
+  flex-shrink: 0;
+  padding: 24px 32px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.ds-settings-header .ds-settings-title {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1.25;
+  color: var(--color-foreground);
+  letter-spacing: -0.2px;
+}
+.ds-settings-header .ds-settings-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--color-muted-foreground);
+  line-height: 1.55;
+}
+
+/* Two-pane body — narrow nav on the left, content on the right.
+   Content width caps at 860px so long-form panels stay readable
+   but never get centred into a small island. */
+.ds-settings-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.ds-settings-nav {
+  width: 176px;
+  flex-shrink: 0;
+  padding: 16px 8px 16px 16px;
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+}
+.ds-settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-md, 8px);
+  font-size: 12.5px;
+  color: var(--color-muted-foreground);
+  background: transparent;
+  text-align: left;
+  transition: background 150ms ease, color 150ms ease;
+  cursor: pointer;
+}
+.ds-settings-nav-item:hover {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  color: var(--color-foreground);
+}
+.ds-settings-nav-item[data-active="true"] {
+  background: color-mix(in srgb, var(--claude-orange) 10%, transparent);
+  color: var(--claude-orange);
+  font-weight: 600;
+}
+
+.ds-settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 32px 48px;
+}
+.ds-settings-content-inner {
+  max-width: 860px;
+}
+
+.ds-settings-section-head {
+  margin-bottom: 10px;
+}
+.ds-settings-section-h {
+  font-family: var(--font-serif, "Lora", Georgia, serif);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--color-foreground);
+  line-height: 1.3;
+  margin: 0;
+}
+.ds-settings-section-help {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--color-muted-foreground);
+  line-height: 1.55;
+}
+
+.ds-settings-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-warm-ring);
+}
+.ds-settings-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+.ds-settings-card-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-foreground);
+  line-height: 1.35;
+}
+.ds-settings-card-help {
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  line-height: 1.55;
+  margin-top: 3px;
+}
+
+/* Row within a card — label on the left, control on the right. */
+.ds-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
+.ds-settings-row + .ds-settings-row {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+.ds-settings-label {
+  font-size: 13px;
+  color: var(--color-foreground);
+  line-height: 1.45;
+}
+.ds-settings-help {
+  font-size: 11.5px;
+  color: var(--color-muted-foreground);
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+.ds-settings-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--color-muted) 55%, transparent);
+  color: var(--color-muted-foreground);
+}
+.ds-settings-badge.ds-settings-badge-ok {
+  background: color-mix(in srgb, var(--color-success, oklch(0.58 0.14 150)) 12%, transparent);
+  color: var(--color-success, oklch(0.58 0.14 150));
+}
+.ds-settings-badge.ds-settings-badge-warn {
+  background: color-mix(in srgb, var(--color-warning, oklch(0.75 0.12 75)) 16%, transparent);
+  color: oklch(0.55 0.12 75);
+}
+
+/* Collapsible "technical details" — used to hide raw runtime values,
+   paths, transport/scope codes etc. from the default layer. */
+.ds-settings-advanced {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--color-muted) 30%, transparent);
+}
+.ds-settings-advanced > summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--color-muted-foreground);
+  font-weight: 500;
+  list-style: none;
+  outline: none;
+}
+.ds-settings-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.ds-settings-advanced[open] > summary {
+  color: var(--color-foreground);
+  margin-bottom: 8px;
+}
+.ds-settings-advanced pre,
+.ds-settings-advanced .ds-settings-advanced-body {
+  font-family: var(--font-mono, "JetBrains Mono", "Cascadia Code", Menlo, monospace);
+  font-size: 11.5px;
+  color: var(--color-muted-foreground);
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.ds-settings-inline-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
