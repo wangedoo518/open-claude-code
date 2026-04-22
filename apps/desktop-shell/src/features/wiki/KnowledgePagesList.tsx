@@ -29,9 +29,10 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, FileText, Loader2, ChevronRight, Hash } from "lucide-react";
+import { BookOpen, FileText, Loader2, Hash } from "lucide-react";
 import { listWikiPages } from "@/features/ingest/persist";
 import type { WikiPageSummary } from "@/features/ingest/types";
+import { ListItem, type ListItemCategory } from "@/components/ds/ListItem";
 
 /* ── Category inference (slug-based best-effort) ─────────────────
  * The backend's `WikiPageSummary` doesn't ship a category field, but
@@ -41,9 +42,8 @@ import type { WikiPageSummary } from "@/features/ingest/types";
  * We do a cheap classifier on title/slug heuristics; if nothing
  * matches we just omit the badge. Zero new API calls.
  */
-type CategoryKey = "concept" | "person" | "topic" | "compare" | "unknown";
 
-function classifyPage(p: WikiPageSummary): CategoryKey {
+function classifyPage(p: WikiPageSummary): ListItemCategory {
   const slug = p.slug.toLowerCase();
   if (slug.includes("people/") || slug.includes("person/")) return "person";
   if (slug.includes("topic/") || slug.includes("topics/")) return "topic";
@@ -54,22 +54,6 @@ function classifyPage(p: WikiPageSummary): CategoryKey {
   if (slug.includes("concept/") || slug.includes("concepts/")) return "concept";
   return "unknown";
 }
-
-const CATEGORY_LABELS: Record<CategoryKey, string> = {
-  concept: "概念",
-  person: "人物",
-  topic: "主题",
-  compare: "对比",
-  unknown: "未分类",
-};
-
-const CATEGORY_BADGE_CLASS: Record<CategoryKey, string> = {
-  concept: "ds-kb-badge ds-kb-badge-concept",
-  person: "ds-kb-badge ds-kb-badge-person",
-  topic: "ds-kb-badge ds-kb-badge-topic",
-  compare: "ds-kb-badge",
-  unknown: "ds-kb-badge",
-};
 
 /* ── Friendly timestamp ──────────────────────────────────────── */
 
@@ -201,32 +185,18 @@ export function KnowledgePagesList() {
           const cat = classifyPage(p);
           const updated = formatUpdated(p.created_at);
           const size = formatSize(p.byte_size);
+          const target = `/wiki/${encodeURIComponent(p.slug)}`;
           return (
-            <li
+            <ListItem
               key={p.slug}
-              className="ds-kb-item"
-              onClick={() => navigate(`/wiki/${encodeURIComponent(p.slug)}`)}
-              role="link"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  navigate(`/wiki/${encodeURIComponent(p.slug)}`);
-                }
-              }}
-            >
-              <span className="ds-kb-icon">
-                <FileText className="size-4" strokeWidth={1.5} />
-              </span>
-              <div className="min-w-0">
-                <div className="ds-kb-title truncate">{p.title || p.slug}</div>
-                {p.summary && <p className="ds-kb-summary">{p.summary}</p>}
-                <div className="ds-kb-meta-row">
-                  {cat !== "unknown" && (
-                    <span className={CATEGORY_BADGE_CLASS[cat]}>
-                      {CATEGORY_LABELS[cat]}
-                    </span>
-                  )}
+              icon={FileText}
+              title={p.title || p.slug}
+              summary={p.summary || undefined}
+              category={cat}
+              href={target}
+              onClick={() => navigate(target)}
+              meta={
+                <>
                   {typeof p.source_raw_id === "number" && p.source_raw_id > 0 && (
                     <span className="inline-flex items-center gap-1">
                       <Hash className="size-3" strokeWidth={1.5} />
@@ -235,14 +205,9 @@ export function KnowledgePagesList() {
                   )}
                   {updated && <span>更新 · {updated}</span>}
                   {size && <span>{size}</span>}
-                </div>
-              </div>
-              <ChevronRight
-                className="ds-kb-chevron size-4"
-                strokeWidth={1.5}
-                aria-hidden="true"
-              />
-            </li>
+                </>
+              }
+            />
           );
         })}
       </ul>

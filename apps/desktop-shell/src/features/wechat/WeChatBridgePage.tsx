@@ -61,6 +61,7 @@ import { RecentIngestCard } from "@/components/RecentIngestCard";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FailureBanner } from "@/components/ui/failure-banner";
 import { BridgeHealthHeader } from "@/features/wechat/components/BridgeHealthHeader";
+import { StepRow } from "@/components/ds/StepRow";
 import { GroupScopeModal } from "@/features/wechat/components/GroupScopeModal";
 import {
   fetchWeChatBridgeHealth,
@@ -536,40 +537,35 @@ function OnboardingSteps({
         style={{ borderColor: "var(--color-border)" }}
       >
         {steps.map((step) => (
-          <div key={step.n} className="ds-step-row" data-state={step.state}>
-            <div className="ds-step-n">
-              {step.state === "done" ? (
-                <CheckCircle2 className="size-3.5" strokeWidth={2} />
-              ) : (
-                step.n
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="ds-step-title">{step.title}</div>
-              <p className="ds-step-desc">{step.desc}</p>
-              {step.state === "active" && step.n === 1 && (
-                <button
-                  type="button"
-                  onClick={onStartBind}
-                  disabled={bindPending}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                  style={{ fontSize: 13, fontWeight: 500 }}
-                >
-                  {bindPending ? (
-                    <Loader2 className="size-3 animate-spin" strokeWidth={1.5} />
-                  ) : (
-                    <QrCode className="size-3" strokeWidth={1.5} />
-                  )}
-                  开始扫码绑定
-                </button>
-              )}
-              {step.state === "active" && step.n === 2 && (
-                <p className="mt-2 text-[11.5px] text-muted-foreground/70">
-                  已绑定小号，转发一条内容试试。
-                </p>
-              )}
-            </div>
-          </div>
+          <StepRow
+            key={step.n}
+            n={step.n}
+            title={step.title}
+            desc={step.desc}
+            state={step.state}
+          >
+            {step.state === "active" && step.n === 1 && (
+              <button
+                type="button"
+                onClick={onStartBind}
+                disabled={bindPending}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                style={{ fontSize: 13, fontWeight: 500 }}
+              >
+                {bindPending ? (
+                  <Loader2 className="size-3 animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <QrCode className="size-3" strokeWidth={1.5} />
+                )}
+                开始扫码绑定
+              </button>
+            )}
+            {step.state === "active" && step.n === 2 && (
+              <p className="mt-2 text-[11.5px] text-muted-foreground/70">
+                已绑定小号，转发一条内容试试。
+              </p>
+            )}
+          </StepRow>
         ))}
       </div>
     </section>

@@ -32,6 +32,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import { BookOpen, FileStack, Network } from "lucide-react";
 import { GraphPage } from "@/features/graph/GraphPage";
 import { RawLibraryPage } from "@/features/raw/RawLibraryPage";
+import { PillTabs } from "@/components/ds/PillTabs";
 import { KnowledgePagesList } from "./KnowledgePagesList";
 import { KnowledgeArticleView } from "./KnowledgeArticleView";
 
@@ -126,33 +127,13 @@ export function KnowledgeHubPage() {
               subtitle that just re-lists them is noise. */}
 
           <div className="mt-3 flex items-center gap-3">
-            <div
-              className="ds-pill-tabs"
-              role="tablist"
-              aria-label="知识库视图"
-            >
-              {HUB_TABS.map((t) => {
-                const Icon = t.icon;
-                const active = t.id === view;
-                return (
-                  <button
-                    key={t.id}
-                    id={`knowledge-hub-tab-${t.id}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    aria-controls={`knowledge-hub-panel-${t.id}`}
-                    onClick={() => setView(t.id)}
-                    className="ds-pill-tab"
-                    data-active={active || undefined}
-                    title={t.hint}
-                  >
-                    <Icon className="size-3.5" strokeWidth={1.5} />
-                    <span>{t.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <PillTabs
+              tabs={HUB_TABS}
+              active={view}
+              onChange={(id) => setView(id as HubView)}
+              ariaLabel="知识库视图"
+              idPrefix="knowledge-hub"
+            />
             <span className="hidden text-[11.5px] text-muted-foreground/70 md:inline">
               {HUB_TABS.find((t) => t.id === view)?.hint}
             </span>
