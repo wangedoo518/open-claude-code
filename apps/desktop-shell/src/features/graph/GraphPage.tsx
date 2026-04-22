@@ -50,7 +50,7 @@ export function GraphPage() {
           知识图谱
         </h1>
         <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-          力导向知识图谱 · 拖拽探索你的认知网络
+          知识的形状。
         </p>
       </div>
 
@@ -93,9 +93,9 @@ export function GraphPage() {
 }
 
 function GraphEmpty({
-  nodeCount,
-  edgeCount,
-  onOpenInbox,
+  nodeCount: _nodeCount,
+  edgeCount: _edgeCount,
+  onOpenInbox: _onOpenInbox,
   onOpenRaw,
 }: {
   nodeCount: number;
@@ -103,38 +103,31 @@ function GraphEmpty({
   onOpenInbox: () => void;
   onOpenRaw: () => void;
 }) {
-  // R1 sprint — replace the single-line "认知网络还是空的" with a
-  // proper EmptyState that surfaces the current node/edge counts and
-  // teaches users the two mechanisms by which edges appear (Wiki-to-
-  // Wiki markdown links + shared source_raw_id). CTAs point at the
-  // two common places to create new material.
+  // DS1.5 — narrative empty state. The R1-era mechanism explainer
+  // (markdown [slug](concepts/xxx.md) syntax + source_raw_id sharing)
+  // was a capability matrix; users don't need the ruleset. Two lines
+  // of suggestion + a single CTA is enough.
+  const navigate =
+    typeof window !== "undefined"
+      ? (path: string) => {
+          window.location.hash = `#${path}`;
+        }
+      : () => {};
+  void _nodeCount;
+  void _edgeCount;
+  void _onOpenInbox;
   return (
     <div className="flex h-full items-center justify-center">
       <EmptyState
         size="full"
         icon={Network}
         title="你的知识图谱还很新"
-        description={
-          <>
-            当前: {nodeCount} 个节点 · {edgeCount} 条连线
-            <br />
-            <br />
-            关系会在以下情况下自动建立:
-            <br />
-            · Wiki 页面间有{" "}
-            <code className="rounded bg-[var(--color-muted)] px-1 py-0.5 text-[11px]">
-              [slug](concepts/xxx.md)
-            </code>{" "}
-            链接
-            <br />
-            · 两个 Wiki 页共享同一条素材 (source_raw_id)
-            <br />
-            <br />
-            继续在 Ask 聊天、或入库素材，关系会自动生长。
-          </>
-        }
-        primaryAction={{ label: "打开 Inbox", onClick: onOpenInbox }}
-        secondaryAction={{ label: "打开素材库", onClick: onOpenRaw }}
+        description="问几个问题，关系自然会长出来。"
+        primaryAction={{
+          label: "打开问问题",
+          onClick: () => navigate("/ask"),
+        }}
+        secondaryAction={{ label: "浏览素材", onClick: onOpenRaw }}
       />
     </div>
   );

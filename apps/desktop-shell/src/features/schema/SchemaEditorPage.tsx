@@ -100,7 +100,7 @@ export function SchemaEditorPage() {
           整理规则
         </h1>
         <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-          <code>schema/CLAUDE.md</code> 是维护 AI 整理知识时遵循的唯一规则文件 · 仅人工编辑
+          AI 整理知识时遵循的规则。只能由你改写。
         </p>
       </div>
 
