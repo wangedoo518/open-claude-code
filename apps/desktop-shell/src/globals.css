@@ -640,7 +640,7 @@
 
 /* Tool actions group card */
 .ask-tool-group {
-  box-shadow: var(--deeptutor-shadow-sm, 0 1px 3px rgba(45,43,40,0.04));
+  box-shadow: var(--shadow-warm-ring);
 }
 
 /* v2: Compact mode for AskWorkbench when rendered inside ChatSidePanel.
@@ -870,7 +870,7 @@
 }
 .ds-skill-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(20, 20, 19, 0.08);
+  box-shadow: var(--shadow-whisper);
 }
 .ds-skill-card .ds-skill-title {
   font-family: var(--font-serif, "Lora", Georgia, serif);
@@ -1021,12 +1021,12 @@
   padding: 10px 16px;
   border-radius: 999px;
   background: var(--claude-orange);
-  color: #faf9f5;
+  color: var(--color-card);
   font-size: 13px;
   font-weight: 500;
   box-shadow:
     0 0 0 1px var(--claude-orange),
-    0 8px 24px color-mix(in srgb, var(--claude-orange) 35%, transparent);
+    var(--shadow-whisper);
   text-decoration: none;
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
@@ -1034,7 +1034,7 @@
   transform: translateY(-2px);
   box-shadow:
     0 0 0 1px var(--claude-orange),
-    0 12px 28px color-mix(in srgb, var(--claude-orange) 40%, transparent);
+    var(--shadow-whisper);
 }
 
 /* ═══════════════════════════════════════════════════════════════
