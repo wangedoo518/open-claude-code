@@ -29,6 +29,7 @@
  */
 
 import { useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { useWikiTabStore } from "@/state/wiki-tab-store";
@@ -136,6 +137,12 @@ type AnchorProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
 export function useWikiLinkRenderer(): React.FC<AnchorProps> {
   const openTab = useWikiTabStore((s) => s.openTab);
   const setAppMode = useSettingsStore((s) => s.setAppMode);
+  // DS1.2: internal wiki links now primarily navigate via react-router
+  // so they land inside KnowledgeHubPage's article route. `openTab` is
+  // still called for back-compat with any surface that still mounts
+  // WikiTab directly; if WikiTab isn't in the tree the call is a no-op
+  // on the visible UI.
+  const navigate = useNavigate();
 
   const openInternal = useCallback(
     async (slug: string, title: string) => {
@@ -148,10 +155,10 @@ export function useWikiLinkRenderer(): React.FC<AnchorProps> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
-          toast.error(`Wiki 页面不存在: ${slug}`);
+          toast.error(`页面不存在：${slug}`);
           return;
         }
-        // Network / unknown error — let the tab open anyway; the
+        // Network / unknown error — let the navigation proceed; the
         // WikiArticle component surfaces its own load error.
       }
       setAppMode("wiki");
@@ -162,8 +169,10 @@ export function useWikiLinkRenderer(): React.FC<AnchorProps> {
         title,
         closable: true,
       });
+      // Primary navigation path for DS1.2+ shell.
+      navigate(`/wiki/${encodeURIComponent(slug)}`);
     },
-    [openTab, setAppMode],
+    [openTab, setAppMode, navigate],
   );
 
   return useCallback(
