@@ -187,10 +187,10 @@
     --color-destructive: oklch(0.5800 0.1669 25.1);           /* brighter Crimson for dark */
     --color-destructive-foreground: oklch(0.9818 0.0054 95.1);
     --color-error: oklch(0.5800 0.1669 25.1);                 /* alias → destructive (dark) */
-    --color-success: oklch(0.65 0.14 155);                    /* brighter warm green for dark */
-    --color-warning: oklch(0.80 0.10 75);                     /* brighter warm amber for dark */
-    --color-permission: oklch(0.65 0.15 300);                 /* brighter muted purple for dark */
-    --color-fast-mode: oklch(0.80 0.10 75);                   /* alias → warning (dark) */
+    --color-success: oklch(0.65 0.11 150);                    /* dark-mode readable version of DS --success (#3f8f5e); hue/chroma match light, lightness +0.11 */
+    --color-warning: oklch(0.75 0.115 79);                    /* dark-mode readable version of DS --warning (#c09640); hue/chroma match light, lightness +0.07 */
+    --color-permission: oklch(0.65 0.17 294);                 /* dark-mode readable version of DS --permission (#8855cc); hue/chroma match light, lightness +0.15 */
+    --color-fast-mode: oklch(0.75 0.115 79);                  /* alias → warning (dark-readable) */
     --color-border: oklch(0.3085 0.0035 106.6);               /* gentle depth */
     --color-input: oklch(0.3590 0.0051 106.6);
     --color-ring: oklch(0.6634 0.1531 248.9);                 /* Focus Blue */
@@ -264,12 +264,12 @@
     --claude-blue: oklch(0.6634 0.1531 248.9);
     --deeptutor-primary: oklch(0.6171 0.1375 39.0);
     --deeptutor-primary-hi: oklch(0.6724 0.1308 38.8);
-    --deeptutor-purple: oklch(0.65 0.15 300);
-    --agent-purple: oklch(0.65 0.15 300);
-    --agent-cyan: oklch(0.65 0.10 200);
-    --deeptutor-ok: oklch(0.65 0.14 155);
-    --deeptutor-ok-soft: color-mix(in srgb, oklch(0.65 0.14 155) 8%, transparent);
-    --deeptutor-warn: oklch(0.80 0.10 75);
+    --deeptutor-purple: oklch(0.65 0.17 294);                  /* = dark --color-permission */
+    --agent-purple: oklch(0.65 0.17 294);                      /* = dark --color-permission */
+    --agent-cyan: oklch(0.65 0.10 200);                        /* warm cyan for agent tools */
+    --deeptutor-ok: oklch(0.65 0.11 150);                      /* = dark --color-success */
+    --deeptutor-ok-soft: color-mix(in srgb, oklch(0.65 0.11 150) 8%, transparent);
+    --deeptutor-warn: oklch(0.75 0.115 79);                    /* = dark --color-warning */
   }
 }
 
