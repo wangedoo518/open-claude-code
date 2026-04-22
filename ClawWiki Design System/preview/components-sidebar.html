@@ -1,0 +1,48 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css"></head>
+<body class="ds" style="margin:0;padding:20px;background:var(--parchment);">
+<style>
+  .nav-row { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:var(--radius-sm); color:var(--fg-2); font-size:13.5px; text-decoration:none; border-left:3px solid transparent; margin-left:-3px; }
+  .nav-row svg { flex:none; color:var(--fg-3); }
+  .nav-row.active { background:var(--warm-sand); color:var(--fg-1); font-weight:500; border-left-color:var(--claude-orange); }
+  .nav-row.active svg { color:var(--claude-orange); }
+</style>
+<div style="background:var(--ivory);border:1px solid var(--border-cream);border-radius:var(--radius-lg);width:240px;padding:10px;">
+  <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;">
+    <div style="width:28px;height:28px;border-radius:8px;background:var(--claude-orange);display:flex;align-items:center;justify-content:center;color:var(--ivory);font-family:var(--font-serif);font-size:16px;font-weight:500;">C</div>
+    <div style="font-family:var(--font-serif);font-size:15px;font-weight:500;color:var(--fg-1);">ClawWiki</div>
+  </div>
+  <nav style="display:flex;flex-direction:column;gap:1px;margin-top:6px;">
+    <!-- Home -->
+    <a class="nav-row" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span>Dashboard</span>
+    </a>
+    <!-- MessageCircle (active) -->
+    <a class="nav-row active" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+      <span>Ask</span>
+    </a>
+    <!-- Inbox -->
+    <a class="nav-row" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+      <span>Inbox</span>
+      <span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;background:var(--claude-orange);color:var(--ivory);padding:1px 7px;border-radius:999px;">3</span>
+    </a>
+    <!-- FileStack -->
+    <a class="nav-row" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7h-3a2 2 0 0 1-2-2V2"/><path d="M21 6v6.5c0 .8-.7 1.5-1.5 1.5h-7c-.8 0-1.5-.7-1.5-1.5v-9c0-.8.7-1.5 1.5-1.5H17Z"/><path d="M7 8v8.8c0 .3.2.6.4.8.2.2.5.4.8.4H15"/><path d="M3 12v8.8c0 .3.2.6.4.8.2.2.5.4.8.4H11"/></svg>
+      <span>Raw</span>
+    </a>
+    <!-- BookOpen -->
+    <a class="nav-row" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+      <span>Wiki</span>
+    </a>
+    <!-- Network -->
+    <a class="nav-row" href="#">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>
+      <span>Graph</span>
+    </a>
+  </nav>
+</div>
+</body></html>

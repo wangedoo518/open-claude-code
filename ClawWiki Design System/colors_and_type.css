@@ -1,0 +1,212 @@
+/* ═══════════════════════════════════════════════════════════════
+   ClawWiki Design System — colors_and_type.css
+   Warm parchment palette + Anthropic-Serif (Lora) editorial type.
+   Sourced from apps/desktop-shell/src/globals.css and
+   docs/desktop-shell/tokens/design-tokens.md.
+   ═══════════════════════════════════════════════════════════════ */
+
+@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  /* ── Brand ─────────────────────────────────────────────────── */
+  --claude-orange:          #c96442; /* Terracotta — primary CTA */
+  --claude-orange-shimmer:  #d97757; /* Coral — links, accents */
+  --claude-blue:            #3898ec; /* Focus Blue — ONLY cool colour */
+
+  /* ── Surfaces ──────────────────────────────────────────────── */
+  --parchment:   #f5f4ed; /* page bg (warm cream, the soul) */
+  --ivory:       #faf9f5; /* card bg (never pure white) */
+  --pure-white:  #ffffff;
+  --warm-sand:   #e8e6dc; /* secondary button surface */
+  --dark-surface:#30302e; /* dark card */
+  --near-black:  #141413; /* dark page bg */
+
+  /* ── Text / neutrals (warm-toned) ──────────────────────────── */
+  --charcoal-warm: #4d4c48; /* body-on-light primary */
+  --olive-gray:    #5e5d59; /* secondary body */
+  --stone-gray:    #87867f; /* tertiary / metadata */
+  --dark-warm:     #3d3d3a; /* strong secondary */
+  --warm-silver:   #b0aea5; /* text on dark */
+
+  /* ── Borders / rings ───────────────────────────────────────── */
+  --border-cream: #f0eee6; /* Level-1 light border */
+  --border-warm:  #e8e6dc; /* prominent / divider */
+  --border-dark:  #30302e; /* dark border */
+  --ring-warm:    #d1cfc5; /* hover ring */
+  --ring-deep:    #c2c0b6; /* active ring */
+
+  /* ── Semantic ──────────────────────────────────────────────── */
+  --error:       #b53333;
+  --success:     #3f8f5e;
+  --warning:     #c09640;
+  --permission:  #8855cc; /* muted purple — permission dialog */
+
+  /* ── Semantic aliases (light) ──────────────────────────────── */
+  --background: var(--parchment);
+  --foreground: var(--charcoal-warm);
+  --fg-1:       var(--near-black);    /* headline text */
+  --fg-2:       var(--charcoal-warm); /* body */
+  --fg-3:       var(--olive-gray);    /* secondary body */
+  --fg-4:       var(--stone-gray);    /* metadata */
+  --card:       var(--ivory);
+  --muted:      var(--warm-sand);
+  --border:     var(--border-cream);
+  --border-strong: var(--border-warm);
+
+  /* ── Shadows (ring-first system, no drop shadows) ──────────── */
+  --shadow-warm-ring:       0 0 0 1px var(--ring-warm);
+  --shadow-warm-ring-hover: 0 0 0 1px var(--ring-deep);
+  --shadow-whisper:         0 4px 24px rgba(0, 0, 0, 0.05);
+  --shadow-press-inset:     inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+
+  /* ── Radius scale (Rowboat 7-tier) ─────────────────────────── */
+  --radius:     10px;
+  --radius-sm:  6px;
+  --radius-md:  8px;
+  --radius-lg:  10px;
+  --radius-xl:  14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+  --radius-4xl: 26px;
+
+  /* ── Spacing (8-based + half-steps) ────────────────────────── */
+  --s-1: 3px; --s-2: 4px; --s-3: 6px; --s-4: 8px;
+  --s-5: 10px; --s-6: 12px; --s-7: 16px; --s-8: 20px;
+  --s-9: 24px; --s-10: 30px; --s-11: 40px; --s-12: 56px;
+
+  /* ── Fonts ─────────────────────────────────────────────────── */
+  --font-serif: "Lora", "Songti SC", Georgia, "Anthropic Serif", serif;
+  --font-sans:  "Inter", system-ui, -apple-system, "Segoe UI",
+                "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono:  "JetBrains Mono", "Cascadia Code", "SF Mono",
+                Menlo, Consolas, monospace;
+
+  /* ── Base type scale (desktop UI, Claude Code compact) ─────── */
+  --text-micro:   9px;
+  --text-caption: 11px;
+  --text-label:   12px;
+  --text-body-sm: 13px;
+  --text-body:    14px;
+  --text-subhead: 16px;
+  --text-head:    18px;
+
+  /* ── Serif display scale ───────────────────────────────────── */
+  --display-xl: 64px;  /* hero */
+  --display-lg: 52px;  /* section */
+  --display-md: 36px;  /* sub-heading large */
+  --display-sm: 32px;  /* card / feature title */
+  --display-xs: 25px;  /* smaller section */
+  --display-2xs: 20px; /* feature name */
+}
+
+/* ── Dark theme overrides ────────────────────────────────────── */
+.dark, [data-theme="dark"] {
+  --background: var(--near-black);
+  --foreground: var(--warm-silver);
+  --fg-1: var(--ivory);
+  --fg-2: var(--warm-silver);
+  --fg-3: var(--stone-gray);
+  --fg-4: #6a6962;
+  --card:  var(--dark-surface);
+  --muted: var(--dark-warm);
+  --border: var(--dark-surface);
+  --border-strong: var(--dark-warm);
+  --shadow-warm-ring:       0 0 0 1px var(--dark-warm);
+  --shadow-warm-ring-hover: 0 0 0 1px var(--charcoal-warm);
+  --shadow-whisper:         0 4px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Semantic element styles (h1..h6, p, code, a)
+   ═══════════════════════════════════════════════════════════════ */
+
+.ds-surface,
+body.ds {
+  background: var(--background);
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-body-sm);
+  line-height: 1.60;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ds h1, .ds h2, .ds h3, .ds h4, .ds h5, .ds h6 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  color: var(--fg-1);
+  line-height: 1.30;
+  letter-spacing: 0;
+}
+.ds h1 { font-size: var(--display-xl); line-height: 1.10; }
+.ds h2 { font-size: var(--display-lg); line-height: 1.20; }
+.ds h3 { font-size: var(--display-md); }
+.ds h4 { font-size: var(--display-sm); line-height: 1.10; }
+.ds h5 { font-size: var(--display-xs); line-height: 1.20; }
+.ds h6 { font-size: var(--display-2xs); line-height: 1.20; }
+
+.ds p { line-height: 1.60; color: var(--fg-2); }
+.ds p.lead {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  color: var(--fg-3);
+  line-height: 1.60;
+}
+.ds p.serif-body {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.60;
+}
+
+.ds a {
+  color: var(--claude-orange-shimmer);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.ds a:hover {
+  text-decoration-thickness: 2px;
+  color: var(--claude-orange);
+}
+
+.ds code, .ds pre, .ds .mono {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  letter-spacing: -0.32px;
+}
+.ds code:not(pre code) {
+  background: var(--muted);
+  padding: 0.15em 0.4em;
+  border-radius: var(--radius-sm);
+  font-size: 0.92em;
+}
+
+.ds .label {
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: 0.12px;
+  color: var(--fg-3);
+}
+.ds .overline {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--fg-4);
+}
+.ds .caption { font-size: var(--text-caption); color: var(--fg-4); line-height: 1.43; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Decorative: Claude chapter-section gradient divider
+   parchment → terracotta → near-black (never a background gradient)
+   ═══════════════════════════════════════════════════════════════ */
+.ds .section-divider-warm {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--parchment), var(--claude-orange), var(--near-black)
+  );
+}
