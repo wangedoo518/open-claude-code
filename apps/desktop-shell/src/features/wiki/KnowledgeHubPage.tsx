@@ -121,12 +121,9 @@ export function KnowledgeHubPage() {
           >
             知识库
           </h1>
-          <p
-            className="mt-1 text-muted-foreground"
-            style={{ fontSize: 13, lineHeight: 1.6 }}
-          >
-            浏览已整理的页面、关系图和原始素材。
-          </p>
+          {/* DS1.5 — subtitle dropped. The pill tabs below already
+              label 页面 / 关系图 / 素材库; a capability-matrix
+              subtitle that just re-lists them is noise. */}
 
           <div className="mt-3 flex items-center gap-3">
             <div

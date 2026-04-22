@@ -894,6 +894,7 @@ function EntryCard({
         <button
           type="button"
           onClick={onToggleExpand}
+          title={`${entry.slug} · ${translateSource(entry.source)}`}
           className="flex min-w-0 flex-1 items-start gap-3 text-left"
         >
           {/* Source icon */}

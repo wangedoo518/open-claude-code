@@ -742,6 +742,7 @@ function EntryList({
                   <div
                     role="button"
                     tabIndex={0}
+                    title={translateKind(entry.kind)}
                     onClick={() => {
                       if (batchMode) {
                         onToggleSelect(entry.id);
@@ -832,12 +833,12 @@ function EntryList({
                             </div>
                           </InfoTooltip>
                         ) : null}
-                        <span
-                          className="ml-auto shrink-0 text-muted-foreground/40"
-                          style={{ fontSize: 10 }}
-                        >
-                          {translateKind(entry.kind)}
-                        </span>
+                        {/* DS1.5 — kind dropped from inline row; the
+                            RecommendedActionBadge + SharedTargetBadge
+                            already carry the semantic weight. Kind
+                            still surfaces via the row's native hover
+                            `title` attribute (added on the outer row
+                            container) so power users can inspect. */}
                       </div>
                       <div
                         className="mt-0.5 truncate text-muted-foreground/50"

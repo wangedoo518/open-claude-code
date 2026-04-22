@@ -249,7 +249,7 @@ export function DashboardPage() {
           <summary className="flex cursor-pointer items-center gap-2 rounded-md border border-border/40 px-4 py-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/40">
             <Sparkles className="size-3.5" strokeWidth={1.5} />
             <span className="font-semibold uppercase tracking-widest">
-              高级 · 知识质量巡检
+              高级
             </span>
             <span className="ml-auto text-muted-foreground/60 group-open:hidden">
               展开
