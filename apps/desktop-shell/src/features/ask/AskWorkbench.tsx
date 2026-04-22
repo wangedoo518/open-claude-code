@@ -17,16 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Terminal,
-  FileEdit,
-  Search,
-  Globe,
-  Code2,
-  Zap,
-  MessageSquare,
-  Play,
-} from "lucide-react";
+import { AlertTriangle, MessageSquare, Play, Sparkles } from "lucide-react";
 import { AskHeader } from "./AskHeader";
 import { useWikiQuery } from "./useWikiQuery";
 import { WikiQueryMessage } from "./WikiQueryMessage";
@@ -188,6 +179,14 @@ interface AskWorkbenchProps {
    * Intended for compact contexts where the parent already shows
    * a label and where screen real estate is precious. */
   hideHeader?: boolean;
+  /**
+   * P1-2 fallback UX: when the providers registry resolves to an
+   * empty list OR the settings query itself errors, the parent
+   * (AskPage) hands `true` here. We render an explicit "设置未就绪"
+   * banner under the header instead of letting the header silently
+   * stay on a stale "Opus 4.6" placeholder.
+   */
+  settingsUnready?: boolean;
 }
 
 export function AskWorkbench({
@@ -206,6 +205,7 @@ export function AskWorkbench({
   onEnsureAndBind,
   compact = false,
   hideHeader = false,
+  settingsUnready = false,
 }: AskWorkbenchProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -221,6 +221,7 @@ export function AskWorkbench({
     (state) => state.clearPendingPermission
   );
   const streamingContent = useStreamingStore((s) => s.streamingContent);
+  const streamingThinking = useStreamingStore((s) => s.streamingThinking);
 
   const [showDemo, setShowDemo] = useState(false);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
@@ -615,62 +616,86 @@ export function AskWorkbench({
           onToggleAgentPanel={() => setShowAgentPanel((v) => !v)}
         />
       )}
+      {settingsUnready && !hideHeader && (
+        <div
+          className="mx-4 mb-2 mt-1 flex items-center gap-2 rounded-md border px-3 py-1.5 text-caption"
+          role="status"
+          style={{
+            borderColor:
+              "color-mix(in srgb, var(--color-warning) 35%, transparent)",
+            backgroundColor:
+              "color-mix(in srgb, var(--color-warning) 8%, transparent)",
+            color: "var(--color-warning)",
+          }}
+        >
+          <AlertTriangle
+            className="size-3.5 shrink-0"
+            strokeWidth={1.5}
+            aria-hidden="true"
+          />
+          <span className="font-medium">设置未就绪</span>
+          <span className="text-muted-foreground/90">
+            · 还没有解析到模型服务。
+          </span>
+          <a
+            href="#/settings"
+            className="ml-auto underline underline-offset-2 hover:no-underline"
+            style={{ color: "var(--color-warning)" }}
+          >
+            打开设置 →
+          </a>
+        </div>
+      )}
 
       {displayMessages.length === 0 && !isLoadingSession ? (
         <WelcomeScreen onShowDemo={() => setShowDemo(true)} />
       ) : (
         <ConversationScroller>
-          {/*
-            Layout note: `justify-end` on a flex column does NOT work when the
-            child MessageList is a @tanstack/react-virtual absolute-positioned
-            list whose `totalSize` (from estimateSize ≈ 80) frequently exceeds
-            the scroller height. Instead, use a spacer `<div className="flex-1" />`
-            at the top to push content to the bottom for short conversations,
-            while still letting MessageList grow naturally when content is long.
-          */}
           <div className="flex min-h-full flex-col">
-          <div className="flex-1" aria-hidden="true" />
-          {showDemo && (
-            <div className="mb-2 flex items-center justify-between rounded-lg border border-border/30 bg-muted/10 px-3 py-1.5">
-              <span className="text-label text-muted-foreground">
-                演示模式 — 展示示例对话
-              </span>
-              <div className="flex items-center gap-2">
-                {!pendingPermission && (
+            {showDemo && (
+              <div className="mb-2 flex items-center justify-between rounded-lg border border-border/30 bg-muted/10 px-3 py-1.5">
+                <span className="text-label text-muted-foreground">
+                  演示模式 — 展示示例对话
+                </span>
+                <div className="flex items-center gap-2">
+                  {!pendingPermission && (
+                    <button
+                      className="text-label font-medium text-muted-foreground hover:text-foreground hover:underline"
+                      onClick={() =>
+                        setPendingPermission({
+                          id: `demo-perm-${Date.now()}`,
+                          toolName: "Bash",
+                          toolInput: {
+                            command: "npm install @radix-ui/react-dialog",
+                          },
+                          riskLevel: "high",
+                        })
+                      }
+                    >
+                      测试权限
+                    </button>
+                  )}
                   <button
-                    className="text-label font-medium text-muted-foreground hover:text-foreground hover:underline"
-                    onClick={() =>
-                      setPendingPermission({
-                        id: `demo-perm-${Date.now()}`,
-                        toolName: "Bash",
-                        toolInput: {
-                          command: "npm install @radix-ui/react-dialog",
-                        },
-                        riskLevel: "high",
-                      })
-                    }
+                    className="text-label font-medium text-foreground hover:underline"
+                    onClick={() => setShowDemo(false)}
                   >
-                    测试权限
+                    退出演示
                   </button>
-                )}
-                <button
-                  className="text-label font-medium text-foreground hover:underline"
-                  onClick={() => setShowDemo(false)}
-                >
-                  退出演示
-                </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {isLoadingSession && <MessageSkeleton />}
+            {isLoadingSession && <MessageSkeleton />}
 
-          <MessageList
-            messages={displayMessages}
-            streamingContent={streamingContent}
-            isStreaming={isRunning && !pendingPermission}
-            onPromoteToSession={handlePromoteToSession}
-          />
+            <MessageList
+              key={session?.id ?? "ask-empty"}
+              sessionKey={session?.id ?? "ask-empty"}
+              messages={displayMessages}
+              streamingContent={streamingContent}
+              streamingThinking={streamingThinking}
+              isStreaming={isRunning && !pendingPermission}
+              onPromoteToSession={handlePromoteToSession}
+            />
 
           {/* v2: Wiki query result (? prefix) — not stored in session history */}
           {(wikiQuery.isQuerying || wikiQuery.answer || wikiQuery.error) && (
@@ -696,19 +721,19 @@ export function AskWorkbench({
               get bespoke titles + recovery CTAs; unknown kinds fall
               through to a generic message with the raw string parked
               under the technical-detail `<details>`. */}
-          {errorMessage && (
-            <AskFailureBannerSwitch
-              classification={classifyAskError(errorMessage)}
-              onOpenSettings={() => navigate("/settings")}
-              onNewSession={() => {
-                onCreateSession?.();
-                addSystemMessage("已新建对话，请重试你的消息。");
-              }}
-              onDismiss={() =>
-                addSystemMessage("错误已忽略。你可以重试上一条消息。")
-              }
-            />
-          )}
+            {errorMessage && (
+              <AskFailureBannerSwitch
+                classification={classifyAskError(errorMessage)}
+                onOpenSettings={() => navigate("/settings")}
+                onNewSession={() => {
+                  onCreateSession?.();
+                  addSystemMessage("已新建对话，请重试你的消息。");
+                }}
+                onDismiss={() =>
+                  addSystemMessage("错误已忽略。你可以重试上一条消息。")
+                }
+              />
+            )}
 
           </div>
           <ScrollToBottomButton />
@@ -781,102 +806,83 @@ function MessageSkeleton() {
 
 /* ─── Welcome Screen ─────────────────────────────────────────────── */
 
-function WelcomeScreen({ onShowDemo }: { onShowDemo?: () => void }) {
-  const capabilities = [
-    {
-      icon: Terminal,
-      title: "执行命令",
-      desc: "运行 Shell 命令、脚本和构建工具",
-      color: "var(--color-terminal-tool)",
-    },
-    {
-      icon: FileEdit,
-      title: "编辑文件",
-      desc: "精确读写和修改代码",
-      color: "var(--deeptutor-primary, var(--claude-orange))",
-    },
-    {
-      icon: Search,
-      title: "搜索代码",
-      desc: "在代码库中查找文件和模式",
-      color: "var(--deeptutor-purple, var(--claude-blue))",
-    },
-    {
-      icon: Globe,
-      title: "网络访问",
-      desc: "抓取 URL 和搜索网络信息",
-      color: "var(--deeptutor-purple, var(--agent-cyan))",
-    },
-    {
-      icon: Code2,
-      title: "多文件编辑",
-      desc: "同时协调多个文件的修改",
-      color: "var(--deeptutor-purple, var(--agent-purple))",
-    },
-    {
-      icon: Zap,
-      title: "MCP 工具",
-      desc: "使用已连接的 MCP 服务器工具",
-      color: "var(--deeptutor-warn, var(--color-fast-mode))",
-    },
-  ];
+// A5 — the pre-A5 welcome screen was a 6-card capability grid that
+// read like marketing copy. Claude's empty state is closer to "just
+// start a conversation"; the surface gives you a greeting, a few
+// concrete starter prompts, and the composer below stays the real
+// call-to-action. We keep the 演示模式 button because it's how the
+// product ships mock data for gray-test users.
+const STARTER_PROMPTS = [
+  "帮我总结今天微信里入库的素材，给一个两段式摘要。",
+  "把以下链接整理成一篇知识页，保持客观语气：",
+  "我想问一个长期问题：ClawWiki 应该怎么处理长尾知识？",
+];
 
+function WelcomeScreen({ onShowDemo }: { onShowDemo?: () => void }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-5 p-6">
-      {/* Logo */}
-      <div className="flex flex-col items-center gap-3">
+    <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10">
+      {/* Greeting */}
+      <div className="flex flex-col items-center gap-3 text-center">
         <div
-          className="flex size-14 items-center justify-center rounded-2xl"
+          className="flex size-12 items-center justify-center rounded-2xl"
           style={{
-            background: "linear-gradient(135deg, var(--deeptutor-primary, var(--claude-orange)), var(--deeptutor-primary-hi, var(--claude-orange-shimmer)))",
+            background:
+              "linear-gradient(135deg, var(--deeptutor-primary, var(--claude-orange)), var(--deeptutor-primary-hi, var(--claude-orange-shimmer)))",
           }}
         >
-          <MessageSquare className="size-7 text-white" />
+          <MessageSquare className="size-6 text-white" />
         </div>
-        <div className="text-center">
-          <h2 className="ask-serif text-base font-semibold text-foreground">
+        <div>
+          <h2 className="ask-serif text-xl font-semibold text-foreground">
             有什么我能帮你的？
           </h2>
-          <p className="mt-1 max-w-sm text-body text-muted-foreground">
-            我能阅读、编写和运行你项目中的代码。告诉我你需要什么。
+          <p className="mt-1.5 max-w-md text-sm text-muted-foreground/80">
+            直接在下面输入框发一条问题，或粘贴一条链接、一条微信素材，让 AI
+            帮你整理。
           </p>
         </div>
       </div>
 
-      {/* Capabilities grid */}
-      <div className="grid w-full max-w-lg grid-cols-2 gap-2">
-        {capabilities.map((item) => (
-          <div
-            key={item.title}
-            className="flex items-start gap-2.5 rounded-lg border border-border/40 bg-card/50 p-3 shadow-[var(--deeptutor-shadow-sm,none)] transition-colors hover:bg-accent/50"
-          >
-            <item.icon className="mt-0.5 size-4 shrink-0" style={{ color: item.color }} />
-            <div className="min-w-0">
-              <div className="text-body-sm font-medium text-foreground">{item.title}</div>
-              <div className="text-label leading-snug text-muted-foreground">{item.desc}</div>
+      {/* Starter prompts — Claude-style suggestion strip */}
+      <ul className="flex w-full max-w-lg flex-col gap-1.5">
+        {STARTER_PROMPTS.map((prompt) => (
+          <li key={prompt}>
+            <div className="group/prompt flex items-start gap-2 rounded-md border border-border/30 bg-card/30 px-3 py-2 text-[13px] leading-relaxed text-muted-foreground/80 transition-colors hover:border-border/60 hover:bg-accent/30 hover:text-foreground">
+              <Sparkles
+                className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover/prompt:text-[color:var(--deeptutor-primary,var(--claude-orange))]"
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1">{prompt}</span>
             </div>
-          </div>
+          </li>
         ))}
-      </div>
+      </ul>
 
-      {/* Hint + Demo */}
-      <div className="flex flex-col items-center gap-2">
-        <div className="flex items-center gap-1.5 text-label text-muted-foreground/60">
-          <kbd className="rounded border border-border/50 bg-muted/30 px-1.5 py-0.5 font-mono text-caption">Enter</kbd>
+      {/* Shortcut hint + demo fallback */}
+      <div className="flex flex-col items-center gap-2 text-[11px] text-muted-foreground/50">
+        <div className="flex items-center gap-1.5">
+          <kbd className="rounded border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono">
+            Enter
+          </kbd>
           <span>发送</span>
-          <span className="mx-1">|</span>
-          <kbd className="rounded border border-border/50 bg-muted/30 px-1.5 py-0.5 font-mono text-caption">Shift+Enter</kbd>
+          <span className="mx-1 opacity-40">·</span>
+          <kbd className="rounded border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono">
+            Shift+Enter
+          </kbd>
           <span>换行</span>
-          <span className="mx-1">|</span>
-          <kbd className="rounded border border-border/50 bg-muted/30 px-1.5 py-0.5 font-mono text-caption">/</kbd>
+          <span className="mx-1 opacity-40">·</span>
+          <kbd className="rounded border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono">
+            /
+          </kbd>
           <span>命令</span>
         </div>
         {onShowDemo && (
           <button
-            className="flex items-center gap-1.5 rounded-md border border-border/40 bg-card/50 px-3 py-1 text-label text-muted-foreground shadow-[var(--deeptutor-shadow-sm,none)] transition-colors hover:bg-accent/50 hover:text-foreground"
+            type="button"
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
             onClick={onShowDemo}
           >
-            <Play className="size-3" />
+            <Play className="size-2.5" />
             查看演示对话
           </button>
         )}

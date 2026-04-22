@@ -15,8 +15,18 @@ import type { ConversationMessage } from "@/features/common/message-types";
 import type { SourceRef } from "@/lib/tauri";
 
 interface MessageListProps {
+  sessionKey?: string;
   messages: ConversationMessage[];
   streamingContent?: string;
+  /**
+   * A5 — forward-compatible thinking payload. When the backend emits
+   * a `thinking_delta` event (not yet implemented), useAskSSE routes
+   * it through `streaming-store::appendStreamingThinking` and the
+   * value lands here; StreamingMessage will render a collapsible
+   * ThinkingBlock. Today this is always "" and the Ask UI only shows
+   * the phased shimmer before the first text_delta arrives.
+   */
+  streamingThinking?: string;
   isStreaming?: boolean;
   /**
    * A3 — forwarded to <Message> → <UsedSourcesBar> so the inline
@@ -41,6 +51,7 @@ interface ToolGroupItem {
 interface StreamingItem {
   kind: "streaming";
   content: string;
+  thinking: string;
   key: string;
 }
 
@@ -49,6 +60,7 @@ type RenderItem = SingleGroup | ToolGroupItem | StreamingItem;
 function buildItems(
   messages: ConversationMessage[],
   streamingContent: string | undefined,
+  streamingThinking: string | undefined,
   isStreaming: boolean,
 ): RenderItem[] {
   const items: RenderItem[] = [];
@@ -76,30 +88,50 @@ function buildItems(
   flushToolBuf();
 
   if (isStreaming) {
-    items.push({ kind: "streaming", content: streamingContent ?? "", key: "streaming" });
+    items.push({
+      kind: "streaming",
+      content: streamingContent ?? "",
+      thinking: streamingThinking ?? "",
+      key: "streaming",
+    });
   }
 
   return items;
 }
 
 export const MessageList = memo(function MessageList({
+  sessionKey,
   messages,
   streamingContent,
+  streamingThinking,
   isStreaming = false,
   onPromoteToSession,
 }: MessageListProps) {
   const { scrollElement, isAtBottom } = useStickToBottomContext();
   const items = useMemo(
-    () => buildItems(messages, streamingContent, isStreaming),
-    [messages, streamingContent, isStreaming],
+    () =>
+      buildItems(messages, streamingContent, streamingThinking, isStreaming),
+    [messages, streamingContent, streamingThinking, isStreaming],
   );
 
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollElement,
+    getItemKey: (index) => items[index]?.key ?? index,
     estimateSize: () => 80,
     overscan: 5,
   });
+
+  // When the user switches to a different session, clear any stale
+  // height cache and reset the scroll position so a previous thread's
+  // large measurements don't leave giant blank space or hide the new
+  // conversation above/below the viewport.
+  useEffect(() => {
+    virtualizer.measure();
+    if (scrollElement) {
+      scrollElement.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [sessionKey, scrollElement, virtualizer]);
 
   // Auto-scroll to bottom when new items arrive or streaming token appended.
   // NOTE: `streamingContent` must be in deps — during streaming `items.length`
@@ -111,7 +143,14 @@ export const MessageList = memo(function MessageList({
     if (items.length > 0 && isAtBottom) {
       virtualizer.scrollToIndex(items.length - 1, { align: "end" });
     }
-  }, [items.length, streamingContent, isStreaming, virtualizer, isAtBottom]);
+  }, [
+    items.length,
+    streamingContent,
+    streamingThinking,
+    isStreaming,
+    virtualizer,
+    isAtBottom,
+  ]);
 
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
@@ -147,7 +186,10 @@ export const MessageList = memo(function MessageList({
                 isStreaming={isStreaming && virtualItem.index === items.length - 2}
               />
             ) : item.kind === "streaming" ? (
-              <StreamingMessage content={item.content} />
+              <StreamingMessage
+                content={item.content}
+                thinkingContent={item.thinking || undefined}
+              />
             ) : (
               <Message
                 message={item.message}

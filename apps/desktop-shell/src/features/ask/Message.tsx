@@ -10,9 +10,6 @@
  */
 
 import { memo, useState, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   ChevronDown,
   ChevronRight,
@@ -28,6 +25,7 @@ import {
   Globe,
   ExternalLink,
 } from "lucide-react";
+import { AskMarkdown } from "./AskMarkdown";
 import { getToolMeta } from "./tool-meta";
 import { cn } from "@/lib/utils";
 import type { ConversationMessage } from "@/features/common/message-types";
@@ -82,156 +80,13 @@ export const Message = memo(function Message({
   }
 });
 
-/* ─── Markdown renderer ──────────────────────────────────────────── */
-
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      components={{
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const codeString = String(children).replace(/\n$/, "");
-
-          if (match) {
-            return (
-              <CodeBlock language={match[1]} code={codeString} />
-            );
-          }
-
-          return (
-            <code
-              className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[13px] text-foreground"
-              {...props}
-            >
-              {children}
-            </code>
-          );
-        },
-        pre({ children }) {
-          return <>{children}</>;
-        },
-        p({ children }) {
-          return <p className="mb-2 last:mb-0">{children}</p>;
-        },
-        ul({ children }) {
-          return <ul className="mb-2 list-disc pl-5 last:mb-0">{children}</ul>;
-        },
-        ol({ children }) {
-          return <ol className="mb-2 list-decimal pl-5 last:mb-0">{children}</ol>;
-        },
-        li({ children }) {
-          return <li className="mb-0.5">{children}</li>;
-        },
-        h1({ children }) {
-          return <h1 className="mb-2 mt-3 text-base font-bold first:mt-0">{children}</h1>;
-        },
-        h2({ children }) {
-          return <h2 className="mb-2 mt-3 text-head font-bold first:mt-0">{children}</h2>;
-        },
-        h3({ children }) {
-          return <h3 className="mb-1.5 mt-2.5 text-sm font-semibold first:mt-0">{children}</h3>;
-        },
-        blockquote({ children }) {
-          return (
-            <blockquote className="mb-2 border-l-[3px] border-muted-foreground/30 pl-3 italic text-muted-foreground last:mb-0">
-              {children}
-            </blockquote>
-          );
-        },
-        table({ children }) {
-          return (
-            <div className="mb-2 overflow-x-auto last:mb-0">
-              <table className="w-full border-collapse text-body-sm">{children}</table>
-            </div>
-          );
-        },
-        th({ children }) {
-          return (
-            <th className="border border-border/50 bg-muted/50 px-2.5 py-1.5 text-left font-semibold">
-              {children}
-            </th>
-          );
-        },
-        td({ children }) {
-          return (
-            <td className="border border-border/50 px-2.5 py-1.5">{children}</td>
-          );
-        },
-        hr() {
-          return <hr className="my-3 border-border/50" />;
-        },
-        a({ href, children }) {
-          return (
-            <a
-              href={href}
-              className="text-[color:var(--color-label-you,rgb(37,99,235))] underline decoration-[color:var(--color-label-you,rgb(37,99,235))]/30 hover:decoration-[color:var(--color-label-you,rgb(37,99,235))]"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {children}
-            </a>
-          );
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}
-
-/* ─── Code block with copy button ────────────────────────────────── */
-
-function CodeBlock({ language, code }: { language: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="group/code my-3 overflow-hidden rounded-lg border border-border/50 bg-[#1f2937]">
-      {/* Language header bar */}
-      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">
-          {language}
-        </span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[#9ca3af] opacity-0 transition-opacity hover:text-white group-hover/code:opacity-100"
-        >
-          {copied ? (
-            <>
-              <Check className="size-3" /> 已复制
-            </>
-          ) : (
-            <>
-              <Copy className="size-3" /> 复制
-            </>
-          )}
-        </button>
-      </div>
-      <SyntaxHighlighter
-        language={language}
-        style={oneDark}
-        customStyle={{
-          margin: 0,
-          padding: "1rem",
-          fontSize: "13px",
-          lineHeight: "1.7",
-          background: "#1f2937",
-          borderRadius: 0,
-        }}
-        codeTagProps={{
-          style: { fontFamily: "var(--font-family-dt-mono, 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace)" },
-        }}
-      >
-        {code}
-      </SyntaxHighlighter>
-    </div>
-  );
-}
+/* ─── Markdown / code rendering lives in AskMarkdown + AskCodeBlock ─
+ *
+ * A5 extracted the Markdown renderer and CodeBlock into shared
+ * components so streaming and final assistant bodies use the same
+ * element tree. If you want to tweak list spacing, heading weights,
+ * blockquote tone, etc., edit `AskMarkdown.tsx`. If you want to
+ * change the code-block chrome, edit `AskCodeBlock.tsx`. */
 
 /* ─── User message ───────────────────────────────────────────────── */
 
@@ -326,7 +181,7 @@ function AssistantMessage({
 
         {/* Message body — 15px, generous line height, break long URLs */}
         <div className="overflow-hidden text-[15px] leading-[1.8] text-foreground" style={{ overflowWrap: "break-word", wordBreak: "break-word" }}>
-          <MarkdownContent content={content} />
+          <AskMarkdown content={content} />
         </div>
 
         {/* Action row: Copy + output tokens */}

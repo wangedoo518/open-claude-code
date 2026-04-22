@@ -615,13 +615,27 @@
   animation: ask-shimmer-flow 1.5s linear infinite;
 }
 
-/* Blinking block cursor for streaming */
+/* Blinking block cursor for streaming. A5 tuned the timing so the
+ * cursor reads as "generating" rather than "error" — a softer fade
+ * (ease-in-out over 1.05s) instead of the old hard 0.8s step. */
 @keyframes ask-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 0.12; }
 }
 .ask-blink-cursor {
-  animation: ask-blink 0.8s steps(2, start) infinite;
+  animation: ask-blink 1.05s ease-in-out infinite;
+}
+
+/* A5 — streaming assistant body fades in the first text_delta rather
+ * than appearing instantly, so the handoff from "思考中…" shimmer to
+ * visible text feels less jarring. The fade is small (150ms) so we
+ * never slow down the overall turn. */
+@keyframes ask-stream-fade {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+.ask-stream-fade {
+  animation: ask-stream-fade 150ms ease-out both;
 }
 
 /* Tool actions group card */

@@ -21,11 +21,26 @@ import { create } from "zustand";
 export interface StreamingState {
   /** Accumulated text content from TextDelta SSE events. */
   streamingContent: string;
+  /**
+   * Accumulated thinking / reasoning summary for the current turn.
+   *
+   * A5 forward-compatibility: the backend SSE vocabulary today only
+   * emits text_delta for the assistant's visible reply. When Worker A
+   * adds a `thinking_delta` event (carrying a safe summary — never raw
+   * chain-of-thought), `useAskSSE` will route it through
+   * `appendStreamingThinking` and `StreamingMessage` will render a
+   * collapsible summary via its existing `thinkingContent` prop. Until
+   * that lands, the field stays "" and the UI shows only the phased
+   * shimmer. We never synthesize fake reasoning text.
+   */
+  streamingThinking: string;
   /** Whether the session is in Plan Mode (read-only exploration). */
   isPlanMode: boolean;
   /** Append a text chunk to the streaming buffer (batched via RAF). */
   appendStreamingContent: (chunk: string) => void;
-  /** Clear the streaming buffer without changing other state. */
+  /** Append a thinking-summary chunk (forward-compatible; see above). */
+  appendStreamingThinking: (chunk: string) => void;
+  /** Clear both streaming buffers without changing other state. */
   clearStreamingContent: () => void;
   /** Toggle plan mode state. */
   setPlanMode: (value: boolean) => void;
@@ -33,20 +48,25 @@ export interface StreamingState {
 
 // ── RAF batching ────────────────────────────────────────────────────
 // Chunks received within a single animation frame are accumulated in
-// this buffer and flushed once per frame. This is module-level state
-// because RAF scheduling is global to the browser.
-let pendingBuffer = "";
+// these module-level buffers and flushed once per frame. Content and
+// thinking are batched independently so a burst of text_delta doesn't
+// delay a thinking_delta (or vice versa) past the next paint.
+let pendingContentBuffer = "";
+let pendingThinkingBuffer = "";
 let rafHandle: number | null = null;
 
 /** Test-only: synchronously flush pending chunks. */
 function flushPendingChunks() {
-  if (pendingBuffer.length === 0) return;
-  const chunk = pendingBuffer;
-  pendingBuffer = "";
-  useStreamingStore.setState((state) => ({
-    streamingContent: state.streamingContent + chunk,
-  }));
+  const contentChunk = pendingContentBuffer;
+  const thinkingChunk = pendingThinkingBuffer;
+  pendingContentBuffer = "";
+  pendingThinkingBuffer = "";
   rafHandle = null;
+  if (contentChunk.length === 0 && thinkingChunk.length === 0) return;
+  useStreamingStore.setState((state) => ({
+    streamingContent: state.streamingContent + contentChunk,
+    streamingThinking: state.streamingThinking + thinkingChunk,
+  }));
 }
 
 /**
@@ -65,16 +85,22 @@ function scheduleFlush() {
 
 export const useStreamingStore = create<StreamingState>((set) => ({
   streamingContent: "",
+  streamingThinking: "",
   isPlanMode: false,
   appendStreamingContent: (chunk) => {
-    pendingBuffer += chunk;
+    pendingContentBuffer += chunk;
+    scheduleFlush();
+  },
+  appendStreamingThinking: (chunk) => {
+    pendingThinkingBuffer += chunk;
     scheduleFlush();
   },
   clearStreamingContent: () => {
     // Clearing must be synchronous so an incoming message arrival
     // immediately blanks the streaming buffer (prevents the last
     // chunk from appearing as a ghost after the complete message).
-    pendingBuffer = "";
+    pendingContentBuffer = "";
+    pendingThinkingBuffer = "";
     if (rafHandle !== null) {
       if (typeof cancelAnimationFrame === "function") {
         cancelAnimationFrame(rafHandle);
@@ -83,7 +109,7 @@ export const useStreamingStore = create<StreamingState>((set) => ({
       }
       rafHandle = null;
     }
-    set({ streamingContent: "" });
+    set({ streamingContent: "", streamingThinking: "" });
   },
   setPlanMode: (value) => set({ isPlanMode: value }),
 }));
