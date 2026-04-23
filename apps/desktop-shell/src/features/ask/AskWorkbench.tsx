@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, MessageSquare, Play, Sparkles } from "lucide-react";
+import { AlertTriangle, MessageSquare, Sparkles } from "lucide-react";
 import { AskHeader } from "./AskHeader";
 import { useWikiQuery } from "./useWikiQuery";
 import { WikiQueryMessage } from "./WikiQueryMessage";
@@ -51,6 +51,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import type { ConversationMessage } from "@/features/common/message-types";
 import { MOCK_DEMO_MESSAGES } from "./mockDemoMessages";
+import { useAskUiStore } from "@/state/ask-ui-store";
 import { formatIngestError } from "@/lib/ingest/format-error";
 import { FailureBanner } from "@/components/ui/failure-banner";
 import {
@@ -223,7 +224,12 @@ export function AskWorkbench({
   const streamingContent = useStreamingStore((s) => s.streamingContent);
   const streamingThinking = useStreamingStore((s) => s.streamingThinking);
 
-  const [showDemo, setShowDemo] = useState(false);
+  // Batch E §1 — `showDemo` was lifted to the shared ask-ui-store so
+  // the command palette's "查看演示对话" entry (outside AskWorkbench's
+  // provider tree) can toggle it. The local component keeps its
+  // existing writer + reader call sites unchanged.
+  const showDemo = useAskUiStore((s) => s.showDemo);
+  const setShowDemo = useAskUiStore((s) => s.setShowDemo);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [showAgentPanel, setShowAgentPanel] = useState(false);
 
@@ -651,7 +657,7 @@ export function AskWorkbench({
       )}
 
       {displayMessages.length === 0 && !isLoadingSession ? (
-        <WelcomeScreen onShowDemo={() => setShowDemo(true)} />
+        <WelcomeScreen />
       ) : (
         <ConversationScroller>
           <div className="flex min-h-full flex-col">
@@ -821,9 +827,9 @@ const STARTER_PROMPTS = [
   "我想问一个长期问题：ClawWiki 应该怎么处理长尾知识？",
 ];
 
-function WelcomeScreen({ onShowDemo }: { onShowDemo?: () => void }) {
+function WelcomeScreen() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10">
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 py-10">
       {/* Greeting */}
       <div className="flex flex-col items-center gap-3 text-center">
         <div
@@ -836,7 +842,7 @@ function WelcomeScreen({ onShowDemo }: { onShowDemo?: () => void }) {
           <MessageSquare className="size-6 text-white" />
         </div>
         <div>
-          <h2 className="ask-serif text-xl font-semibold text-foreground">
+          <h2 className="ask-serif text-xl font-medium text-foreground">
             有什么我能帮你的？
           </h2>
           <p className="mt-1.5 max-w-md text-sm text-muted-foreground/80">
@@ -860,35 +866,12 @@ function WelcomeScreen({ onShowDemo }: { onShowDemo?: () => void }) {
         ))}
       </ul>
 
-      {/* Shortcut hint + demo fallback */}
-      <div className="flex flex-col items-center gap-2 text-[11px] text-muted-foreground/50">
-        <div className="flex items-center gap-1.5">
-          <kbd className="rounded border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono">
-            Enter
-          </kbd>
-          <span>发送</span>
-          <span className="mx-1 opacity-40">·</span>
-          <kbd className="rounded border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono">
-            Shift+Enter
-          </kbd>
-          <span>换行</span>
-          <span className="mx-1 opacity-40">·</span>
-          <kbd className="rounded border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono">
-            /
-          </kbd>
-          <span>命令</span>
-        </div>
-        {onShowDemo && (
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
-            onClick={onShowDemo}
-          >
-            <Play className="size-2.5" />
-            查看演示对话
-          </button>
-        )}
-      </div>
+      {/* DS quiet-intellectual — empty state is just a greeting + a
+          hint line + the starter prompts. Keyboard shortcuts (Enter
+          send / Shift+Enter newline / `/` command palette) surface
+          naturally via the Composer itself; the demo-mode entry is
+          now reached through the command palette, not wedged into
+          the welcome hero as a 5th content tier. */}
     </div>
   );
 }

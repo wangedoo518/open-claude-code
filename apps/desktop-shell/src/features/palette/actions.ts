@@ -58,6 +58,7 @@ import type {
 import type { WikiTabItem } from "@/state/wiki-tab-store";
 import type { AppMode } from "@/state/settings-store";
 import type { SourceRef } from "@/lib/tauri";
+import { useAskUiStore } from "@/state/ask-ui-store";
 
 export interface PaletteActionContext {
   navigate: NavigateFunction;
@@ -100,6 +101,13 @@ export function executePaletteItem(
 
   switch (item.kind) {
     case "route": {
+      // Batch E §1 — synthetic `ask.demo` route fires the demo toggle
+      // in the Ask UI store in addition to navigating to /ask. The
+      // store drives AskWorkbench's banner + mock-message injection;
+      // see state/ask-ui-store.ts + features/ask/AskWorkbench.tsx.
+      if (item.routeKey === "ask.demo") {
+        useAskUiStore.getState().setShowDemo(true);
+      }
       navigate(item.path);
       pushRecent({
         kind: "route",

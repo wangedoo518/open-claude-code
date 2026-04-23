@@ -38,6 +38,7 @@ import {
   Link2,
   MessageCircle,
   Network,
+  Play,
   Settings,
   Sigma,
   type LucideIcon,
@@ -135,6 +136,20 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     label: "设置",
     section: "settings",
     sprint: "reused",
+  },
+  // Batch E §1 — synthetic route for the command palette's "查看演示
+  // 对话" entry. Its `path` is the canonical Ask page; the palette
+  // action dispatcher (features/palette/actions.ts) special-cases the
+  // `ask.demo` key and additionally flips `useAskUiStore.showDemo`
+  // before navigating. Kept in `advanced` so the sidebar's
+  // primary/funnel filter doesn't render it — command-palette-only.
+  {
+    key: "ask.demo",
+    path: "/ask",
+    icon: Play,
+    label: "查看演示对话",
+    section: "advanced",
+    sprint: "Batch-E",
   },
 ] as const;
 
