@@ -297,10 +297,15 @@ function SessionItem({
   return (
     <div
       className={cn(
-        "group flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-[11px] transition-colors",
+        // Left 2px border kept always-present (transparent when inactive)
+        // so active/inactive transitions don't shift the row horizontally.
+        // Matches the DS terracotta-left-bar pattern used by InboxRow +
+        // RawEntryCard; using 2px instead of 3px here because the session
+        // sidebar is narrower and the 3px stripe competes with rounded-md.
+        "group flex cursor-pointer items-center gap-2 rounded-md border-l-[2px] px-3 py-1.5 text-[11px] transition-colors",
         isActive
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+          ? "border-primary bg-sidebar-accent text-sidebar-accent-foreground"
+          : "border-l-transparent text-sidebar-foreground hover:bg-sidebar-accent/50"
       )}
       onClick={onSelect}
       onMouseEnter={() => setShowActions(true)}
