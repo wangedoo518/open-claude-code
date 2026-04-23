@@ -6196,7 +6196,8 @@ async fn absorb_handler(
         let _guard = AbsorbGuard;
         let (tx, mut _rx) = tokio::sync::mpsc::channel(64);
         let cancel = tokio_util::sync::CancellationToken::new();
-        let _result = wiki_maintainer::absorb_batch(&paths, entry_ids, &adapter, tx, cancel).await;
+        let _result =
+            wiki_maintainer::absorb_batch(&paths, entry_ids, &adapter, tx, task_id_clone.clone(), cancel).await;
         log::info!("[absorb] task {} completed", task_id_clone);
         // _guard dropped here → ABSORB_RUNNING = false
     });

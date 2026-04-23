@@ -9412,6 +9412,7 @@ mod tests {
         use super::DesktopSessionEvent;
         let ev = DesktopSessionEvent::AbsorbProgress(
             wiki_maintainer::AbsorbProgressEvent {
+                task_id: "absorb-1713072000-a3f2".to_string(),
                 processed: 2,
                 total: 5,
                 current_entry_id: 3,
@@ -9426,6 +9427,7 @@ mod tests {
         // the enum + newtype-variant flattening should produce a flat
         // map: all inner fields sit next to the "type" tag.
         assert_eq!(json["type"], "absorb_progress");
+        assert_eq!(json["task_id"], "absorb-1713072000-a3f2");
         assert_eq!(json["processed"], 2);
         assert_eq!(json["total"], 5);
         assert_eq!(json["current_entry_id"], 3);
@@ -9461,6 +9463,7 @@ mod tests {
         use super::DesktopSessionEvent;
         let original = DesktopSessionEvent::AbsorbProgress(
             wiki_maintainer::AbsorbProgressEvent {
+                task_id: "absorb-roundtrip".to_string(),
                 processed: 0,
                 total: 0,
                 current_entry_id: 0,
@@ -9496,6 +9499,7 @@ mod tests {
         use super::DesktopSessionEvent;
         let progress = DesktopSessionEvent::AbsorbProgress(
             wiki_maintainer::AbsorbProgressEvent {
+                task_id: "absorb-event-name".to_string(),
                 processed: 0,
                 total: 0,
                 current_entry_id: 0,

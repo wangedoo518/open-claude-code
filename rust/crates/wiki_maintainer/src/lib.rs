@@ -1583,8 +1583,21 @@ fn parse_merge_response(raw: &str) -> Result<(String, String)> {
 // ─────────────────────────────────────────────────────────────────────
 
 /// Progress event sent per-entry during [`absorb_batch`].
+///
+/// Wire shape (via `DesktopSessionEvent::AbsorbProgress` in
+/// `desktop-core`): `{"type":"absorb_progress","task_id":"absorb-...",
+/// "processed":2,"total":5,"current_entry_id":3,"action":"create",
+/// "page_slug":"...","page_title":"...","error":null}` per
+/// `technical-design.md §2.1` SSE Progress Event.
+///
+/// `task_id` disambiguates concurrent absorb streams when multiple
+/// sessions subscribe to the same SSE fan-out. Minted by the HTTP
+/// handler via `TaskManager::register("absorb")`, plumbed into
+/// `absorb_batch` as a signature parameter, and stamped on every
+/// event this loop emits.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AbsorbProgressEvent {
+    pub task_id: String,
     pub processed: usize,
     pub total: usize,
     pub current_entry_id: u32,
@@ -1676,6 +1689,7 @@ pub async fn absorb_batch(
     entry_ids: Vec<u32>,
     broker: &(impl BrokerSender + ?Sized),
     progress_tx: tokio::sync::mpsc::Sender<AbsorbProgressEvent>,
+    task_id: String,
     cancel_token: tokio_util::sync::CancellationToken,
 ) -> Result<AbsorbResult> {
     let start = std::time::Instant::now();
@@ -1696,6 +1710,7 @@ pub async fn absorb_batch(
             result.skipped += 1;
             let _ = progress_tx
                 .send(AbsorbProgressEvent {
+                    task_id: task_id.clone(),
                     processed: result.skipped,
                     total,
                     current_entry_id: id,
@@ -1719,6 +1734,7 @@ pub async fn absorb_batch(
                 result.failed += 1;
                 let _ = progress_tx
                     .send(AbsorbProgressEvent {
+                        task_id: task_id.clone(),
                         processed: result.created + result.updated + result.skipped + result.failed,
                         total,
                         current_entry_id: id,
@@ -1756,6 +1772,7 @@ pub async fn absorb_batch(
                 result.failed += 1;
                 let _ = progress_tx
                     .send(AbsorbProgressEvent {
+                        task_id: task_id.clone(),
                         processed: result.created + result.updated + result.skipped + result.failed,
                         total,
                         current_entry_id: *id,
@@ -1783,6 +1800,7 @@ pub async fn absorb_batch(
                 result.failed += 1;
                 let _ = progress_tx
                     .send(AbsorbProgressEvent {
+                        task_id: task_id.clone(),
                         processed: result.created + result.updated + result.skipped + result.failed,
                         total,
                         current_entry_id: *id,
@@ -1828,6 +1846,7 @@ pub async fn absorb_batch(
                 result.failed += 1;
                 let _ = progress_tx
                     .send(AbsorbProgressEvent {
+                        task_id: task_id.clone(),
                         processed: result.created + result.updated + result.skipped + result.failed,
                         total,
                         current_entry_id: *id,
@@ -1885,6 +1904,7 @@ pub async fn absorb_batch(
 
         let _ = progress_tx
             .send(AbsorbProgressEvent {
+                task_id: task_id.clone(),
                 processed: result.created + result.updated + result.skipped + result.failed,
                 total,
                 current_entry_id: *id,
@@ -2823,9 +2843,16 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
         let cancel = tokio_util::sync::CancellationToken::new();
 
-        let result = absorb_batch(&paths, vec![id1, id2, id3], &broker, tx, cancel)
-            .await
-            .unwrap();
+        let result = absorb_batch(
+            &paths,
+            vec![id1, id2, id3],
+            &broker,
+            tx,
+            "test-happy-path".to_string(),
+            cancel,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.created, 2, "should create 2 new pages");
         assert_eq!(result.updated, 1, "should update 1 existing page");
@@ -2879,9 +2906,16 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         let cancel = tokio_util::sync::CancellationToken::new();
 
-        let result = absorb_batch(&paths, vec![id1], &broker, tx, cancel)
-            .await
-            .unwrap();
+        let result = absorb_batch(
+            &paths,
+            vec![id1],
+            &broker,
+            tx,
+            "test-skips-already-absorbed".to_string(),
+            cancel,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.skipped, 1, "should skip already-absorbed entry");
         assert_eq!(result.created, 0);
@@ -2906,9 +2940,16 @@ mod tests {
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
 
-        let result = absorb_batch(&paths, vec![id1, id2], &broker, tx, cancel)
-            .await
-            .unwrap();
+        let result = absorb_batch(
+            &paths,
+            vec![id1, id2],
+            &broker,
+            tx,
+            "test-cancellation".to_string(),
+            cancel,
+        )
+        .await
+        .unwrap();
 
         assert!(result.cancelled);
     }
@@ -3072,9 +3113,16 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         let cancel = tokio_util::sync::CancellationToken::new();
 
-        let result = absorb_batch(&paths, vec![id1], &broker, tx, cancel)
-            .await
-            .unwrap();
+        let result = absorb_batch(
+            &paths,
+            vec![id1],
+            &broker,
+            tx,
+            "test-llm-failure".to_string(),
+            cancel,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.failed, 1, "LLM failure should increment failed count");
         assert_eq!(result.created, 0);
