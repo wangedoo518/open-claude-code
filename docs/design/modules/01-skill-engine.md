@@ -774,6 +774,16 @@ pub async fn absorb_batch(
         let category = determine_category(&proposal);
 
         if page_exists {
+```
+
+> **Phase 1 MVP note** (as of 2026-04-23) · item 1 in `backlog/phase1-deferred.md`:
+> the `update` branch below ships as a string concat (`format!("{}\n\n---\n\n{}",
+> existing_body, proposal.body)`) in Phase 1 — the LLM-driven merge round-trip
+> described in this pseudocode is deferred to Phase 2. Anti-thinning still holds
+> because the new proposal body is appended (never replaces), but the topic
+> re-organisation the merge prompt would perform is not run at absorb time.
+
+```rust
             // ── 3f-update: 合并已有页面 ──
             //
             // anti-thinning: 合并后页面必须比合并前更丰富。
@@ -833,6 +843,18 @@ pub async fn absorb_batch(
             }
         }
 
+```
+
+> **Phase 1 MVP note** (as of 2026-04-23) · item 2 in `backlog/phase1-deferred.md`:
+> step 3h (bidirectional wikilink maintenance) is not implemented in Phase 1.
+> Reverse discoverability is instead served at query time by the persisted
+> `_backlinks.json` index (built by `build_backlinks_index` + refreshed at the
+> 15-entry checkpoint + final checkpoint in §5.1 step 4 / 5). The body-mutation
+> path that would call `ensure_bidirectional_link(paths, &proposal.slug,
+> target_slug)` is postponed to Phase 2 until maintainer quality telemetry
+> shows it's needed.
+
+```rust
         // ── 3h: 添加双向 wikilinks ──
         //
         // 扫描新写入页面的 body, 提取 [[slug]] 或 [](concepts/slug.md) 引用。
@@ -843,6 +865,17 @@ pub async fn absorb_batch(
             ensure_bidirectional_link(paths, &proposal.slug, target_slug);
         }
 
+```
+
+> **Phase 1 MVP note** (as of 2026-04-23) · item 3 in `backlog/phase1-deferred.md`:
+> step 3i (LLM-based conflict detection → Inbox) is explicitly skipped in Phase 1.
+> The actual `absorb_batch` (`wiki_maintainer/src/lib.rs:1858`) carries a comment
+> `// 3i: Conflict detection (simplified: skip LLM-based detection for MVP).
+> Full LLM-based conflict detection deferred to later sprint.` No `Conflict`
+> Inbox entries are produced on update paths until Phase 2 ships a calibrated
+> conflict-detect prompt.
+
+```rust
         // ── 3i: 冲突检测 ──
         //
         // 如果 action == "update", 检查新信息是否与已有判断矛盾。
@@ -863,6 +896,18 @@ pub async fn absorb_batch(
             }
         }
 
+```
+
+> **Phase 1 MVP note** (as of 2026-04-23) · item 5 in `backlog/phase1-deferred.md`:
+> step 3g-extra computes `confidence` in Phase 1 but the three-dimensional
+> evaluation described here is simplified. Actual impl
+> (`wiki_maintainer/src/lib.rs:1866-1877`) uses `source_count = absorb_log
+> entries targeting this slug + 1`, fixes `newest_source_age_days = 0`, and
+> fixes `has_conflict = false`. The real `count_sources_for_page` +
+> `newest_source_age_days` lookups wait on a raw→page provenance index that
+> doesn't exist yet; `has_pending_conflict` waits on item 3. Phase 3 target.
+
+```rust
         // ── 3g-extra: 计算 confidence 分数 ──
         //
         // confidence 由 absorb 自动计算, 不可手动设置。
@@ -913,6 +958,17 @@ pub async fn absorb_batch(
         };
         let _ = wiki_store::append_absorb_log(paths, log_entry);
 
+```
+
+> **Phase 1 MVP note** (as of 2026-04-23) · item 6 in `backlog/phase1-deferred.md`:
+> Phase 1 appends only to the global `wiki/log.md` (via
+> `append_wiki_log(paths, verb, title)` at `wiki_maintainer/src/lib.rs:1864`).
+> The per-day `wiki/changelog/YYYY-MM-DD.md` file mentioned in the step header
+> is **not** written. Day files are a UX convenience for the Dashboard "Today"
+> view; Phase 4 will add `append_changelog_entry` once the Dashboard consumer
+> lands.
+
+```rust
         // ── 3j-extra: 追加 wiki/log.md 和 changelog ──
         let verb = if action == "create" {
             "absorb-create"
@@ -936,6 +992,16 @@ pub async fn absorb_batch(
             error: None,
         }).await;
 
+```
+
+> **Phase 1 MVP note** (as of 2026-04-23) · item 4 in `backlog/phase1-deferred.md`:
+> the 15-entry checkpoint in Phase 1 runs `rebuild_wiki_index` +
+> `build_backlinks_index` + `save_backlinks_index` (items 4a+4b) but **skips
+> step 4c `quality_spot_check`**. The anti-thinning + topic-organisation prompt
+> rules (§5.1 system prompt items 3-4) already bias the LLM against diary
+> bodies at write time; the spot-check is belt-and-suspenders. Phase 3 target.
+
+```rust
         // ── 步骤 4: 每 15 条执行 checkpoint ──────────────
         //
         // llm-wiki 规则: "every 15 entries: checkpoint"
