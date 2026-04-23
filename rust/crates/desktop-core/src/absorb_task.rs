@@ -9,7 +9,7 @@
 //!    task id + a fresh `CancellationToken`, stores both, returns them
 //!    to the caller. Returns `Err(TaskConflictError)` if another task
 //!    of the same `kind` is already active (this is the §2.1 "409
-//!    ABSORB_IN_PROGRESS" behaviour, generalised over SKILL kinds).
+//!    `ABSORB_IN_PROGRESS`" behaviour, generalised over SKILL kinds).
 //! 2. **Completion** — `complete(task_id)` removes the entry so future
 //!    `register(kind)` calls of the same kind succeed again.
 //! 3. **Cancellation** — `cancel(task_id)` trips the stored token,
@@ -35,7 +35,7 @@
 //! The canonical spec pins `RwLock<HashMap<String, TaskInfo>>`. The
 //! expected concurrent-write rate is single-digit QPS (HTTP POST
 //! requests gated by §2.1 409) and the map is tiny (<10 active
-//! tasks). The RwLock is ample. We can swap for DashMap if the
+//! tasks). The `RwLock` is ample. We can swap for `DashMap` if the
 //! concurrency grows by 2+ orders of magnitude.
 
 use std::collections::HashMap;
@@ -80,7 +80,7 @@ pub struct TaskManager {
 }
 
 impl TaskManager {
-    /// Fresh, empty registry. Cheap — allocates only the HashMap.
+    /// Fresh, empty registry. Cheap — allocates only the `HashMap`.
     #[must_use]
     pub fn new() -> Self {
         Self {

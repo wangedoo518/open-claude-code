@@ -12,7 +12,7 @@
 //! Step 1 lands the **router skeleton only**: parse input, generate a
 //! canonical `{kind}-{unix_ts}-{4hex}` task id, and return
 //! [`SkillResult::TaskStarted`] / [`SkillResult::StreamStarted`] /
-//! [`SkillResult::ParseError`]. **No TaskManager hookup yet** — step 2
+//! [`SkillResult::ParseError`]. **No `TaskManager` hookup yet** — step 2
 //! of the same sprint introduces [`crate::absorb_task::TaskManager`]
 //! and replaces the manual id generation in `route()` with
 //! `state.task_manager.register(...)`. Until then, the router simply
@@ -72,7 +72,7 @@ pub enum SkillResult {
 
 /// Parse + dispatch `/skill` commands. See module-level docs.
 pub struct SkillRouter {
-    /// Held for step 2's TaskManager hookup. Step 1 does not read it;
+    /// Held for step 2's `TaskManager` hookup. Step 1 does not read it;
     /// keeping the field now prevents a visible signature change later.
     #[allow(dead_code)]
     state: Arc<DesktopState>,
@@ -113,6 +113,11 @@ impl SkillRouter {
     /// fresh task id and returns [`SkillResult::TaskStarted`]. Step 2
     /// replaces the manual id with `state.task_manager.register(...)`
     /// so one absorb can't race another (409 semantics).
+    ///
+    /// Kept `async` because the step 2 hookup adds `.await` on
+    /// `state.task_manager.register(...)`; flipping the signature to
+    /// sync now would cause a breaking API change when step 2 lands.
+    #[allow(clippy::unused_async)]
     pub async fn route(
         &self,
         input: &str,

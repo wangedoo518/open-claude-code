@@ -1053,6 +1053,34 @@ pub enum DesktopSessionEvent {
         session_id: SessionId,
         content: String,
     },
+    /// Per-entry progress event emitted during a running `absorb_batch`
+    /// task. Canonical SSE shape: `technical-design.md §2.1` Progress
+    /// Event table. Newtype variant with an internally-tagged struct —
+    /// serde flattens the inner `AbsorbProgressEvent` fields next to the
+    /// `type` tag so the wire JSON matches the spec example exactly:
+    /// `{"type":"absorb_progress","processed":2,"total":5,...}`.
+    ///
+    /// The `AbsorbProgressEvent` struct is authored in `wiki_maintainer`
+    /// (§4.2.2) and shared via re-export so the maintainer's
+    /// `progress_tx.send(...)` argument is wire-compatible with the SSE
+    /// event body. Step 4 of this sprint adds `task_id` to the struct
+    /// so multi-task SSE streams can disambiguate.
+    AbsorbProgress(wiki_maintainer::AbsorbProgressEvent),
+    /// Terminal event emitted once an `absorb_batch` task finishes
+    /// (success, partial, or cancelled). Canonical SSE shape:
+    /// `technical-design.md §2.1` Complete Event. Struct variant so
+    /// `task_id` + aggregate counters are first-class siblings of
+    /// `"type"` on the wire — `{"type":"absorb_complete","task_id":
+    /// "absorb-...","created":3,"updated":1,"skipped":1,"failed":0,
+    /// "duration_ms":12500}`.
+    AbsorbComplete {
+        task_id: String,
+        created: usize,
+        updated: usize,
+        skipped: usize,
+        failed: usize,
+        duration_ms: u64,
+    },
 }
 
 impl DesktopSessionEvent {
@@ -1063,6 +1091,8 @@ impl DesktopSessionEvent {
             Self::Message { .. } => "message",
             Self::PermissionRequest { .. } => "permission_request",
             Self::TextDelta { .. } => "text_delta",
+            Self::AbsorbProgress(_) => "absorb_progress",
+            Self::AbsorbComplete { .. } => "absorb_complete",
         }
     }
 }
@@ -9367,5 +9397,123 @@ mod tests {
             None,
         );
         assert!(b.bound_at > 0, "bound_at stamped");
+    }
+
+    // ── Sprint 1-B.1 · step 3: DesktopSessionEvent::AbsorbProgress + AbsorbComplete
+    //
+    // These tests pin the wire shape of the two new SSE variants
+    // against the `technical-design.md §2.1` examples. Any serde-level
+    // drift (e.g. accidentally dropping `rename_all = "snake_case"` on
+    // the enum) breaks the frontend event dispatcher silently, so we
+    // assert the exact JSON.
+
+    #[test]
+    fn absorb_progress_serializes_with_flat_fields_and_snake_case_type() {
+        use super::DesktopSessionEvent;
+        let ev = DesktopSessionEvent::AbsorbProgress(
+            wiki_maintainer::AbsorbProgressEvent {
+                processed: 2,
+                total: 5,
+                current_entry_id: 3,
+                action: "create".to_string(),
+                page_slug: Some("transformer-architecture".to_string()),
+                page_title: Some("Transformer 架构".to_string()),
+                error: None,
+            },
+        );
+        let json = serde_json::to_value(&ev).unwrap();
+        // The `#[serde(tag = "type", rename_all = "snake_case")]` on
+        // the enum + newtype-variant flattening should produce a flat
+        // map: all inner fields sit next to the "type" tag.
+        assert_eq!(json["type"], "absorb_progress");
+        assert_eq!(json["processed"], 2);
+        assert_eq!(json["total"], 5);
+        assert_eq!(json["current_entry_id"], 3);
+        assert_eq!(json["action"], "create");
+        assert_eq!(json["page_slug"], "transformer-architecture");
+        assert_eq!(json["page_title"], "Transformer 架构");
+        assert!(json["error"].is_null());
+    }
+
+    #[test]
+    fn absorb_complete_serializes_all_six_counters() {
+        use super::DesktopSessionEvent;
+        let ev = DesktopSessionEvent::AbsorbComplete {
+            task_id: "absorb-1713072000-a3f2".to_string(),
+            created: 3,
+            updated: 1,
+            skipped: 1,
+            failed: 0,
+            duration_ms: 12_500,
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "absorb_complete");
+        assert_eq!(json["task_id"], "absorb-1713072000-a3f2");
+        assert_eq!(json["created"], 3);
+        assert_eq!(json["updated"], 1);
+        assert_eq!(json["skipped"], 1);
+        assert_eq!(json["failed"], 0);
+        assert_eq!(json["duration_ms"], 12_500);
+    }
+
+    #[test]
+    fn absorb_progress_round_trip_via_serde_json() {
+        use super::DesktopSessionEvent;
+        let original = DesktopSessionEvent::AbsorbProgress(
+            wiki_maintainer::AbsorbProgressEvent {
+                processed: 0,
+                total: 0,
+                current_entry_id: 0,
+                action: "skip".to_string(),
+                page_slug: None,
+                page_title: None,
+                error: Some("无法读取 raw entry: EOF".to_string()),
+            },
+        );
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: DesktopSessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn absorb_complete_round_trip_via_serde_json() {
+        use super::DesktopSessionEvent;
+        let original = DesktopSessionEvent::AbsorbComplete {
+            task_id: "absorb-xyz".to_string(),
+            created: 0,
+            updated: 0,
+            skipped: 0,
+            failed: 0,
+            duration_ms: 0,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: DesktopSessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn event_name_returns_canonical_snake_case_for_new_variants() {
+        use super::DesktopSessionEvent;
+        let progress = DesktopSessionEvent::AbsorbProgress(
+            wiki_maintainer::AbsorbProgressEvent {
+                processed: 0,
+                total: 0,
+                current_entry_id: 0,
+                action: "create".to_string(),
+                page_slug: None,
+                page_title: None,
+                error: None,
+            },
+        );
+        let complete = DesktopSessionEvent::AbsorbComplete {
+            task_id: "absorb-1-a".to_string(),
+            created: 0,
+            updated: 0,
+            skipped: 0,
+            failed: 0,
+            duration_ms: 0,
+        };
+        assert_eq!(progress.event_name(), "absorb_progress");
+        assert_eq!(complete.event_name(), "absorb_complete");
     }
 }

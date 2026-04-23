@@ -1583,7 +1583,7 @@ fn parse_merge_response(raw: &str) -> Result<(String, String)> {
 // ─────────────────────────────────────────────────────────────────────
 
 /// Progress event sent per-entry during [`absorb_batch`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AbsorbProgressEvent {
     pub processed: usize,
     pub total: usize,
