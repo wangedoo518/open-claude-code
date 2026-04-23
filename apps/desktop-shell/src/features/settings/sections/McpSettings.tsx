@@ -318,7 +318,7 @@ function ServerForm({
   };
 
   return (
-    <div className="rounded-md border border-[color:var(--agent-cyan,rgb(8,145,178))]/30 bg-[color:var(--agent-cyan,rgb(8,145,178))]/5 p-3">
+    <div className="rounded-md border border-[color:var(--agent-cyan)]/30 bg-[color:var(--agent-cyan)]/5 p-3">
       <div className="mb-3 text-body-sm font-medium text-foreground">
         {initial ? "编辑插件" : "添加工具插件"}
       </div>

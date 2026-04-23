@@ -59,7 +59,7 @@ function metaFor(mode: ContextMode): ModeMeta {
         label: "结合",
         description: "综合历史与新素材",
         className:
-          "bg-[color:var(--color-warning,rgb(200,139,26))]/10 text-[color:var(--color-warning,rgb(200,139,26))] border-[color:var(--color-warning,rgb(200,139,26))]/30",
+          "bg-[color:var(--color-warning)]/10 text-[color:var(--color-warning)] border-[color:var(--color-warning)]/30",
         icon: Shuffle,
       };
     case "follow_up":

@@ -241,8 +241,8 @@ function SystemMessage({ content }: { content: string }) {
 
 function ToolStatusBadge({ status }: { status: "pending" | "running" | "completed" | "error" }) {
   const styles = {
-    pending: "border-[color:var(--deeptutor-warn,rgb(200,139,26))]/30 bg-[color:var(--deeptutor-warn,rgb(200,139,26))]/10 text-[color:var(--deeptutor-warn,rgb(200,139,26))]",
-    running: "border-[color:var(--deeptutor-primary,rgb(195,90,44))]/30 bg-[color:var(--deeptutor-primary,rgb(195,90,44))]/10 text-[color:var(--deeptutor-primary,rgb(195,90,44))]",
+    pending: "border-[color:var(--deeptutor-warn)]/30 bg-[color:var(--deeptutor-warn)]/10 text-[color:var(--deeptutor-warn)]",
+    running: "border-[color:var(--deeptutor-primary)]/30 bg-[color:var(--deeptutor-primary)]/10 text-[color:var(--deeptutor-primary)]",
     completed: "border-[color:var(--color-success)]/30 bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]",
     error: "border-[color:var(--color-error)]/30 bg-[color:var(--color-error)]/10 text-[color:var(--color-error)]",
   };
@@ -657,7 +657,7 @@ function DiffDisplay({ content }: { content: string }) {
         } else if (line.startsWith("-") && !line.startsWith("---")) {
           lineClass = "text-[color:var(--color-diff-removed-word,rgb(209,69,75))] bg-[color:var(--color-diff-removed,rgb(255,168,180))]/15";
         } else if (line.startsWith("@@")) {
-          lineClass = "text-[color:var(--claude-blue,rgb(87,105,247))]";
+          lineClass = "text-[color:var(--claude-blue)]";
         } else if (line.startsWith("---") || line.startsWith("+++")) {
           lineClass = "text-muted-foreground font-semibold";
         }

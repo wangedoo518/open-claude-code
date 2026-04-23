@@ -304,7 +304,7 @@ function StatusBadge({ status }: { status: SubagentStatus }) {
   switch (status) {
     case "running":
       return (
-        <div className="flex items-center gap-1 rounded-full bg-[color:var(--agent-purple,rgb(147,51,234))]/10 px-1.5 py-0.5">
+        <div className="flex items-center gap-1 rounded-full bg-[color:var(--agent-purple)]/10 px-1.5 py-0.5">
           <Loader2
             className="size-2.5 animate-spin"
             style={{ color: "var(--agent-purple)" }}
@@ -319,7 +319,7 @@ function StatusBadge({ status }: { status: SubagentStatus }) {
       );
     case "completed":
       return (
-        <div className="flex items-center gap-1 rounded-full bg-[color:var(--color-success,rgb(44,122,57))]/10 px-1.5 py-0.5">
+        <div className="flex items-center gap-1 rounded-full bg-[color:var(--color-success)]/10 px-1.5 py-0.5">
           <CheckCircle2
             className="size-2.5"
             style={{ color: "var(--color-success)" }}
@@ -334,7 +334,7 @@ function StatusBadge({ status }: { status: SubagentStatus }) {
       );
     case "error":
       return (
-        <div className="flex items-center gap-1 rounded-full bg-[color:var(--color-error,rgb(171,43,63))]/10 px-1.5 py-0.5">
+        <div className="flex items-center gap-1 rounded-full bg-[color:var(--color-error)]/10 px-1.5 py-0.5">
           <AlertCircle
             className="size-2.5"
             style={{ color: "var(--color-error)" }}

@@ -70,7 +70,7 @@ export function ContextBasisLabel({
     case "combine":
       icon = <Shuffle className="size-3 shrink-0" />;
       text = `结合 ${basis.history_turns_included} 轮对话 + 本链接`;
-      tone = "text-[color:var(--color-warning,rgb(200,139,26))]";
+      tone = "text-[color:var(--color-warning)]";
       break;
     case "follow_up":
     default:

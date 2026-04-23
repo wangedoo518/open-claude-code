@@ -131,14 +131,14 @@ export function UsedSourcesBar({
           className,
         )}
       >
-        <Link className="size-3 shrink-0 text-[color:var(--claude-blue,rgb(87,105,247))]" />
-        <span className="mr-1 shrink-0 text-[color:var(--claude-blue,rgb(87,105,247))]/80">
+        <Link className="size-3 shrink-0 text-[color:var(--claude-blue)]" />
+        <span className="mr-1 shrink-0 text-[color:var(--claude-blue)]/80">
           本轮自动锁定：
         </span>
         <Badge
           key={sourceRefKey(boundSource)}
           variant="outline"
-          className="max-w-[260px] gap-1 border-[color:var(--claude-blue,rgb(87,105,247))]/30 bg-[color:var(--claude-blue,rgb(87,105,247))]/10 text-[color:var(--claude-blue,rgb(87,105,247))] text-[11px] font-normal"
+          className="max-w-[260px] gap-1 border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/10 text-[color:var(--claude-blue)] text-[11px] font-normal"
           title={label}
         >
           <Icon className="size-3 shrink-0" />
@@ -147,13 +147,13 @@ export function UsedSourcesBar({
           </span>
         </Badge>
         {basis.grounding_applied === true && (
-          <GroundedBadge toneClassName="border-[color:var(--claude-blue,rgb(87,105,247))]/30 bg-[color:var(--claude-blue,rgb(87,105,247))]/5 text-[color:var(--claude-blue,rgb(87,105,247))]" />
+          <GroundedBadge toneClassName="border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/5 text-[color:var(--claude-blue)]" />
         )}
         {onPromoteToSession && (
           <button
             type="button"
             onClick={() => void onPromoteToSession(boundSource)}
-            className="ml-1 inline-flex items-center gap-0.5 rounded-md border border-[color:var(--claude-blue,rgb(87,105,247))]/30 bg-[color:var(--claude-blue,rgb(87,105,247))]/5 px-1.5 py-0.5 text-[11px] text-[color:var(--claude-blue,rgb(87,105,247))] transition-colors hover:bg-[color:var(--claude-blue,rgb(87,105,247))]/15"
+            className="ml-1 inline-flex items-center gap-0.5 rounded-md border border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/5 px-1.5 py-0.5 text-[11px] text-[color:var(--claude-blue)] transition-colors hover:bg-[color:var(--claude-blue)]/15"
             title="固定到当前会话：后续每一轮都以此来源为主要上下文"
           >
             <Pin className="size-2.5" />

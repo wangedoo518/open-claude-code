@@ -87,7 +87,7 @@ export function AskHeader({
             className={cn(
               "relative flex h-[18px] items-center gap-1 rounded-md border px-1.5 text-caption font-medium transition-colors",
               showAgentPanel
-                ? "border-[color:var(--deeptutor-purple,rgb(139,92,246))]/30 bg-[color:var(--deeptutor-purple,rgb(139,92,246))]/10 text-[color:var(--deeptutor-purple,rgb(139,92,246))]"
+                ? "border-[color:var(--deeptutor-purple)]/30 bg-[color:var(--deeptutor-purple)]/10 text-[color:var(--deeptutor-purple)]"
                 : "border-border/50 text-muted-foreground hover:bg-accent hover:text-foreground"
             )}
             onClick={onToggleAgentPanel}
