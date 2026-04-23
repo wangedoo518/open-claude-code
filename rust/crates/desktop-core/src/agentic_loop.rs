@@ -972,7 +972,22 @@ async fn parse_sse_stream(
     // P1-1: throttle stream-tick invocations to once per 5s. Seed so
     // the first delta fires a tick immediately — this keeps updated_at
     // fresh from the very start of a long response.
+    //
+    // Batch-C follow-up: coverage extends beyond `text_delta`. Tool-use
+    // sessions can stream minute-long `input_json_delta` bursts with
+    // zero text output; content_block_start / message_delta also count
+    // as "LLM is making progress" signals for the stale detector. The
+    // closure below is invoked from every in-scope branch so a single
+    // throttled pulse serves all of them.
     let mut last_tick_at: Instant = Instant::now() - Duration::from_secs(5);
+    let mut maybe_tick = || {
+        if let Some(cb) = on_stream_tick {
+            if last_tick_at.elapsed() >= Duration::from_secs(5) {
+                cb();
+                last_tick_at = Instant::now();
+            }
+        }
+    };
 
     let mut stream = response.bytes_stream();
     // Use a byte buffer to avoid corrupting multi-byte UTF-8 characters
@@ -1082,6 +1097,11 @@ async fn parse_sse_stream(
                                 _ => {}
                             }
                         }
+                        // Batch-C §2: signal progress at block boundary.
+                        // For tool-use blocks this fires before any
+                        // `input_json_delta` arrives so long-argument
+                        // streams get an immediate first tick.
+                        maybe_tick();
                     }
                     "content_block_delta" => {
                         let index = event
@@ -1108,18 +1128,7 @@ async fn parse_sse_stream(
                                                 content: text.to_string(),
                                             },
                                         );
-                                        // P1-1: throttled tick — bumps
-                                        // session.updated_at at most
-                                        // every 5s while the stream
-                                        // produces text deltas.
-                                        if let Some(cb) = on_stream_tick {
-                                            if last_tick_at.elapsed()
-                                                >= Duration::from_secs(5)
-                                            {
-                                                cb();
-                                                last_tick_at = Instant::now();
-                                            }
-                                        }
+                                        maybe_tick();
                                     }
                                 }
                                 "input_json_delta" => {
@@ -1130,6 +1139,11 @@ async fn parse_sse_stream(
                                         if let Some(acc) = tool_blocks.get_mut(&index) {
                                             acc.input_json.push_str(partial);
                                         }
+                                        // Batch-C §2: tool-argument streams can run
+                                        // minutes with no text output. Tick here so
+                                        // the 30s stale detector doesn't kill a
+                                        // session that's mid-JSON.
+                                        maybe_tick();
                                     }
                                 }
                                 _ => {}
@@ -1143,6 +1157,11 @@ async fn parse_sse_stream(
                                 .and_then(|v| v.as_str())
                                 .map(String::from);
                         }
+                        // Batch-C §2: message_delta carries stop_reason
+                        // near end-of-turn. Tick so tight back-to-back
+                        // tool round-trips keep updated_at fresh even if
+                        // no text_delta was produced this iteration.
+                        maybe_tick();
                     }
                     "message_stop" | "error" => {
                         // Some providers/proxies leave the HTTP connection
