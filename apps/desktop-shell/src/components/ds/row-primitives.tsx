@@ -24,12 +24,18 @@
  *                                          / ExpandedDetail / FullScreenReader)
  *   - components/ds/RawEntryCard.tsx      (row source tile + badge)
  *
- * Invariant — byte-identical behaviour to the pre-hoist copies. The
- * DS 2.x-A migration took care to preserve visual parity, so this
- * hoist is a pure move: every class string, every `rgba(...)` tuple,
- * every label mapping is carried over unchanged. If a future sprint
- * wants to switch the hard-coded source palette to `var(--color-*)`
- * tokens, that's a separate change with its own visual review.
+ * DS 2.x-A invariant: byte-identical behaviour to the pre-hoist
+ * copies; every class string and label mapping carried over unchanged.
+ *
+ * Token sweep round 2 (Batch F task A): the source-badge palette was
+ * migrated from hard-coded `rgba(34,197,94,0.12)` / `rgb(22,163,74)`
+ * tuples to `color-mix(in srgb, var(--color-*) NN%, transparent)` +
+ * `var(--color-*)` token references. Dark-mode overrides + any future
+ * theme customisation now apply consistently (Batch E §2 showed the
+ * light→dark success/warning/permission ramps are already wired; this
+ * sweep puts the source badges under the same regime). Hue family is
+ * preserved though the DS tokens are slightly more muted than the
+ * pre-DS1.6-B tailwind defaults — intentional shift.
  */
 
 import type { CSSProperties, FC } from "react";
@@ -96,18 +102,42 @@ export function translateSource(source: string): string {
   return map[source] ?? source;
 }
 
-/** Color chip style per source category. */
+/**
+ * Color chip style per source category.
+ *
+ * Token mapping (Batch F · token sweep round 2):
+ *   wechat family → --color-success   (DS success, olive-green #3f8f5e)
+ *   url family    → --claude-blue     (DS Focus Blue = alias of --ring)
+ *   file family   → --color-permission (DS permission purple #8855cc)
+ *   default       → --color-muted-foreground (neutral grey)
+ *
+ * All backgrounds use `color-mix(in srgb, <token> 12%, transparent)`
+ * which is the same compositing recipe DS1.6-B established for its
+ * success / warning / error soft-fills.
+ */
 export function sourceBadgeStyle(source: string): {
   bg: string;
   text: string;
 } {
   if (source.startsWith("wechat"))
-    return { bg: "rgba(34,197,94,0.12)", text: "rgb(22,163,74)" };
+    return {
+      bg: "color-mix(in srgb, var(--color-success) 12%, transparent)",
+      text: "var(--color-success)",
+    };
   if (source === "url" || source === "paste-url" || source === "wechat-url")
-    return { bg: "rgba(59,130,246,0.12)", text: "rgb(37,99,235)" };
+    return {
+      bg: "color-mix(in srgb, var(--claude-blue) 12%, transparent)",
+      text: "var(--claude-blue)",
+    };
   if (["pdf", "docx", "pptx", "image"].includes(source))
-    return { bg: "rgba(168,85,247,0.12)", text: "rgb(147,51,234)" };
-  return { bg: "rgba(156,163,175,0.12)", text: "rgb(107,114,128)" };
+    return {
+      bg: "color-mix(in srgb, var(--color-permission) 12%, transparent)",
+      text: "var(--color-permission)",
+    };
+  return {
+    bg: "color-mix(in srgb, var(--color-muted-foreground) 12%, transparent)",
+    text: "var(--color-muted-foreground)",
+  };
 }
 
 /** Icon per source type. */
