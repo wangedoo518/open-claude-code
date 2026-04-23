@@ -4670,24 +4670,44 @@ mod tests {
 
     struct TestServer {
         address: SocketAddr,
+        /// The `AppState` the server is running with. Cloned from the
+        /// one handed to `axum::serve` (both point at the same Arc'd
+        /// stores). Integration tests that need to reach into the
+        /// TaskManager / session store directly (e.g. pre-seeding
+        /// state for a 409 assertion) can use `server.state`.
+        state: AppState,
         handle: JoinHandle<()>,
     }
 
     impl TestServer {
         async fn spawn() -> Self {
+            Self::spawn_with_state(AppState::default()).await
+        }
+
+        /// Spawn with a caller-provided `AppState`. Lets a test keep
+        /// a reference to the state (via the returned `TestServer.state`
+        /// field, which is a Clone of the one passed to `app(state)`
+        /// — AppState is `Clone` and its fields are `Arc`'d so the
+        /// clones share the same underlying stores).
+        async fn spawn_with_state(state: AppState) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("test listener should bind");
             let address = listener
                 .local_addr()
                 .expect("listener should report local address");
+            let state_for_server = state.clone();
             let handle = tokio::spawn(async move {
-                axum::serve(listener, app(AppState::default()))
+                axum::serve(listener, app(state_for_server))
                     .await
                     .expect("desktop server should run");
             });
 
-            Self { address, handle }
+            Self {
+                address,
+                state,
+                handle,
+            }
         }
 
         fn url(&self, path: &str) -> String {
@@ -5103,6 +5123,278 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("query task failed:"));
+    }
+
+    // ── Sprint 1-B.1 · step 7b · absorb pipeline integration tests ──
+    //
+    // Five end-to-end tests covering the POST /api/wiki/absorb HTTP
+    // contract (§2.1) + the three §2.5/§2.6/§2.7 read endpoints
+    // (absorb-log / backlinks / stats) in one combined test.
+    //
+    // Sandbox strategy: each test sets `CLAWWIKI_HOME` to a fresh
+    // tempdir. Env vars are process-global, so the `ABSORB_TEST_GUARD`
+    // mutex serialises the sandbox-touching tests (cannot run parallel
+    // with each other). Other tests in this mod that don't touch
+    // `CLAWWIKI_HOME` are unaffected.
+
+    use std::sync::Mutex as StdMutex;
+
+    static ABSORB_TEST_GUARD: StdMutex<()> = StdMutex::new(());
+
+    /// RAII sandbox for the `CLAWWIKI_HOME` env var. On construction
+    /// acquires `ABSORB_TEST_GUARD` + points `CLAWWIKI_HOME` at a
+    /// fresh tempdir; on `Drop` restores the prior value (if any),
+    /// lets the tempdir delete itself, and releases the mutex.
+    struct WikiSandbox {
+        _tempdir: tempfile::TempDir,
+        prev: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl WikiSandbox {
+        fn new() -> Self {
+            let lock = ABSORB_TEST_GUARD
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let tempdir = tempfile::tempdir().expect("tempdir");
+            let prev = std::env::var_os("CLAWWIKI_HOME");
+            std::env::set_var("CLAWWIKI_HOME", tempdir.path());
+            Self {
+                _tempdir: tempdir,
+                prev,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for WikiSandbox {
+        fn drop(&mut self) {
+            // Restore BEFORE the tempdir cleans itself up + BEFORE the
+            // mutex is released, so parallel tests observe a consistent
+            // env var if they race against our teardown.
+            if let Some(p) = &self.prev {
+                std::env::set_var("CLAWWIKI_HOME", p);
+            } else {
+                std::env::remove_var("CLAWWIKI_HOME");
+            }
+        }
+    }
+
+    /// Test 1 / 5 — POST /api/wiki/absorb happy path returns
+    /// `202 Accepted` + a canonical `absorb-{unix_secs}-{4hex}`
+    /// task_id + `total_entries: 0` when the entry list is empty.
+    #[tokio::test]
+    async fn absorb_returns_202_with_task_id_for_empty_entry_ids() {
+        let _sandbox = WikiSandbox::new();
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        let response = client
+            .post(server.url("/api/wiki/absorb"))
+            .json(&serde_json::json!({ "entry_ids": [] }))
+            .send()
+            .await
+            .expect("absorb POST");
+
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::ACCEPTED,
+            "expected 202 Accepted per §2.1"
+        );
+        let body: serde_json::Value = response.json().await.expect("body");
+        assert_eq!(body["status"], "started");
+        assert_eq!(body["total_entries"], 0);
+        let task_id = body["task_id"].as_str().expect("task_id string");
+        assert!(
+            task_id.starts_with("absorb-"),
+            "task_id must begin with 'absorb-', got: {task_id}"
+        );
+        let parts: Vec<&str> = task_id.split('-').collect();
+        assert_eq!(parts.len(), 3, "task_id shape: {task_id}");
+        assert!(parts[1].parse::<u64>().is_ok(), "ts segment: {}", parts[1]);
+        assert_eq!(parts[2].len(), 4, "hex segment length: {}", parts[2]);
+        assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    /// Test 2 / 5 — POST /api/wiki/absorb returns `409 Conflict` +
+    /// `ABSORB_IN_PROGRESS` when another "absorb" task is already in
+    /// the TaskManager registry. Pre-registers the slot directly via
+    /// the shared `AppState` so the race is deterministic (no timing).
+    #[tokio::test]
+    async fn absorb_returns_409_when_another_absorb_task_is_running() {
+        let _sandbox = WikiSandbox::new();
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        // Pre-acquire the "absorb" kind slot so the next register call
+        // from the handler must fail.
+        let (pre_task_id, _cancel_token) = server
+            .state
+            .desktop()
+            .task_manager()
+            .register("absorb")
+            .await
+            .expect("pre-register absorb kind");
+
+        let response = client
+            .post(server.url("/api/wiki/absorb"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("absorb POST");
+
+        assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+        let body: serde_json::Value = response.json().await.expect("body");
+        assert_eq!(body["error"], "ABSORB_IN_PROGRESS");
+
+        // Release the synthetic registration so the sandbox tears
+        // down cleanly. (The real handler's spawn would call this via
+        // the task_manager.complete at the end of absorb_batch; our
+        // pre-register never runs a task body.)
+        server
+            .state
+            .desktop()
+            .task_manager()
+            .complete(&pre_task_id)
+            .await;
+    }
+
+    /// Test 3 / 5 — POST /api/wiki/absorb returns `400 Bad Request` +
+    /// `INVALID_DATE_RANGE` on both malformed dates and ordering
+    /// violations (from > to).
+    #[tokio::test]
+    async fn absorb_returns_400_on_invalid_date_range() {
+        let _sandbox = WikiSandbox::new();
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        // Malformed (non YYYY-MM-DD shape).
+        let response = client
+            .post(server.url("/api/wiki/absorb"))
+            .json(&serde_json::json!({
+                "date_range": { "from": "not-a-date", "to": "2026-04-23" }
+            }))
+            .send()
+            .await
+            .expect("POST");
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await.expect("body");
+        assert_eq!(body["error"], "INVALID_DATE_RANGE");
+
+        // from > to ordering violation.
+        let response = client
+            .post(server.url("/api/wiki/absorb"))
+            .json(&serde_json::json!({
+                "date_range": { "from": "2026-04-30", "to": "2026-04-01" }
+            }))
+            .send()
+            .await
+            .expect("POST");
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await.expect("body");
+        assert_eq!(body["error"], "INVALID_DATE_RANGE");
+    }
+
+    /// Test 4 / 5 — POST /api/wiki/absorb returns `404 Not Found` +
+    /// `ENTRIES_NOT_FOUND` when an explicit `entry_ids` list contains
+    /// ids that don't exist on disk. The fresh sandbox has zero raw
+    /// entries, so any explicit id is automatically "missing".
+    #[tokio::test]
+    async fn absorb_returns_404_for_missing_entry_ids() {
+        let _sandbox = WikiSandbox::new();
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        let response = client
+            .post(server.url("/api/wiki/absorb"))
+            .json(&serde_json::json!({ "entry_ids": [9999, 8888] }))
+            .send()
+            .await
+            .expect("POST");
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await.expect("body");
+        let err = body["error"].as_str().unwrap_or("");
+        assert!(
+            err.starts_with("ENTRIES_NOT_FOUND"),
+            "expected ENTRIES_NOT_FOUND prefix, got: {err}"
+        );
+        // At least one missing id should be named in the error.
+        assert!(
+            err.contains("9999") || err.contains("8888"),
+            "error should mention a missing id: {err}"
+        );
+    }
+
+    /// Test 5 / 5 — GET /api/wiki/absorb-log + /api/wiki/backlinks +
+    /// /api/wiki/stats all return their canonical shapes on a fresh
+    /// wiki root (empty arrays / zero counters).
+    #[tokio::test]
+    async fn absorb_log_backlinks_stats_endpoints_return_canonical_shapes() {
+        let _sandbox = WikiSandbox::new();
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        // §2.5 GET /api/wiki/absorb-log — wrapped {entries, total}.
+        let response = client
+            .get(server.url("/api/wiki/absorb-log"))
+            .send()
+            .await
+            .expect("GET absorb-log");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: serde_json::Value = response.json().await.expect("json");
+        assert!(
+            body["entries"].is_array(),
+            "absorb-log.entries must be array: {body}"
+        );
+        assert_eq!(body["entries"].as_array().unwrap().len(), 0);
+        assert_eq!(body["total"], 0);
+
+        // §2.6 GET /api/wiki/backlinks?slug=foo — per-slug shape.
+        let response = client
+            .get(server.url("/api/wiki/backlinks?slug=foo"))
+            .send()
+            .await
+            .expect("GET backlinks");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: serde_json::Value = response.json().await.expect("json");
+        assert_eq!(body["slug"], "foo");
+        assert!(body["backlinks"].is_array());
+        assert_eq!(body["backlinks"].as_array().unwrap().len(), 0);
+        assert_eq!(body["count"], 0);
+
+        // §2.7 GET /api/wiki/stats — WikiStats with all 16 fields.
+        let response = client
+            .get(server.url("/api/wiki/stats"))
+            .send()
+            .await
+            .expect("GET stats");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let stats: serde_json::Value = response.json().await.expect("json");
+        // Spot-check all 16 §3.9 fields are present + of correct kind.
+        for key in [
+            "raw_count",
+            "wiki_count",
+            "concept_count",
+            "people_count",
+            "topic_count",
+            "compare_count",
+            "edge_count",
+            "orphan_count",
+            "inbox_pending",
+            "inbox_resolved",
+            "today_ingest_count",
+            "week_new_pages",
+            "avg_page_words",
+        ] {
+            assert!(
+                stats[key].is_number(),
+                "stats.{key} must be number: {stats}"
+            );
+        }
+        assert!(stats["absorb_success_rate"].is_number());
+        assert!(stats["knowledge_velocity"].is_number());
+        assert!(stats["last_absorb_at"].is_null());
     }
 }
 
