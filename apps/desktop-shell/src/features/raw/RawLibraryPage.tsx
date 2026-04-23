@@ -19,10 +19,7 @@ import {
   Trash2,
   Plus,
   Search,
-  MessageSquare,
-  Globe,
   X,
-  File,
   Maximize2,
   Target,
 } from "lucide-react";
@@ -41,56 +38,17 @@ import {
   DeepLinkNotFoundBanner,
 } from "@/components/deep-link";
 import { RawEntryCard } from "@/components/ds/RawEntryCard";
+import {
+  SourceIcon,
+  sourceBadgeStyle,
+  translateSource,
+  formatSize,
+} from "@/components/ds/row-primitives";
 
 const rawKeys = {
   list: () => ["wiki", "raw", "list"] as const,
   detail: (id: number) => ["wiki", "raw", "detail", id] as const,
 };
-
-/* ─── Source helpers ──────────────────────────────────────────────── */
-
-/** Translate known source labels to Chinese */
-function translateSource(source: string): string {
-  const map: Record<string, string> = {
-    "wechat-url": "微信链接",
-    "wechat-text": "微信消息",
-    "wechat-article": "微信文章",
-    "paste-text": "粘贴文本",
-    "paste-url": "粘贴链接",
-    paste: "粘贴",
-    url: "网页",
-    pdf: "PDF 文件",
-    docx: "Word 文件",
-    pptx: "PPT 文件",
-    image: "图片",
-  };
-  return map[source] ?? source;
-}
-
-/** Color chip style per source category */
-function sourceBadgeStyle(source: string): { bg: string; text: string } {
-  if (source.startsWith("wechat")) return { bg: "rgba(34,197,94,0.12)", text: "rgb(22,163,74)" };
-  if (source === "url" || source === "paste-url" || source === "wechat-url")
-    return { bg: "rgba(59,130,246,0.12)", text: "rgb(37,99,235)" };
-  if (["pdf", "docx", "pptx", "image"].includes(source))
-    return { bg: "rgba(168,85,247,0.12)", text: "rgb(147,51,234)" };
-  return { bg: "rgba(156,163,175,0.12)", text: "rgb(107,114,128)" };
-}
-
-/** Icon per source type */
-function SourceIcon({ source, className, style }: { source: string; className?: string; style?: React.CSSProperties }) {
-  if (source.startsWith("wechat")) return <MessageSquare className={className} style={style} />;
-  if (source === "url" || source === "paste-url") return <Globe className={className} style={style} />;
-  if (["pdf", "docx", "pptx", "image"].includes(source)) return <File className={className} style={style} />;
-  return <FileText className={className} style={style} />;
-}
-
-/** Format byte size to human-readable */
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /* ─── Main page ──────────────────────────────────────────────────── */
 

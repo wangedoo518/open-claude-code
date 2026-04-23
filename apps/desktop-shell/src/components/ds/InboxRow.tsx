@@ -24,10 +24,10 @@
  * Helpers inlined locally (row-exclusive pre-migration, safe to move):
  *  - translateKind (pre-migration InboxPage.tsx:121)
  *  - formatRelative (pre-migration InboxPage.tsx:2011)
- *  - StatusIcon (duplicated — the InboxPage detail pane still owns its
- *    own copy for the §1 Evidence header; the duplication is 24 lines
- *    of branchless `if status === …` returns, and lifting to a shared
- *    util was deferred per worksheet "其他代码不动" spirit)
+ *
+ * StatusIcon is imported from `@/components/ds/row-primitives` — the
+ * DS 2.x-B hoist collapsed the detail-pane copy + this row copy into
+ * a single primitive.
  *
  * DOM id `inbox-task-${entry.id}` preserved verbatim — `lib/deep-link.ts`
  * scrollIntoView on initial mount depends on it (see the I6/I7 sprint
@@ -35,19 +35,13 @@
  */
 
 import type { KeyboardEvent } from "react";
-import {
-  AlertCircle,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Users,
-} from "lucide-react";
-import type { InboxEntry } from "@/features/ingest/types";
+import { XCircle, Clock, Users } from "lucide-react";
 import type { IntelligentEntry } from "@/features/inbox/InboxPage";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { IngestDecisionBadge } from "@/features/inbox/components/IngestDecisionBadge";
 import { RecommendedActionBadge } from "@/features/inbox/components/RecommendedActionBadge";
 import { SharedTargetBadge } from "@/features/inbox/components/SharedTargetBadge";
+import { StatusIcon } from "@/components/ds/row-primitives";
 
 export interface InboxRowProps {
   /** Full entry enriched with queue-intelligence + ingest decision. */
@@ -98,40 +92,6 @@ function formatRelative(iso: string): string {
   if (deltaSecs < 3600) return `${Math.floor(deltaSecs / 60)}分钟前`;
   if (deltaSecs < 86_400) return `${Math.floor(deltaSecs / 3600)}小时前`;
   return `${Math.floor(deltaSecs / 86_400)}天前`;
-}
-
-/**
- * StatusIcon — leading-slot icon in non-batch mode.
- *
- * The InboxPage detail pane (§1 Evidence header) also renders a
- * StatusIcon for the focused entry; that copy is left intact at its
- * original call site per worksheet constraint. If future cleanup
- * consolidates them, promote THIS copy to an exported primitive and
- * have the detail pane import it.
- */
-function StatusIcon({ status }: { status: InboxEntry["status"] }) {
-  if (status === "pending") {
-    return (
-      <AlertCircle
-        className="size-4 shrink-0"
-        style={{ color: "var(--color-warning)" }}
-      />
-    );
-  }
-  if (status === "approved") {
-    return (
-      <CheckCircle2
-        className="size-4 shrink-0"
-        style={{ color: "var(--color-success)" }}
-      />
-    );
-  }
-  return (
-    <XCircle
-      className="size-4 shrink-0"
-      style={{ color: "var(--color-error)" }}
-    />
-  );
 }
 
 export function InboxRow({

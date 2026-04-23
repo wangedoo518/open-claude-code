@@ -19,7 +19,6 @@ import {
   Inbox as InboxIcon,
   CheckCircle2,
   XCircle,
-  AlertCircle,
   FileText,
   ArrowRight,
   Sparkles,
@@ -71,6 +70,7 @@ import { WikiPageDiffPreview } from "@/features/inbox/components/WikiPageDiffPre
 import { QueueGroupHeader } from "@/features/inbox/components/QueueGroupHeader";
 import { BatchActionsToolbar } from "@/features/inbox/components/BatchActionsToolbar";
 import { InboxRow } from "@/components/ds/InboxRow";
+import { StatusIcon } from "@/components/ds/row-primitives";
 import {
   CombinedPreviewDialog,
   type CombinedApplyResponse,
@@ -754,31 +754,6 @@ function EntryList({
         );
       })}
     </ul>
-  );
-}
-
-function StatusIcon({ status }: { status: InboxEntry["status"] }) {
-  if (status === "pending") {
-    return (
-      <AlertCircle
-        className="size-4 shrink-0"
-        style={{ color: "var(--color-warning)" }}
-      />
-    );
-  }
-  if (status === "approved") {
-    return (
-      <CheckCircle2
-        className="size-4 shrink-0"
-        style={{ color: "var(--color-success)" }}
-      />
-    );
-  }
-  return (
-    <XCircle
-      className="size-4 shrink-0"
-      style={{ color: "var(--color-error)" }}
-    />
   );
 }
 
