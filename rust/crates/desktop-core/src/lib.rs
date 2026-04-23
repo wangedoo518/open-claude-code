@@ -84,6 +84,7 @@ pub mod wechat_kefu;
 // straight into propose_for_raw_entry.
 pub mod wiki_maintainer_adapter;
 pub mod skill_router;
+pub mod absorb_task;
 
 pub use ask_context::binding::{SessionSourceBinding, SourceRef};
 pub use ask_context::{ContextBasis, ContextMode};
@@ -1479,6 +1480,16 @@ pub struct DesktopState {
     /// already `tokio::select!` on their `cancel`, so graceful stop is
     /// automatic. Stays `None` in unit tests / `DesktopState::new()`.
     shutdown_cancel: Arc<RwLock<Option<CancellationToken>>>,
+
+    /// SKILL task registry. One-per-kind concurrency gate for the
+    /// async `/absorb`, `/cleanup`, `/patrol` paths. Populated lazily
+    /// — the HTTP handlers call `task_manager.register(kind)` which
+    /// returns 409 if another task of the same kind is already
+    /// running. See `absorb_task::TaskManager` (§4.5.2) for the full
+    /// semantics. Initialised to an empty registry by
+    /// `with_executor` so every `DesktopState` — Mock, Live, test —
+    /// carries one.
+    task_manager: Arc<absorb_task::TaskManager>,
 }
 
 /// Handle to a running WeChat iLink monitor. Held inside
@@ -1660,7 +1671,16 @@ impl DesktopState {
             kefu_pipeline_state: Arc::new(RwLock::new(None)),
             kefu_pipeline_cancel: Arc::new(RwLock::new(None)),
             shutdown_cancel: Arc::new(RwLock::new(None)),
+            task_manager: Arc::new(absorb_task::TaskManager::new()),
         }
+    }
+
+    /// Access the SKILL task registry (§4.5.2). HTTP handlers call
+    /// `state.task_manager().register("absorb")` to acquire a task id
+    /// + cancel token under the one-per-kind concurrency rule.
+    #[must_use]
+    pub fn task_manager(&self) -> Arc<absorb_task::TaskManager> {
+        self.task_manager.clone()
     }
 
     /// Inject the server-level shutdown cancellation token. Call this
