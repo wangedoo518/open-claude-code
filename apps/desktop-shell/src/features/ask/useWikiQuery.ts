@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { QuerySource } from "@/features/ingest/types";
+import type { QuerySource } from "@/api/wiki/types";
 
 interface WikiQueryState {
   isQuerying: boolean;

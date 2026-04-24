@@ -7,7 +7,7 @@
  */
 
 import { BookOpen } from "lucide-react";
-import type { QuerySource } from "@/features/ingest/types";
+import type { QuerySource } from "@/api/wiki/types";
 import { useWikiTabStore } from "@/state/wiki-tab-store";
 import { useSettingsStore } from "@/state/settings-store";
 

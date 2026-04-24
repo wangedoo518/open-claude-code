@@ -436,11 +436,3 @@ export interface PatrolReport {
   summary: PatrolSummary;
   checked_at: string;
 }
-
-/** A single source page referenced in a /query answer (§2.2). */
-export interface QuerySource {
-  slug: string;
-  title: string;
-  relevance_score: number;
-  snippet: string;
-}

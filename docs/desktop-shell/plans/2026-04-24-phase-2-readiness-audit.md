@@ -25,7 +25,7 @@ Phase 2.5 slice.
 | --- | --- | --- | --- |
 | Provider runtime fallback | Runtime unlocked | `.claw/providers.json` is ignored by git and `desktop-core/src/wiki_maintainer_adapter.rs` reads the active provider from the current directory or any ancestor project root. | Keep the file local-only. Smoke `/api/wiki/query` and `/api/wiki/absorb` with the configured provider. |
 | `/api/wiki/query` backend | Mostly landed | `desktop-server/src/lib.rs` exposes `POST /api/wiki/query`; `wiki_maintainer::query_wiki` has source and empty-wiki coverage. | Add/keep focused tests for SSE terminal payload, source propagation, and empty-wiki friendly failure. |
-| Ask query frontend | Mostly landed | `apps/desktop-shell/src/features/ask/useWikiQuery.ts` consumes `query_chunk`, `query_done`, and `query_error`; `features/ingest/persist.ts` still has an older query wrapper. | Prefer the Ask hook for UI flow. Do not add new consumers to the ingest feature barrel. |
+| Ask query frontend | Mostly landed | `apps/desktop-shell/src/features/ask/useWikiQuery.ts` consumes `query_chunk`, `query_done`, and `query_error`; query source DTOs now live under `src/api/wiki/types.ts`. | Prefer the Ask hook for UI flow. Do not add new consumers to the ingest feature barrel. |
 | WeChat Kefu `?` query | Mostly landed | `desktop-core/src/wechat_kefu/desktop_handler.rs` classifies `?` and `？`, calls `wiki_maintainer::query_wiki`, and formats sources in the reply. | Keep mock/handler coverage when no real WeChat device is available; run real device E2E only when credentials are present. |
 | WeChat audit notification | Partially landed | `check_and_notify_conflicts` scans pending conflict inbox entries after URL/text ingest and sends a Kefu notification. | Add focused coverage around conflict filtering and notification formatting before changing behavior. |
 | Absorb progress UI | Gap confirmed | Backend emits `absorb_progress` / `absorb_complete`, but `AbsorbTriggerButton` still polls `getWikiStats().last_absorb_at`. | Replace polling with SSE-backed store updates and keep a small timeout/error fallback. |
@@ -49,3 +49,15 @@ block Phase 2 readiness unless a Phase 2 change would make them worse.
 3. Run targeted query and Kefu handler tests.
 4. Smoke the provider-backed `/api/wiki/query` path.
 5. Only then start UX polish items 11 and 12.
+
+## Sprint 1 Scan Update
+
+- Ask already has reachable typed query entrypoints in `AskWorkbench`: `?question`
+  and `/query question` both route through `useWikiQuery`.
+- The design-era `QuickActionsBar` entrypoint is not present in the current
+  codebase; typed Ask queries are the current reachable UI path.
+- Kefu `?` and full-width `？` routing is pre-landed in
+  `desktop-core/src/wechat_kefu/desktop_handler.rs`; Sprint 1 keeps that path
+  testable by extracting conflict-notification formatting into pure helpers.
+- Query result source DTOs moved to `src/api/wiki/types.ts`, so Ask no longer
+  imports query contracts from the ingest feature layer.

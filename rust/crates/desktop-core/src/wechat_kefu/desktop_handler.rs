@@ -788,34 +788,47 @@ async fn check_and_notify_conflicts(
         Err(_) => return,
     };
 
-    let conflicts: Vec<_> = inbox
-        .iter()
-        .filter(|e| {
-            e.status == wiki_store::InboxStatus::Pending
-                && e.kind == wiki_store::InboxKind::Conflict
-        })
-        .collect();
-
-    if conflicts.is_empty() {
+    let conflict_titles = pending_conflict_titles(inbox.iter());
+    let Some(msg) = format_conflict_notification(&conflict_titles) else {
         return;
-    }
-
-    let items: Vec<String> = conflicts
-        .iter()
-        .take(5)
-        .map(|c| format!("• {}", c.title))
-        .collect();
-    let msg = format!(
-        "⚠️ 发现 {} 条知识冲突，请在 ClawWiki 中审核：\n{}",
-        conflicts.len(),
-        items.join("\n"),
-    );
+    };
 
     let _ = client.send_text(userid, open_kfid, &msg).await;
     eprintln!(
         "[kefu handler] conflict notification sent ({} conflicts)",
-        conflicts.len()
+        conflict_titles.len()
     );
+}
+
+fn pending_conflict_titles<'a>(
+    entries: impl IntoIterator<Item = &'a wiki_store::InboxEntry>,
+) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|e| {
+            e.status == wiki_store::InboxStatus::Pending
+                && e.kind == wiki_store::InboxKind::Conflict
+        })
+        .map(|e| e.title.clone())
+        .collect()
+}
+
+fn format_conflict_notification(conflict_titles: &[String]) -> Option<String> {
+    if conflict_titles.is_empty() {
+        return None;
+    }
+
+    let items: Vec<String> = conflict_titles
+        .iter()
+        .take(5)
+        .map(|title| format!("• {title}"))
+        .collect();
+
+    Some(format!(
+        "⚠️ 发现 {} 条知识冲突，请在 ClawWiki 中审核：\n{}",
+        conflict_titles.len(),
+        items.join("\n"),
+    ))
 }
 
 /// Trigger absorb via internal HTTP POST to localhost.
@@ -1039,6 +1052,22 @@ mod tests {
     }
 
     // ── source_emoji ─────────────────────────────────────────────
+
+    #[test]
+    fn conflict_notification_none_for_empty_titles() {
+        assert!(format_conflict_notification(&[]).is_none());
+    }
+
+    #[test]
+    fn conflict_notification_limits_preview_to_five_titles() {
+        let titles: Vec<String> = (1..=6).map(|i| format!("conflict-{i}")).collect();
+        let reply = format_conflict_notification(&titles).expect("non-empty conflicts");
+
+        assert!(reply.contains("6 条知识冲突"));
+        assert!(reply.contains("• conflict-1"));
+        assert!(reply.contains("• conflict-5"));
+        assert!(!reply.contains("• conflict-6"));
+    }
 
     #[test]
     fn source_emoji_all_types() {

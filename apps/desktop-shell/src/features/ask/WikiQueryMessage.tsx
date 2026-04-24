@@ -17,7 +17,7 @@ import { BookOpen, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { QuerySourcesCard } from "./QuerySourcesCard";
-import type { QuerySource } from "@/features/ingest/types";
+import type { QuerySource } from "@/api/wiki/types";
 import {
   preprocessWikilinks,
   useWikiLinkRenderer,
