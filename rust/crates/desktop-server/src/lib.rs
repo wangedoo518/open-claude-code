@@ -4923,6 +4923,100 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn proposal_http_smoke_creates_and_applies_merge() {
+        let merged_markdown =
+            "# Attention\n\nOriginal notes.\n\n## Multi-head update\n\nMerged detail.";
+        let provider = MockOpenAiServer::spawn(
+            serde_json::json!({
+                "after_markdown": merged_markdown,
+                "summary": "added multi-head update"
+            })
+            .to_string(),
+        )
+        .await;
+        let sandbox = WikiProviderSandbox::new(&provider.base_url());
+        let paths = wiki_store::WikiPaths::resolve(sandbox.root());
+        wiki_store::write_wiki_page_in_category(
+            &paths,
+            "concept",
+            "attention",
+            "Attention",
+            "Attention summary.",
+            "# Attention\n\nOriginal notes.",
+            None,
+        )
+        .expect("seed wiki page");
+        let raw = wiki_store::write_raw_entry(
+            &paths,
+            "paste",
+            "attention-update",
+            "New source note: multi-head attention lets several attention heads run in parallel.",
+            &wiki_store::RawFrontmatter::for_paste("paste", None),
+        )
+        .expect("seed raw entry");
+        let inbox = wiki_store::append_new_raw_task(&paths, &raw, "test")
+            .expect("seed inbox entry");
+
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+        let proposal_response = client
+            .post(server.url(&format!("/api/wiki/inbox/{}/proposal", inbox.id)))
+            .json(&serde_json::json!({ "target_slug": "attention" }))
+            .send()
+            .await
+            .expect("proposal POST");
+
+        assert_eq!(proposal_response.status(), reqwest::StatusCode::OK);
+        let proposal: serde_json::Value = proposal_response.json().await.expect("proposal body");
+        assert_eq!(proposal["target_slug"], "attention");
+        assert_eq!(proposal["summary"], "added multi-head update");
+        assert_eq!(proposal["after_markdown"], merged_markdown);
+
+        let staged = wiki_store::list_inbox_entries(&paths)
+            .expect("list inbox after proposal")
+            .into_iter()
+            .find(|entry| entry.id == inbox.id)
+            .expect("staged inbox");
+        assert_eq!(staged.proposal_status.as_deref(), Some("pending"));
+        assert_eq!(staged.target_page_slug.as_deref(), Some("attention"));
+        assert_eq!(
+            staged.proposed_after_markdown.as_deref(),
+            Some(merged_markdown)
+        );
+
+        let apply_response = client
+            .post(server.url(&format!(
+                "/api/wiki/inbox/{}/proposal/apply",
+                inbox.id
+            )))
+            .send()
+            .await
+            .expect("proposal apply POST");
+
+        assert_eq!(apply_response.status(), reqwest::StatusCode::OK);
+        let applied: serde_json::Value = apply_response.json().await.expect("apply body");
+        assert_eq!(applied["outcome"], "updated");
+        assert_eq!(applied["target_page_slug"], "attention");
+
+        let (_summary, body) = wiki_store::read_wiki_page(&paths, "attention")
+            .expect("read updated wiki page");
+        assert!(body.contains("## Multi-head update"));
+
+        let applied_entry = wiki_store::list_inbox_entries(&paths)
+            .expect("list inbox after apply")
+            .into_iter()
+            .find(|entry| entry.id == inbox.id)
+            .expect("applied inbox");
+        assert_eq!(applied_entry.status, wiki_store::InboxStatus::Approved);
+        assert_eq!(applied_entry.proposal_status.as_deref(), Some("applied"));
+        assert!(applied_entry.proposed_after_markdown.is_none());
+        assert_eq!(
+            applied_entry.proposal_summary.as_deref(),
+            Some("added multi-head update")
+        );
+    }
+
     /// POST /api/wiki/absorb happy path returns 202 plus a canonical task id.
     #[tokio::test]
     async fn absorb_returns_202_with_task_id_for_empty_entry_ids() {

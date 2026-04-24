@@ -2055,10 +2055,104 @@ pub async fn absorb_batch(
         let category = determine_category(&proposal);
 
         if page_exists {
-            // Update: append new content (merge via topic-driven structure)
-            let (_existing_summary, existing_body) = wiki_store::read_wiki_page(paths, &proposal.slug)
-                .map_err(|e| MaintainerError::Store(e.to_string()))?;
-            final_body = format!("{}\n\n---\n\n{}", existing_body, proposal.body);
+            // Update: use the dedicated merge prompt instead of a plain
+            // append so repeated absorbs keep the page topic-driven.
+            let (existing_summary, existing_body) =
+                match wiki_store::read_wiki_page(paths, &proposal.slug) {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        result.failed += 1;
+                        let _ = progress_tx
+                            .send(AbsorbProgressEvent {
+                                task_id: task_id.clone(),
+                                processed: result.created
+                                    + result.updated
+                                    + result.skipped
+                                    + result.failed,
+                                total,
+                                current_entry_id: *id,
+                                action: "skip".to_string(),
+                                page_slug: Some(proposal.slug.clone()),
+                                page_title: Some(proposal.title.clone()),
+                                error: Some(format!("read existing wiki page failed: {e}")),
+                            })
+                            .await;
+                        continue;
+                    }
+                };
+            let merge_request = prompt::build_merge_request(
+                &proposal.slug,
+                &existing_summary.title,
+                &existing_body,
+                &proposal.body,
+            );
+            let merge_response = match broker.chat_completion(merge_request).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    result.failed += 1;
+                    let _ = progress_tx
+                        .send(AbsorbProgressEvent {
+                            task_id: task_id.clone(),
+                            processed: result.created
+                                + result.updated
+                                + result.skipped
+                                + result.failed,
+                            total,
+                            current_entry_id: *id,
+                            action: "skip".to_string(),
+                            page_slug: Some(proposal.slug.clone()),
+                            page_title: Some(proposal.title.clone()),
+                            error: Some(format!("LLM merge failed: {e}")),
+                        })
+                        .await;
+                    continue;
+                }
+            };
+            let merge_text = match extract_first_text(&merge_response) {
+                Some(t) => t,
+                None => {
+                    result.failed += 1;
+                    let _ = progress_tx
+                        .send(AbsorbProgressEvent {
+                            task_id: task_id.clone(),
+                            processed: result.created
+                                + result.updated
+                                + result.skipped
+                                + result.failed,
+                            total,
+                            current_entry_id: *id,
+                            action: "skip".to_string(),
+                            page_slug: Some(proposal.slug.clone()),
+                            page_title: Some(proposal.title.clone()),
+                            error: Some("LLM merge response contained no text block".to_string()),
+                        })
+                        .await;
+                    continue;
+                }
+            };
+            let (merged_body, _merge_summary) = match parse_merge_response(&merge_text) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    result.failed += 1;
+                    let _ = progress_tx
+                        .send(AbsorbProgressEvent {
+                            task_id: task_id.clone(),
+                            processed: result.created
+                                + result.updated
+                                + result.skipped
+                                + result.failed,
+                            total,
+                            current_entry_id: *id,
+                            action: "skip".to_string(),
+                            page_slug: Some(proposal.slug.clone()),
+                            page_title: Some(proposal.title.clone()),
+                            error: Some(format!("LLM merge parse failed: {e}")),
+                        })
+                        .await;
+                    continue;
+                }
+            };
+            final_body = merged_body;
             action = "update";
         } else {
             final_body = proposal.body.clone();
@@ -3099,11 +3193,13 @@ mod tests {
         let id2 = seed_raw(&paths, "Content about attention mechanism.");
         let id3 = seed_raw(&paths, "More about Transformer for update.");
 
-        // Broker returns proposals: 2 creates + 1 that targets same slug (update)
+        // Broker returns proposals: 2 creates + 1 same-slug update + 1 merge.
+        let transformer_merged = "# Transformer\n\nMerged transformer body.";
         let broker = SequentialBroker::new(vec![
             make_proposal_json("transformer", "Transformer", id1),
             make_proposal_json("attention", "Attention Mechanism", id2),
             make_proposal_json("transformer", "Transformer", id3), // update
+            canned_merge_response(transformer_merged, "merged transformer update"),
         ]);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
@@ -3127,7 +3223,8 @@ mod tests {
         assert!(!result.cancelled);
 
         // Verify pages exist on disk
-        assert!(wiki_store::read_wiki_page(&paths, "transformer").is_ok());
+        let (_, transformer_body) = wiki_store::read_wiki_page(&paths, "transformer").unwrap();
+        assert_eq!(transformer_body.trim_end(), transformer_merged);
         assert!(wiki_store::read_wiki_page(&paths, "attention").is_ok());
 
         // Verify absorb log was written
@@ -3302,10 +3399,9 @@ mod tests {
 
     /// §5.1 step 3f update-branch: absorbing a second raw whose
     /// proposal carries the same slug as an existing page must fall
-    /// into the update path (concatenate existing + separator + new)
-    /// rather than silently overwriting.
+    /// into the update path (LLM merge) rather than silently overwriting.
     #[tokio::test]
-    async fn absorb_batch_update_appends_to_existing() {
+    async fn absorb_batch_update_merges_existing_with_llm() {
         let tmp = tempdir().unwrap();
         wiki_store::init_wiki(tmp.path()).unwrap();
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
@@ -3315,9 +3411,11 @@ mod tests {
 
         // Both LLM calls return the SAME slug → absorb_batch should
         // create on the first and update on the second.
+        let merged = "# Shared Topic\n\nMerged body from both source notes.";
         let broker = SequentialBroker::new(vec![
             make_proposal_json("shared-slug", "Shared Topic", id1),
             make_proposal_json("shared-slug", "Shared Topic", id2),
+            canned_merge_response(merged, "merged second source"),
         ]);
 
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
@@ -3337,18 +3435,13 @@ mod tests {
         assert_eq!(result.updated, 1, "second absorb updates the same page");
         assert_eq!(result.failed, 0);
 
-        // Body should contain both the first and second proposal bodies,
-        // joined by the `\n\n---\n\n` separator step 3f appends.
+        // Body should be the LLM-merged result, not the old append
+        // fallback with an explicit separator.
         let (_, body) = wiki_store::read_wiki_page(&paths, "shared-slug").unwrap();
+        assert_eq!(body.trim_end(), merged);
         assert!(
-            body.contains("---"),
-            "update path must append a separator; body = {body:?}"
-        );
-        // Both proposal bodies contain "Body content." from make_proposal_json.
-        let separator_count = body.matches("\n\n---\n\n").count();
-        assert!(
-            separator_count >= 1,
-            "expected at least one merge separator, found {separator_count}"
+            !body.contains("\n\n---\n\n"),
+            "update path must not use append separator fallback: {body:?}"
         );
 
         // absorb_log has both create + update entries.

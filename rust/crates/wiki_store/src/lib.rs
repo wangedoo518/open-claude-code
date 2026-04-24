@@ -1874,13 +1874,14 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
 /// returns the unique slugs referenced. Case-insensitive path match.
 ///
 /// This is the parser that feeds the backlinks system: if page A
-/// mentions `[LLM Wiki](concepts/llm-wiki.md)` in its body, then
-/// `extract_internal_links(body_a)` returns `["llm-wiki"]`, and
-/// `build_wiki_graph` emits a `references` edge from A to B.
+/// mentions `[LLM Wiki](concepts/llm-wiki.md)` or `[[llm-wiki]]`
+/// in its body, then `extract_internal_links(body_a)` returns
+/// `["llm-wiki"]`, and `build_wiki_graph` emits a `references`
+/// edge from A to B.
 ///
 /// The regex is intentionally simple — we only look for
-/// `](concepts/slug.md)` suffixes. Future sprints can extend this
-/// to detect bare `[[slug]]` wiki-link syntax if we add that.
+/// canonical `](concepts/slug.md)` suffixes plus `[[slug]]`
+/// wikilinks used by the frontend article renderer.
 pub fn extract_internal_links(body: &str) -> Vec<String> {
     let mut slugs: Vec<String> = Vec::new();
     // Look for `](concepts/SLUG.md)` patterns.
@@ -1893,23 +1894,47 @@ pub fn extract_internal_links(body: &str) -> Vec<String> {
     while let Some(start) = lower[search_from..].find(prefix) {
         let abs_start = search_from + start + prefix.len();
         if let Some(end_rel) = lower[abs_start..].find(suffix) {
-            let slug = &body[abs_start..abs_start + end_rel];
-            // Validate: slug must be non-empty and ASCII-safe.
-            let slug_lower = slug.to_lowercase();
-            if !slug_lower.is_empty()
-                && slug_lower
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
-                && !slugs.contains(&slug_lower)
-            {
-                slugs.push(slug_lower);
-            }
+            let slug = &lower[abs_start..abs_start + end_rel];
+            push_internal_link_slug(&mut slugs, slug);
             search_from = abs_start + end_rel + suffix.len();
         } else {
             break;
         }
     }
+    // Also support the wikilink syntax rendered by the frontend article
+    // body component. Labels and anchors are display-only for backlinks.
+    let mut wikilink_from = 0usize;
+    while let Some(start_rel) = body[wikilink_from..].find("[[") {
+        let inner_start = wikilink_from + start_rel + 2;
+        if let Some(end_rel) = body[inner_start..].find("]]") {
+            let raw_inner = &body[inner_start..inner_start + end_rel];
+            let slug = raw_inner
+                .split('|')
+                .next()
+                .unwrap_or("")
+                .split('#')
+                .next()
+                .unwrap_or("");
+            push_internal_link_slug(&mut slugs, slug);
+            wikilink_from = inner_start + end_rel + 2;
+        } else {
+            break;
+        }
+    }
     slugs
+}
+
+fn push_internal_link_slug(slugs: &mut Vec<String>, candidate: &str) {
+    let slug = candidate.trim().to_lowercase();
+    if slug.is_empty()
+        || !slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        || slugs.contains(&slug)
+    {
+        return;
+    }
+    slugs.push(slug);
 }
 
 /// List all concept pages that link to `target_slug` in their body.
@@ -6123,6 +6148,54 @@ mod tests {
     }
 
     #[test]
+    fn extract_internal_links_finds_wikilinks() {
+        let body = "See [[Alpha]] plus [[rag-vs-llm-wiki|RAG vs LLM Wiki]] \
+                    and [[beta.model#section|Beta]].";
+        let links = extract_internal_links(body);
+        assert_eq!(links.len(), 3);
+        assert!(links.contains(&"alpha".to_string()));
+        assert!(links.contains(&"rag-vs-llm-wiki".to_string()));
+        assert!(links.contains(&"beta.model".to_string()));
+    }
+
+    #[test]
+    fn extract_internal_links_deduplicates_markdown_and_wikilinks() {
+        let body = "[Alpha](concepts/alpha.md), [[Alpha]], and [[alpha|A]].";
+        let links = extract_internal_links(body);
+        assert_eq!(links, vec!["alpha".to_string()]);
+    }
+
+    #[test]
+    fn list_backlinks_returns_wikilink_referring_pages() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(
+            &paths,
+            "alpha",
+            "Alpha",
+            "Summary",
+            "See [[bravo|Bravo]] for more.",
+            Some(1),
+        )
+        .unwrap();
+        write_wiki_page(
+            &paths,
+            "bravo",
+            "Bravo",
+            "Summary",
+            "Standalone.",
+            Some(2),
+        )
+        .unwrap();
+
+        let backlinks = list_backlinks(&paths, "bravo").unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].slug, "alpha");
+    }
+
+    #[test]
     fn list_backlinks_returns_referring_pages() {
         let tmp = tempdir().unwrap();
         init_wiki(tmp.path()).unwrap();
@@ -7548,6 +7621,38 @@ mod tests {
         let refs = index.get("page-b").unwrap();
         assert!(refs.contains(&"page-a".to_string()));
         // page-a has no inbound links.
+        assert!(index.get("page-a").is_none());
+    }
+
+    #[test]
+    fn build_backlinks_index_with_wikilinks() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page_in_category(
+            &paths,
+            "concept",
+            "page-a",
+            "Page A",
+            "Summary A",
+            "# Page A\n\nSee [[page-b|Page B]] for details.",
+            Some(1),
+        )
+        .unwrap();
+        write_wiki_page_in_category(
+            &paths,
+            "concept",
+            "page-b",
+            "Page B",
+            "Summary B",
+            "# Page B\n\nStandalone page.",
+            Some(2),
+        )
+        .unwrap();
+
+        let index = build_backlinks_index(&paths).unwrap();
+        assert_eq!(index.get("page-b"), Some(&vec!["page-a".to_string()]));
         assert!(index.get("page-a").is_none());
     }
 
