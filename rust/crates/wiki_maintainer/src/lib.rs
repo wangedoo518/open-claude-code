@@ -60,6 +60,13 @@ pub struct WikiPageProposal {
     /// The raw/ entry id that seeded this proposal. Echoed back so
     /// the HTTP handler can log the provenance.
     pub source_raw_id: u32,
+    /// Optional conflict signal from the maintainer LLM. When non-empty,
+    /// absorb queues a Conflict inbox task instead of rewriting a page.
+    #[serde(default)]
+    pub conflict_with: Vec<String>,
+    /// Human-readable reason paired with `conflict_with`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_reason: Option<String>,
 }
 
 /// Errors raised by the maintainer.
@@ -201,6 +208,10 @@ fn parse_proposal(raw: &str, expected_raw_id: u32) -> Result<WikiPageProposal> {
         body: String,
         #[serde(default)]
         source_raw_id: Option<u32>,
+        #[serde(default)]
+        conflict_with: Vec<String>,
+        #[serde(default)]
+        conflict_reason: Option<String>,
     }
 
     let parsed: Raw = serde_json::from_str(payload).map_err(|e| {
@@ -246,6 +257,16 @@ fn parse_proposal(raw: &str, expected_raw_id: u32) -> Result<WikiPageProposal> {
         body: parsed.body,
         // Prefer the echoed source id, fall back to the caller's.
         source_raw_id: parsed.source_raw_id.unwrap_or(expected_raw_id),
+        conflict_with: parsed
+            .conflict_with
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        conflict_reason: parsed
+            .conflict_reason
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -1696,7 +1717,7 @@ fn build_absorb_system_prompt(
 ) -> String {
     let claude_md =
         std::fs::read_to_string(&paths.schema_claude_md).unwrap_or_default();
-    format!(
+    let mut prompt = format!(
         "{claude_md}\n\n\
          ## 当前 Wiki 目录\n\n{index_content}\n\n\
          ## 吸收规则\n\n\
@@ -1707,7 +1728,11 @@ fn build_absorb_system_prompt(
          5. 百科全书语气: 平实、事实、中立。归因优于断言。\n\
          6. 每篇 body 不超过 200 词。引用不超过 15 个连续词。\n\
          7. 返回 STRICT JSON, 格式同 WikiPageProposal。"
-    )
+    );
+    prompt.push_str(
+        "\n8. If the raw entry contradicts an existing wiki slug from the index, include conflict_with and conflict_reason; do not silently rewrite that page.",
+    );
+    prompt
 }
 
 /// Build the absorb `MessageRequest` — index-aware system prompt +
@@ -1959,6 +1984,69 @@ pub async fn absorb_batch(
                 continue;
             }
         };
+
+        if !proposal.conflict_with.is_empty() {
+            let reason = proposal
+                .conflict_reason
+                .as_deref()
+                .unwrap_or("maintainer LLM flagged a conflict");
+            match wiki_store::mark_conflict(
+                paths,
+                &format!("Conflict: {}", proposal.title),
+                &proposal.conflict_with,
+                Some(*id),
+                reason,
+            ) {
+                Ok(_) => {
+                    result.skipped += 1;
+                    let _ = wiki_store::append_absorb_log(
+                        paths,
+                        wiki_store::AbsorbLogEntry {
+                            entry_id: *id,
+                            timestamp: wiki_store::now_iso8601(),
+                            action: "conflict".to_string(),
+                            page_slug: proposal.conflict_with.first().cloned(),
+                            page_title: Some(proposal.title.clone()),
+                            page_category: None,
+                        },
+                    );
+                    let _ = progress_tx
+                        .send(AbsorbProgressEvent {
+                            task_id: task_id.clone(),
+                            processed: result.created
+                                + result.updated
+                                + result.skipped
+                                + result.failed,
+                            total,
+                            current_entry_id: *id,
+                            action: "conflict".to_string(),
+                            page_slug: proposal.conflict_with.first().cloned(),
+                            page_title: Some(proposal.title.clone()),
+                            error: None,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    result.failed += 1;
+                    let _ = progress_tx
+                        .send(AbsorbProgressEvent {
+                            task_id: task_id.clone(),
+                            processed: result.created
+                                + result.updated
+                                + result.skipped
+                                + result.failed,
+                            total,
+                            current_entry_id: *id,
+                            action: "skip".to_string(),
+                            page_slug: proposal.conflict_with.first().cloned(),
+                            page_title: Some(proposal.title.clone()),
+                            error: Some(format!("conflict inbox write failed: {e}")),
+                        })
+                        .await;
+                }
+            }
+            continue;
+        }
 
         // 3f: Determine create vs update
         let page_exists = wiki_store::read_wiki_page(paths, &proposal.slug).is_ok();
@@ -2755,6 +2843,8 @@ mod tests {
         assert_eq!(parsed.slug, "llm-wiki");
         assert_eq!(parsed.title, "LLM Wiki");
         assert_eq!(parsed.source_raw_id, 7, "should use echoed source_raw_id");
+        assert!(parsed.conflict_with.is_empty());
+        assert!(parsed.conflict_reason.is_none());
     }
 
     #[test]
@@ -2767,6 +2857,25 @@ mod tests {
         }"#;
         let parsed = parse_proposal(json, 42).unwrap();
         assert_eq!(parsed.source_raw_id, 42);
+    }
+
+    #[test]
+    fn parse_proposal_accepts_conflict_signal() {
+        let json = r#"{
+            "slug": "transformer",
+            "title": "Transformer",
+            "summary": "S",
+            "body": "B",
+            "source_raw_id": 7,
+            "conflict_with": [" transformer ", ""],
+            "conflict_reason": " contradicts existing page "
+        }"#;
+        let parsed = parse_proposal(json, 7).unwrap();
+        assert_eq!(parsed.conflict_with, vec!["transformer"]);
+        assert_eq!(
+            parsed.conflict_reason.as_deref(),
+            Some("contradicts existing page")
+        );
     }
 
     #[test]
@@ -2968,6 +3077,17 @@ mod tests {
         )
     }
 
+    fn make_conflict_proposal_json(raw_id: u32, slug: &str) -> String {
+        format!(
+            "{{\"slug\":\"{slug}\",\"title\":\"Transformer\",\
+             \"summary\":\"Conflicting transformer note.\",\
+             \"body\":\"# Transformer\\n\\nConflicting body.\",\
+             \"source_raw_id\":{raw_id},\
+             \"conflict_with\":[\"{slug}\"],\
+             \"conflict_reason\":\"raw contradicts the existing page\"}}"
+        )
+    }
+
     #[tokio::test]
     async fn absorb_batch_happy_path_creates_pages() {
         let tmp = tempdir().unwrap();
@@ -3021,6 +3141,62 @@ mod tests {
             events.push(evt);
         }
         assert_eq!(events.len(), 3, "should have 3 progress events");
+    }
+
+    #[tokio::test]
+    async fn absorb_batch_marks_llm_conflict_in_inbox_without_writing_page() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+
+        wiki_store::write_wiki_page_in_category(
+            &paths,
+            "concept",
+            "transformer",
+            "Transformer",
+            "Existing summary.",
+            "# Transformer\n\nOriginal stable body.",
+            None,
+        )
+        .unwrap();
+        let raw_id = seed_raw(&paths, "A new source contradicts the transformer page.");
+        let broker = SequentialBroker::new(vec![make_conflict_proposal_json(raw_id, "transformer")]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        let result = absorb_batch(
+            &paths,
+            vec![raw_id],
+            &broker,
+            tx,
+            "test-conflict-path".to_string(),
+            cancel,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.created, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.failed, 0);
+
+        let (_summary, body) = wiki_store::read_wiki_page(&paths, "transformer").unwrap();
+        assert!(body.contains("Original stable body."));
+        assert!(!body.contains("Conflicting body."));
+
+        let inbox = wiki_store::list_inbox_entries(&paths).unwrap();
+        let conflict = inbox
+            .iter()
+            .find(|entry| entry.kind == wiki_store::InboxKind::Conflict)
+            .expect("conflict inbox entry");
+        assert_eq!(conflict.source_raw_id, Some(raw_id));
+        assert!(conflict.description.contains("transformer"));
+        assert!(conflict.description.contains("raw contradicts the existing page"));
+
+        rx.close();
+        let event = rx.recv().await.expect("conflict progress event");
+        assert_eq!(event.action, "conflict");
+        assert_eq!(event.page_slug.as_deref(), Some("transformer"));
     }
 
     #[tokio::test]
@@ -3402,6 +3578,8 @@ mod tests {
             summary: "S".to_string(),
             body: "B".to_string(),
             source_raw_id: 1,
+            conflict_with: Vec::new(),
+            conflict_reason: None,
         };
         assert_eq!(determine_category(&proposal), "concept");
     }

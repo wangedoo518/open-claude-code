@@ -238,6 +238,10 @@ export interface WikiPageProposal {
   body: string;
   /** raw/ entry id that seeded this proposal (echoed from server) */
   source_raw_id: number;
+  /** optional conflict signal; non-empty means the raw should be reviewed in Inbox */
+  conflict_with?: string[];
+  /** short reason paired with conflict_with */
+  conflict_reason?: string | null;
 }
 
 export interface WikiProposalResponse {

@@ -4032,6 +4032,8 @@ fn wiki_page_proposal_to_json(p: &wiki_maintainer::WikiPageProposal) -> serde_js
         "summary": p.summary,
         "body": p.body,
         "source_raw_id": p.source_raw_id,
+        "conflict_with": &p.conflict_with,
+        "conflict_reason": &p.conflict_reason,
     })
 }
 

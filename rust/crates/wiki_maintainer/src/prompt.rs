@@ -53,9 +53,13 @@ HARD RULES (canonical `schema/CLAUDE.md` §Triggers and §"Never do"):
    - summary   (string, one sentence, ≤ 200 characters)
    - body      (string, markdown, ≤ 200 words)
    - source_raw_id (integer, copy from the raw entry id)
+   - conflict_with (array of strings, optional; existing wiki slugs contradicted by this raw)
+   - conflict_reason (string, optional; short reason when conflict_with is non-empty)
 3. Quote ≤ 15 consecutive words from the raw source (hard copyright cap).
-4. NEVER emit backlinks to non-existent pages.
-5. If you cannot produce a confident summary, respond with an object
+4. If the raw source contradicts an existing page slug named in the provided context,
+   set conflict_with/conflict_reason. Do not silently overwrite contested facts.
+5. NEVER emit backlinks to non-existent pages.
+6. If you cannot produce a confident summary, respond with an object
    that sets `summary` to "uncertain: {reason}" and a minimal body.
    DO NOT refuse and DO NOT return a non-JSON apology — an uncertain
    proposal is better than a parse error.
@@ -302,6 +306,8 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains("summary"));
         assert!(SYSTEM_PROMPT.contains("body"));
         assert!(SYSTEM_PROMPT.contains("source_raw_id"));
+        assert!(SYSTEM_PROMPT.contains("conflict_with"));
+        assert!(SYSTEM_PROMPT.contains("conflict_reason"));
     }
 
     #[test]

@@ -218,6 +218,7 @@ rewritten.
 
 | Item | Status | Evidence |
 |---|---|---|
+| 3 · LLM conflict → Inbox | resolved-code | Maintainer proposals now accept `conflict_with` / `conflict_reason`; `absorb_batch` converts that signal into a `Conflict` inbox task and skips writing the contested wiki page. Tests: `parse_proposal_accepts_conflict_signal`, `absorb_batch_marks_llm_conflict_in_inbox_without_writing_page`. |
 | 7 · 503 broker health | resolved-code | `/api/wiki/absorb` now preflights runtime auth for non-empty batches and returns `503 BROKER_UNAVAILABLE` before enqueueing background work when no Codex account / active providers fallback exists. Test: `cargo test -p desktop-server absorb_returns_503_when_provider_missing_for_non_empty_batch -- --nocapture`. |
 | 8 · AbsorbTrigger polling→SSE | resolved | `AbsorbEventsBridge` consumes `/api/wiki/absorb/events`, updates `useSkillStore`, invalidates wiki queries, and `AbsorbTriggerButton` no longer polls `last_absorb_at`. |
 | 10 · providers.json runtime | resolved-local | Local `.claw/providers.json` is present with active `deepseek`; live OpenAI-compatible smoke returned HTTP 200 with model echo `deepseek-v4-flash`. API keys remain local and are not documented here. |
