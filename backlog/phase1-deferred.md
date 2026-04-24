@@ -108,3 +108,46 @@ cross-linking, but none block a usable `/absorb` flow.
 | 7 | technical-design §2.1 503 | `desktop-server/src/lib.rs` absorb_handler | 🔵 blocked-on broker health API |
 
 Last updated: 2026-04-23 (end of Sprint 1-B.1 · Session 3).
+
+---
+
+## Phase 1 MVP · Accepted-with-deferred (2026-04-24)
+
+Follow-up from Sprint 1-C' verification — three UX / wiring gaps surfaced
+during the Phase 1 MVP E2E that **do not block §9.5 acceptance semantically**
+but are worth tracking so Phase 2 picks them up together.
+
+### 8 · UX · `AbsorbTriggerButton` 未消费 SSE `absorb_progress`
+
+| Field | Value |
+|---|---|
+| **现状** | `AbsorbTriggerButton.tsx:52-82` 跑 3s `setInterval` 轮询 `getWikiStats` 的 `last_absorb_at` 字段判定完成；`SkillProgressCard.tsx` 虽然订阅了 `useSkillStore.absorbProgress` 但 store 从未被更新（只有 start / complete / fail 三个 action） |
+| **后果** | ① 完成判定延迟 3s；② 进度卡 `0/0 0%` 全程静态；③ **broker 失败时 `last_absorb_at` 不推进 → UI 永远卡在"维护中..."**（在本次 E2E 里实际触发了此 bug）；④ Session 2 修的 `_rx drop bug` + SSE `AbsorbProgress` / `AbsorbComplete` 事件产物未被前端利用 |
+| **非-blocker 理由** | 按钮 POST → 202 / backend 管线正常 / 终端用户在有工作 broker 时能看到完成 toast（可能延迟） |
+| **Target** | 🟡 Phase 2 · 任意前端 sprint 顺手改（替换 polling 为 `EventSource('/api/desktop/sessions/{id}/events')` 订阅 `absorb_progress` + `absorb_complete`） |
+| **预估工作量** | S (~2h) |
+| **Audit ref** | Sprint 1-C' task 1.3 + task 2 E2E step 4 观察 |
+
+### 9 · UX · `AbsorbTriggerButton` reachability / 默认 UI 路径缺失
+
+| Field | Value |
+|---|---|
+| **现状** | `AbsorbTriggerButton` 仅在 `WikiFileTree.tsx:272` 被挂载 (`compact=true`)；而 `WikiFileTree` 进一步只被 `WikiTab.tsx:147` 使用。Phase 1 默认路由 `/wiki/*` 映射到 `KnowledgeHubPage`（pill-tabs · KnowledgePagesList）+ `/wiki/:slug` 映射到 `KnowledgeArticleView`。**两个默认路由都不挂 `WikiFileTree`** |
+| **后果** | §9.5 criterion 1「能手动触发 /absorb」在 UI 层 **不可达** —— 用户在 `/#/wiki` 或 `/#/wiki/:slug` 都找不到「开始维护」按钮。后端 `POST /api/wiki/absorb` 功能完整（Sprint 1-B 已验），是前端入口位点缺失 |
+| **非-blocker 理由** | 后端 API 层可达（curl 直接 POST 工作）；触发入口只是 UI 呈现问题 |
+| **Target** | 🟡 Phase 2 · 补入口（可选方案）：(a) 在 `KnowledgeHubPage` 的 "已整理的知识页面" header 旁加一个 `AbsorbTriggerButton compact=false`；或 (b) Dashboard quick-action 追加"维护"按钮；或 (c) 把 `WikiFileTree` 重新挂到 `/wiki/*` 布局作 side panel |
+| **预估工作量** | S (~1-2h) 加按钮到 `KnowledgeHubPage` header |
+| **Audit ref** | Sprint 1-C' task 2 E2E step 2 (button not visible) |
+
+### 10 · Dev env · deepseek broker 调用静默失败
+
+| Field | Value |
+|---|---|
+| **现状** | 在此工作站 `CLAWWIKI_HOME = C:\Users\111\AppData\Local\clawwiki`, providers.json 配 `deepseek / deepseek-chat / api.deepseek.com/v1`。触发 `{entry_ids:[12]}` absorb，200+ 秒后 `last_absorb_at` 仍不变、absorb-log 不新增。判定: `broker.chat_completion` 失败两次（retry once per §5.1 step 3d），entry 进 failed 计数但不写 log |
+| **后果** | Sprint 1-C' E2E step 5-6「等待 3-10 秒判定完成」「确认新增 3 条 wiki 页」在此 dev env 无法复现 |
+| **非-blocker 理由** | 后端失败路径正确（进 result.failed, emit AbsorbComplete{failed: 1} 按 Session 2 self-decision #2）；`absorb_batch` 不 hang；这是 dev env broker 鉴权/连接问题而非 Phase 1 代码问题 |
+| **Target** | 🔵 blocked-on 排查：(a) 检查 deepseek API key 有效性 / 额度 / 网络出口；或 (b) 临时切换到其他 OpenAiCompat provider；或 (c) 接入 Session 2 self-decision #1 的真实 broker 健康探针，令 absorb_handler 在 503 时短路不 spawn 任务 |
+| **预估工作量** | S (~15min 运维排查) 或 与 item 7 合并 |
+| **Audit ref** | Sprint 1-C' task 2 broker probe（2 次触发 → last_absorb_at 60s+ 未变） |
+
+Last updated: 2026-04-24 (Sprint 1-C' verification stop-report).
