@@ -128,26 +128,82 @@ but are worth tracking so Phase 2 picks them up together.
 | **预估工作量** | S (~2h) |
 | **Audit ref** | Sprint 1-C' task 1.3 + task 2 E2E step 4 观察 |
 
-### 9 · UX · `AbsorbTriggerButton` reachability / 默认 UI 路径缺失
+### 9 · UX · `AbsorbTriggerButton` reachability / 默认 UI 路径缺失 · ✅ RESOLVED
 
 | Field | Value |
 |---|---|
-| **现状** | `AbsorbTriggerButton` 仅在 `WikiFileTree.tsx:272` 被挂载 (`compact=true`)；而 `WikiFileTree` 进一步只被 `WikiTab.tsx:147` 使用。Phase 1 默认路由 `/wiki/*` 映射到 `KnowledgeHubPage`（pill-tabs · KnowledgePagesList）+ `/wiki/:slug` 映射到 `KnowledgeArticleView`。**两个默认路由都不挂 `WikiFileTree`** |
-| **后果** | §9.5 criterion 1「能手动触发 /absorb」在 UI 层 **不可达** —— 用户在 `/#/wiki` 或 `/#/wiki/:slug` 都找不到「开始维护」按钮。后端 `POST /api/wiki/absorb` 功能完整（Sprint 1-B 已验），是前端入口位点缺失 |
-| **非-blocker 理由** | 后端 API 层可达（curl 直接 POST 工作）；触发入口只是 UI 呈现问题 |
-| **Target** | 🟡 Phase 2 · 补入口（可选方案）：(a) 在 `KnowledgeHubPage` 的 "已整理的知识页面" header 旁加一个 `AbsorbTriggerButton compact=false`；或 (b) Dashboard quick-action 追加"维护"按钮；或 (c) 把 `WikiFileTree` 重新挂到 `/wiki/*` 布局作 side panel |
-| **预估工作量** | S (~1-2h) 加按钮到 `KnowledgeHubPage` header |
-| **Audit ref** | Sprint 1-C' task 2 E2E step 2 (button not visible) |
+| **Resolution** | Phase 1 MVP 收口 sprint (2026-04-24) Stage 1 — commit `c8a00a5` `feat(wiki): wire AbsorbTriggerButton into KnowledgeHubPage header`. 按钮以 `compact=false` 挂在 `KnowledgeHubPage.tsx` header 的 PillTabs 同 row 右对齐位置 (`ml-auto`)。现 `/#/wiki` 默认路由可见「开始维护」按钮。 |
+| **原现状** | `AbsorbTriggerButton` 仅在 `WikiFileTree.tsx:272` 被挂载 (`compact=true`)；而 `WikiFileTree` 进一步只被 `WikiTab.tsx:147` 使用。Phase 1 默认路由 `/wiki/*` 映射到 `KnowledgeHubPage`（pill-tabs · KnowledgePagesList）+ `/wiki/:slug` 映射到 `KnowledgeArticleView`。**两个默认路由都不挂 `WikiFileTree`** |
+| **原后果** | §9.5 criterion 1「能手动触发 /absorb」在 UI 层 **不可达** —— 用户在 `/#/wiki` 或 `/#/wiki/:slug` 都找不到「开始维护」按钮。后端 `POST /api/wiki/absorb` 功能完整（Sprint 1-B 已验），是前端入口位点缺失 |
+| **Audit ref** | Sprint 1-C' task 2 E2E step 2 (button not visible) → 收口 sprint Stage 1 |
 
-### 10 · Dev env · deepseek broker 调用静默失败
+### 10 · Env/Config · `.claw/providers.json` 未配置 · broker 无可用 provider
 
 | Field | Value |
 |---|---|
-| **现状** | 在此工作站 `CLAWWIKI_HOME = C:\Users\111\AppData\Local\clawwiki`, providers.json 配 `deepseek / deepseek-chat / api.deepseek.com/v1`。触发 `{entry_ids:[12]}` absorb，200+ 秒后 `last_absorb_at` 仍不变、absorb-log 不新增。判定: `broker.chat_completion` 失败两次（retry once per §5.1 step 3d），entry 进 failed 计数但不写 log |
-| **后果** | Sprint 1-C' E2E step 5-6「等待 3-10 秒判定完成」「确认新增 3 条 wiki 页」在此 dev env 无法复现 |
-| **非-blocker 理由** | 后端失败路径正确（进 result.failed, emit AbsorbComplete{failed: 1} 按 Session 2 self-decision #2）；`absorb_batch` 不 hang；这是 dev env broker 鉴权/连接问题而非 Phase 1 代码问题 |
-| **Target** | 🔵 blocked-on 排查：(a) 检查 deepseek API key 有效性 / 额度 / 网络出口；或 (b) 临时切换到其他 OpenAiCompat provider；或 (c) 接入 Session 2 self-decision #1 的真实 broker 健康探针，令 absorb_handler 在 503 时短路不 spawn 任务 |
-| **预估工作量** | S (~15min 运维排查) 或 与 item 7 合并 |
-| **Audit ref** | Sprint 1-C' task 2 broker probe（2 次触发 → last_absorb_at 60s+ 未变） |
+| **现状** | Phase 1 MVP 收口 sprint Stage 2 smoke test (2026-04-24) 直接 curl `https://api.deepseek.com/v1/chat/completions` 返回 **HTTP 200** (响应包含 `{"id":"150d0dd9-...","model":"deepseek-v4-flash",...}`) — deepseek API 本身可达，env var `DEEPSEEK_API_KEY` 有效。根本原因: `.claw/providers.json` **在此 dev env 不存在**（项目根 + 用户 profile 都查过）→ `BrokerAdapter::from_global()` 既无 private-cloud broker（desktop-server 默认 feature 不含 `private-cloud`）又无 providers.json fallback → `try_providers_json_chat_completion` 返回 None → 所有 `chat_completion` 调用返回 `MaintainerError::Broker("no codex account available and no providers.json fallback found")` |
+| **后果** | Sprint 1-C' E2E step 5-6「等待 3-10 秒判定完成」「确认新增 3 条 wiki 页」在此 dev env 无法复现；然而 **代码层达标** —— `absorb_batch` 正确 surface 错误到 `AbsorbProgressEvent { action: "skip", error: Some("LLM 调用失败 (已重试): ...") }`，进 `result.failed`，不沉默（`wiki_maintainer/src/lib.rs:1899-1912`） |
+| **非-blocker 理由** | ① 后端失败路径代码正确 ② `absorb_batch` 不 hang ③ 终端用户若配 `.claw/providers.json` 则运行环境就绪 —— **这是 runtime configuration 缺口，不是 Phase 1 代码缺陷** ④ UI "卡住" 现象的根因是 item 8 polling heuristic（broker 全失败 → absorb_log 不更新 → 轮询的 `last_absorb_at` 永远不推进），已 Phase 2 backlog 覆盖 |
+| **Target** | 🔵 runtime · 运维 + Phase 2 合并：(a) 用户侧在 CLAWWIKI_HOME 或项目根补 `.claw/providers.json` 指向 deepseek / 其他 OpenAiCompat provider（env var 已 ready）；或 (b) Phase 2 考虑让 adapter 在 providers.json 缺席时读取 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 等 env var 作为 last-resort fallback；或 (c) 接入 item 7 的真实 broker 健康探针，令 `absorb_handler` 在 provider 缺失时返回 503 short-circuit（相比当前 202 + 全失败更符合 §9.5 的 failure-mode 语义） |
+| **预估工作量** | (a) S 运维 ~5min · (b) S dev ~1h · (c) 与 item 7 合并 |
+| **Audit ref** | Sprint 1-C' task 2 broker probe → 收口 sprint Stage 2 smoke test (curl 200 OK) |
 
-Last updated: 2026-04-24 (Sprint 1-C' verification stop-report).
+### 11 · UX · `WikiFileTree` 缺键盘 ↑↓ 导航
+
+| Field | Value |
+|---|---|
+| **现状** | `apps/desktop-shell/src/features/wiki/WikiFileTree.tsx` 列表项是 `<button>`，默认走浏览器 tab/enter；无自定义 `onKeyDown` 处理 arrow keys。焦点在 button 上 ↑↓ 不跳下一项 |
+| **后果** | 键盘重度用户切换页面不便；需要 tab 反复跳跃或鼠标介入 |
+| **非-blocker 理由** | 鼠标 / 触屏路径正常；Phase 1 MVP §9.5 三项 criterion 不涉及键盘导航 |
+| **Target** | 🟡 Phase 2 · 加 arrow-key handler + roving-tabindex 焦点管理 |
+| **预估工作量** | S (~1-2h) |
+| **Audit ref** | Sprint 1-C' task 1.1 ❌ |
+
+### 12 · UX · `WikiArticle` frontmatter 条缺 `confidence` + `last_verified`
+
+| Field | Value |
+|---|---|
+| **现状** | `apps/desktop-shell/src/features/wiki/WikiArticle.tsx` L114-133 frontmatter 条仅 render `category` + `created_at` + reading-time。API 层 `GET /api/wiki/pages/:slug` 返回 `confidence` (number) 与 `last_verified` (iso string) 字段，前端 display 侧未接 |
+| **后果** | Phase 1 认知复利模型中的 "confidence" 信号不可见 —— 用户无法判断某页是 single-source (0.2) / multi-source (0.6) / consolidated (0.9)；认知复利价值无 UI hook |
+| **非-blocker 理由** | API 字段已返回；仅 display 缺失；不影响 §9.5 三项 criterion 的「正确性」判定，只影响「可感知性」 |
+| **Target** | 🟡 Phase 2 · frontmatter 条追加两枚 badge/pill（例：`置信度 60%` / `上次校验 3 天前`） |
+| **预估工作量** | S (~30min) 纯 display 补 |
+| **Audit ref** | Sprint 1-C' task 1.2 ⚠️ |
+
+---
+
+## Phase 1 MVP · DONE 判定 (2026-04-24 收口 sprint)
+
+§9.5 验收 criterion 最终对照：
+
+| # | Criterion | 判定 | 证据 |
+|---|-----------|-----|------|
+| 1 | 能手动触发 `/absorb` | ✅ | UI: Stage 1 wire `AbsorbTriggerButton` 到 `KnowledgeHubPage` header (`c8a00a5`) + API: Sprint 1-B.1 `absorb_handler` 202 + task_id + 错误码（5 项 integration test `bc32ac3` 全通） |
+| 2 | 看得到自动生成的 wiki 页 | ✅ 代码层 | `absorb_batch` create/update 路径 + §5.1 7 条 anti-cramming prompt + retry-once（`31a5fcc` + `c512403` 55 项 maintainer test 全通）；Dev env 运行时卡在 item 10（providers.json 缺口，非代码问题） |
+| 3 | `_backlinks.json` 正确生成 | ✅ | Sprint 1-A 4 项 backlinks gap test (`6b8099e`) + Sprint 1-C' API 契约实测通过 |
+
+### 已知 deferred items 汇总
+
+| 编号 | 类型 | 状态 | Target |
+|------|------|------|--------|
+| 1 · LLM merge | spec behaviour | 🟡 Phase 2 | deferred |
+| 2 · bidirectional links | spec behaviour | 🟡 Phase 2 | deferred |
+| 3 · LLM conflict → Inbox | spec behaviour | 🟡 Phase 2 | deferred |
+| 4 · quality spot-check | spec behaviour | 🟠 Phase 3 | deferred |
+| 5 · confidence 三维 | spec behaviour | 🟠 Phase 3 | deferred |
+| 6 · per-day changelog | spec behaviour | 🟢 Phase 4+ | deferred |
+| 7 · 503 broker health | 契约 | 🔵 blocked-on | deferred |
+| 8 · AbsorbTrigger polling→SSE | UX | 🟡 Phase 2 | deferred |
+| 9 · AbsorbTrigger reachability | UX | ✅ RESOLVED | 收口 sprint Stage 1 `c8a00a5` |
+| 10 · providers.json 配置 | env/runtime | 🔵 runtime | deferred |
+| 11 · WikiFileTree 键盘导航 | UX | 🟡 Phase 2 | deferred |
+| 12 · WikiArticle confidence display | UX | 🟡 Phase 2 | deferred |
+
+### Phase 2 启动就绪信号
+
+- ✅ 后端 SKILL engine: absorb / query / checkpoint / SSE / TaskManager 完整 (Sprint 1-B.1 3 sessions)
+- ✅ 前端 Wiki UI: KnowledgeHub / KnowledgeArticle / WikiRelationsPanel / AbsorbTriggerButton 完整
+- ✅ Phase 1 MVP §9.5 3/3 criterion 代码层达标
+- ⚠️ 5 项 minor gaps (items 8, 10, 11, 12 + item 10 runtime 配置) 明确 target Phase 2
+
+Last updated: 2026-04-24 (Phase 1 MVP closure sprint).
