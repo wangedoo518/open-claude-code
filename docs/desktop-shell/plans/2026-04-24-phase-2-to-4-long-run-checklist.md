@@ -112,10 +112,15 @@ than an application-code blocker.
   move desktop/ask session lifecycle, source binding, session SSE, compaction,
   and permission forwarding handlers into `handlers/desktop_sessions.rs` while
   keeping route names stable through crate re-exports.
+- [x] Rust server handler split fifth slice:
+  move desktop bootstrap/settings, scheduled/dispatch CRUD, attachments,
+  workspace skills, MCP debug, and permission-mode handlers into
+  `handlers/desktop_utilities.rs` while keeping route names stable through
+  crate re-exports.
 - [ ] Rust server handler split follow-up:
   continue moving handler DTOs and implementations out of `lib.rs` by domain;
-  suggested next slices are desktop settings/storage utility handlers, then
-  inbox/raw/wiki page CRUD handlers.
+  suggested next slices are WeChat account/Kefu handlers, desktop storage
+  utility handlers, then inbox/raw/wiki page CRUD handlers.
 - [x] Current-truth docs:
   refresh `docs/desktop-shell/architecture/overview.md` and `rust/README.md`
   whenever a slice lands.
@@ -164,5 +169,6 @@ than an application-code blocker.
 - [x] Then handler-body split second slice for query/absorb task handlers.
 - [x] Then handler-body split third slice for provider/runtime handlers.
 - [x] Then handler-body split fourth slice for desktop session handlers.
-- [ ] Next: continue handler-body split with desktop settings/storage utility
-  handlers, after Phase 2 closure remains green.
+- [x] Then handler-body split fifth slice for desktop utility handlers.
+- [ ] Next: continue handler-body split with WeChat account/Kefu handlers or
+  desktop storage utilities, after Phase 2 closure remains green.

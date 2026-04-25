@@ -61,7 +61,10 @@ This document answers: how `desktop-shell` is currently organized.
   absorb progress SSE, plus `handlers/provider_runtime.rs` for Codex
   runtime/auth and providers.json CRUD endpoints, plus
   `handlers/desktop_sessions.rs` for desktop/ask session lifecycle, source
-  binding, session SSE, compaction, and permission forwarding.
+  binding, session SSE, compaction, and permission forwarding, plus
+  `handlers/desktop_utilities.rs` for desktop bootstrap/settings,
+  scheduled/dispatch CRUD, attachments, skills, MCP debug, and permission-mode
+  endpoints.
 - `desktop-server/src/lib.rs` still owns shared `AppState`, common response
   types, and handler bodies that have not yet moved. New handler-body split
   work should add domain modules instead of growing `lib.rs`.

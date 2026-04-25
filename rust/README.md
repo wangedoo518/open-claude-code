@@ -43,8 +43,10 @@ Current upstream pin:
   SSE, plus `handlers/provider_runtime.rs` for Codex runtime/auth and
   providers.json CRUD endpoints, plus `handlers/desktop_sessions.rs` for
   desktop/ask session lifecycle, source binding, session SSE, compaction, and
-  permission forwarding. Remaining handler bodies still live in `lib.rs` until
-  their domain slices move.
+  permission forwarding, plus `handlers/desktop_utilities.rs` for desktop
+  bootstrap/settings, scheduled/dispatch CRUD, attachments, skills, MCP debug,
+  and permission-mode endpoints. Remaining handler bodies still live in
+  `lib.rs` until their domain slices move.
 
 ## Build and verify
 
