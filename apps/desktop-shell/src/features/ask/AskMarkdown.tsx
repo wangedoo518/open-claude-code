@@ -22,6 +22,7 @@
 
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { AskCodeBlock } from "./AskCodeBlock";
 
 export interface AskMarkdownProps {
@@ -55,14 +56,48 @@ function stabilizeOpenFence(content: string): string {
   return content + (content.endsWith("\n") ? "```" : "\n```");
 }
 
+/**
+ * Some model/demo output arrives as a "compressed" table:
+ *   | A | B | |---|---| | x | y |
+ * GFM can render tables, but only when each row is on its own line.
+ * Normalize only lines that contain a table separator, and never touch
+ * fenced code blocks, so ordinary prose and code stay byte-for-byte.
+ */
+function normalizeCollapsedTables(content: string): string {
+  const lines = content.split("\n");
+  let inFence = false;
+
+  return lines
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence || !/\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?/.test(line)) {
+        return line;
+      }
+
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      const expanded = line.trim().replace(/\|\s+(?=\|)/g, "|\n");
+      return indent + expanded.replace(/\n/g, `\n${indent}`);
+    })
+    .join("\n");
+}
+
+const remarkPlugins = [remarkGfm];
+
 export const AskMarkdown = memo(function AskMarkdown({
   content,
   streaming = false,
 }: AskMarkdownProps) {
-  const normalized = streaming ? stabilizeOpenFence(content) : content;
+  const normalizedTables = normalizeCollapsedTables(content);
+  const normalized = streaming
+    ? stabilizeOpenFence(normalizedTables)
+    : normalizedTables;
 
   return (
     <ReactMarkdown
+      remarkPlugins={remarkPlugins}
       components={{
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || "");
@@ -80,7 +115,7 @@ export const AskMarkdown = memo(function AskMarkdown({
 
           return (
             <code
-              className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[13px] text-foreground"
+              className="ask-inline-code rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[13px] text-foreground"
               {...props}
             >
               {children}
@@ -125,15 +160,15 @@ export const AskMarkdown = memo(function AskMarkdown({
         },
         blockquote({ children }) {
           return (
-            <blockquote className="mb-2 border-l-[3px] border-muted-foreground/30 pl-3 italic text-muted-foreground last:mb-0">
+            <blockquote className="ask-blockquote mb-2 border-l-[3px] border-muted-foreground/30 pl-3 italic text-muted-foreground last:mb-0">
               {children}
             </blockquote>
           );
         },
         table({ children }) {
           return (
-            <div className="mb-2 overflow-x-auto last:mb-0">
-              <table className="w-full border-collapse text-body-sm">
+            <div className="ask-table-wrap mb-2 overflow-x-auto last:mb-0">
+              <table className="ask-markdown-table w-full border-collapse text-body-sm">
                 {children}
               </table>
             </div>

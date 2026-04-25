@@ -7,6 +7,7 @@ import {
 } from "./clawwiki-routes";
 import { useAskSessionContext } from "@/features/ask/AskSessionContext";
 import { SessionSidebar } from "@/features/ask/SessionSidebar";
+import { PanelLeftOpen } from "lucide-react";
 
 /**
  * AppSidebar — DS1.1 compact rail.
@@ -146,20 +147,51 @@ function AskSecondaryColumn() {
   const { sessionId, onSwitchSession, onResetSession } =
     useAskSessionContext();
   const navigate = useNavigate();
+  const showSessionSidebar = useSettingsStore((s) => s.showSessionSidebar);
+  const setShowSessionSidebar = useSettingsStore((s) => s.setShowSessionSidebar);
 
   return (
-    <div className="ds-rail-secondary">
-      <SessionSidebar
-        activeSessionId={sessionId}
-        onSelectSession={(id) => {
-          onSwitchSession(id);
-          navigate("/ask");
-        }}
-        onNewSession={() => {
-          onResetSession();
-          navigate("/ask");
-        }}
-      />
+    <div
+      className={`ds-rail-secondary ${
+        showSessionSidebar
+          ? "ds-rail-secondary--expanded"
+          : "ds-rail-secondary--collapsed"
+      }`}
+      data-collapsed={!showSessionSidebar || undefined}
+    >
+      <div
+        className="ds-rail-secondary-content"
+        aria-hidden={!showSessionSidebar}
+        inert={!showSessionSidebar}
+      >
+        <SessionSidebar
+          activeSessionId={sessionId}
+          onSelectSession={(id) => {
+            onSwitchSession(id);
+            navigate("/ask");
+          }}
+          onNewSession={() => {
+            onResetSession();
+            navigate("/ask");
+          }}
+          onToggleCollapse={() => setShowSessionSidebar(false)}
+        />
+      </div>
+      <div
+        className="ds-rail-secondary-restore"
+        aria-hidden={showSessionSidebar}
+      >
+        <button
+          type="button"
+          onClick={() => setShowSessionSidebar(true)}
+          className="ds-rail-secondary-toggle"
+          title="展开对话历史"
+          aria-label="展开对话历史"
+          tabIndex={showSessionSidebar ? -1 : 0}
+        >
+          <PanelLeftOpen className="size-4" />
+        </button>
+      </div>
     </div>
   );
 }

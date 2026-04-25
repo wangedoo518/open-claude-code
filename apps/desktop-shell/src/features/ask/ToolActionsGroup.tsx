@@ -1,12 +1,12 @@
 /**
  * ToolActionsGroup — renders a cluster of consecutive tool_use + tool_result
- * messages as a collapsible card with a summary header.
+ * messages as a compact work-log section with a summary header.
  *
  * Architecture borrowed from CodePilot's tool-actions-group.tsx:
  *   - Auto-expands while streaming, auto-collapses when done.
  *   - Manual toggle overrides auto-behavior.
  *   - Collapsed groups render NO children (lazy rendering for perf).
- *   - Context-groups consecutive Read/Grep/Glob under "Gathered context".
+ *   - Context-groups consecutive Read/Grep/Glob under a work-log label.
  */
 
 import { memo, useState, useEffect, useRef, useMemo } from "react";
@@ -25,6 +25,21 @@ import type { ConversationMessage } from "@/features/common/message-types";
 interface ToolActionsGroupProps {
   messages: ConversationMessage[];
   isStreaming?: boolean;
+}
+
+function workVerb(toolName: string): string {
+  const lower = toolName.toLowerCase();
+  if (lower === "read" || lower.includes("read")) return "读取文件";
+  if (lower === "grep" || lower.includes("grep")) return "搜索代码";
+  if (lower === "glob" || lower.includes("glob")) return "扫描文件";
+  if (lower === "bash" || lower.includes("shell") || lower === "powershell")
+    return "执行命令";
+  if (lower.includes("web")) return "访问网页";
+  if (lower.includes("edit")) return "编辑文件";
+  if (lower.includes("write")) return "写入文件";
+  if (lower.includes("todo")) return "更新任务";
+  if (lower === "agent") return "委托子任务";
+  return "调用工具";
 }
 
 /** Compute summary stats from a tool group. */
@@ -86,36 +101,35 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
   const firstToolName = stats.toolNames[0] ?? "Tool";
   const { icon: FirstIcon, color: firstColor } = getToolMeta(firstToolName);
 
-  // Build status line
-  const statusParts: string[] = [];
-  if (stats.running > 0) statusParts.push(`${stats.running} running`);
-  if (stats.completed > 0) statusParts.push(`${stats.completed - stats.errors} done`);
-  if (stats.errors > 0) statusParts.push(`${stats.errors} failed`);
-
   const label = stats.isContextGroup
-    ? "Gathered context"
+    ? "收集上下文"
     : stats.toolCalls === 1
-      ? getToolMeta(firstToolName).label
-      : `${stats.toolCalls} tool calls`;
+      ? workVerb(firstToolName)
+      : `${stats.toolCalls} 步工具工作`;
 
   return (
-    <div className="ask-tool-group rounded-lg border border-border/40 bg-card/50">
+    <div className="ask-tool-group">
       {/* Header */}
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-body-sm transition-colors hover:bg-accent/50"
+        className="ask-tool-group-header"
         onClick={handleToggle}
+        aria-expanded={expanded}
       >
         {expanded ? (
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground/75" />
         ) : (
-          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground/75" />
         )}
+        <span
+          className={isStreaming ? "ask-work-dot ask-work-dot--active" : "ask-work-dot"}
+          aria-hidden
+        />
         <FirstIcon className="size-3.5 shrink-0" style={{ color: firstColor }} />
-        <span className="font-medium text-foreground">{label}</span>
+        <span className="ask-tool-group-title font-medium text-foreground">{label}</span>
 
         {/* Status badges */}
-        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="ask-tool-group-status ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
           {stats.running > 0 && (
             <span className="flex items-center gap-0.5">
               <Loader2 className="size-3 animate-spin" style={{ color: "var(--deeptutor-primary, var(--claude-orange))" }} />
@@ -139,7 +153,7 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
 
       {/* Lazy-rendered children */}
       {expanded && (
-        <div className="border-t border-border/30 px-1 py-1">
+        <div className="ask-tool-group-body">
           {messages.map((msg) => (
             <Message key={msg.id} message={msg} />
           ))}

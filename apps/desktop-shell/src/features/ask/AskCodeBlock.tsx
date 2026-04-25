@@ -49,9 +49,9 @@ export const AskCodeBlock = memo(function AskCodeBlock({
   };
 
   return (
-    <div className="group/code my-3 overflow-hidden rounded-lg border border-border/50 bg-[#1f2937]">
+    <div className="ask-code-block group/code my-3 overflow-hidden rounded-lg border border-border/50 bg-[#1f2937]">
       {/* Language header bar */}
-      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+      <div className="ask-code-block-header flex items-center justify-between border-b border-white/10 px-3 py-2">
         <div className="flex items-center gap-2">
           {streaming && (
             <span

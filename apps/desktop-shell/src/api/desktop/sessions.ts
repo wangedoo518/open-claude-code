@@ -90,6 +90,58 @@ export async function deleteSession(
   );
 }
 
+export interface DeleteSessionsResult {
+  deleted_ids: string[];
+  deleted_count: number;
+  failed: Array<{ id: string; error: string }>;
+  failed_count: number;
+}
+
+/**
+ * Batch-delete sessions using the existing single-session endpoint.
+ * Keeping this client-side avoids widening the Rust API surface for a
+ * pure UX affordance, while still giving the UI a partial-success report.
+ */
+export async function deleteSessions(
+  sessionIds: string[],
+): Promise<DeleteSessionsResult> {
+  const uniqueIds = Array.from(new Set(sessionIds.filter(Boolean)));
+  const results = await Promise.all(
+    uniqueIds.map(async (id) => {
+      try {
+        const result = await deleteSession(id);
+        if (!result.deleted) {
+          return { id, deleted: false, error: "Session was not deleted" };
+        }
+        return { id, deleted: true, error: null };
+      } catch (err) {
+        return {
+          id,
+          deleted: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
+
+  const deleted_ids = results
+    .filter((result) => result.deleted)
+    .map((result) => result.id);
+  const failed = results
+    .filter((result) => !result.deleted)
+    .map((result) => ({
+      id: result.id,
+      error: result.error ?? "Unknown error",
+    }));
+
+  return {
+    deleted_ids,
+    deleted_count: deleted_ids.length,
+    failed,
+    failed_count: failed.length,
+  };
+}
+
 /**
  * Delete every empty (zero-message) idle session in one call. Pass
  * `except` to preserve the session the user is currently staring at.

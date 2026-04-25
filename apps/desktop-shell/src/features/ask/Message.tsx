@@ -18,8 +18,6 @@ import {
   Copy,
   Check,
   Brain,
-  User,
-  Bot,
   File,
   Folder,
   Globe,
@@ -94,9 +92,12 @@ function UserMessage({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="group/user flex items-start justify-end gap-2">
-      <div className="flex max-w-[75%] flex-col items-end gap-1">
-        <div className="whitespace-pre-wrap rounded-2xl bg-foreground px-4 py-2.5 text-[14px] leading-relaxed text-background" style={{ overflowWrap: "break-word", wordBreak: "break-word" }}>
+    <div className="ask-turn ask-turn-user group/user">
+      <div className="flex max-w-[min(76%,680px)] flex-col items-end gap-1.5">
+        <div
+          className="ask-user-bubble whitespace-pre-wrap"
+          style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+        >
           {content}
         </div>
         <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
@@ -112,10 +113,6 @@ function UserMessage({ content }: { content: string }) {
             {copied ? "已复制" : "复制"}
           </button>
         </div>
-      </div>
-      {/* User avatar */}
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
-        <User className="size-3.5 text-muted-foreground" />
       </div>
     </div>
   );
@@ -145,61 +142,57 @@ function AssistantMessage({
   const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
   return (
-    <div className="flex items-start gap-2.5 pb-3 animate-fade-in">
-      {/* Claw avatar */}
-      <div
-        className="flex size-7 shrink-0 items-center justify-center rounded-full"
-        style={{ backgroundColor: "var(--deeptutor-primary, var(--claude-orange))" }}
-      >
-        <Bot className="size-3.5 text-white" />
-      </div>
-
-      <div className="min-w-0 flex-1">
-        {/* Input tokens label — next to avatar, like "Assistant · 输入 7.3k" */}
-        {usage && (
-          <div className="mb-1 text-[11px] text-muted-foreground/40">
-            Assistant · 输入 {fmt(usage.inputTokens)}
+    <div className="ask-turn ask-turn-assistant animate-fade-in">
+      <div className="ask-transcript-shell">
+        <div className="ask-transcript-rail" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="ask-transcript-label">
+            <span>Assistant</span>
+            {usage && <span>输入 {fmt(usage.inputTokens)}</span>}
           </div>
-        )}
 
-        {/* A1 — context-basis explainer chip (rendered ABOVE markdown body).
-            Hidden for follow_up turns by default; source_first/combine show. */}
-        {contextBasis != null && <ContextBasisLabel basis={contextBasis} />}
+          {/* A1 — context-basis explainer chip (rendered ABOVE markdown body).
+              Hidden for follow_up turns by default; source_first/combine show. */}
+          {contextBasis != null && <ContextBasisLabel basis={contextBasis} />}
 
-        {/* A2/A3 — "Used sources" citation strip directly below the basis
-            label. A2: reads bound_source from basis; falls back to a generic
-            "本链接" badge when source_included=true without a discrete ref.
-            A3: differentiates auto_bound turn-local sources (blue tone +
-            inline "📌 固定到会话" action wired to `onPromoteToSession`).
-            Renders null when no source was used. */}
-        {contextBasis != null && (
-          <UsedSourcesBar
-            basis={contextBasis}
-            onPromoteToSession={onPromoteToSession}
-          />
-        )}
-
-        {/* Message body — 15px, generous line height, break long URLs */}
-        <div className="overflow-hidden text-[15px] leading-[1.8] text-foreground" style={{ overflowWrap: "break-word", wordBreak: "break-word" }}>
-          <AskMarkdown content={content} />
-        </div>
-
-        {/* Action row: Copy + output tokens */}
-        <div className="mt-2 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 text-[12px] text-muted-foreground/50 transition-colors hover:text-foreground"
-          >
-            {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-            {copied ? "已复制" : "复制"}
-          </button>
-
-          {usage && usage.outputTokens > 0 && (
-            <div className="ml-auto text-[11px] text-muted-foreground/40">
-              输出 {fmt(usage.outputTokens)}
-            </div>
+          {/* A2/A3 — "Used sources" citation strip directly below the basis
+              label. A2: reads bound_source from basis; falls back to a generic
+              "本链接" badge when source_included=true without a discrete ref.
+              A3: differentiates auto_bound turn-local sources (blue tone +
+              inline "📌 固定到会话" action wired to `onPromoteToSession`).
+              Renders null when no source was used. */}
+          {contextBasis != null && (
+            <UsedSourcesBar
+              basis={contextBasis}
+              onPromoteToSession={onPromoteToSession}
+            />
           )}
+
+          {/* Message body — transcript prose, no assistant avatar bubble. */}
+          <div
+            className="ask-assistant-prose overflow-hidden text-foreground"
+            style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+          >
+            <AskMarkdown content={content} />
+          </div>
+
+          {/* Action row: Copy + output tokens */}
+          <div className="ask-transcript-actions">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1 transition-colors hover:text-foreground"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+              {copied ? "已复制" : "复制"}
+            </button>
+
+            {usage && usage.outputTokens > 0 && (
+              <div className="ml-auto">
+                输出 {fmt(usage.outputTokens)}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -213,21 +206,21 @@ function SystemMessage({ content }: { content: string }) {
   const timeStr = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
-    <div className="flex justify-center">
+    <div className="ask-system-note">
       <button
-        className="flex items-center gap-2 rounded-full border border-border/20 px-3 py-1 text-[11px] text-muted-foreground/60 transition-colors hover:bg-muted/20"
+        className="flex max-w-full items-center gap-2 rounded-full border border-border/20 px-3 py-1 text-[11px] text-muted-foreground/60 transition-colors hover:bg-muted/20"
         onClick={() => setExpanded(!expanded)}
       >
         {expanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />}
-        <span>── 系统 · {timeStr} ──</span>
+        <span className="shrink-0">系统 · {timeStr}</span>
         {!expanded && (
-          <span className="flex-1 truncate text-left opacity-60">
+          <span className="min-w-0 flex-1 truncate text-left opacity-60">
             {content.slice(0, 80)}
           </span>
         )}
       </button>
       {expanded && (
-        <div className="mx-auto mt-1 max-w-lg rounded-lg border border-border/20 bg-muted/10 p-3">
+        <div className="mt-1 max-w-lg rounded-lg border border-border/20 bg-muted/10 p-3">
           <pre className="whitespace-pre-wrap text-center font-mono text-[11px] text-muted-foreground/60">
             {content}
           </pre>
@@ -241,17 +234,17 @@ function SystemMessage({ content }: { content: string }) {
 
 function ToolStatusBadge({ status }: { status: "pending" | "running" | "completed" | "error" }) {
   const styles = {
-    pending: "border-[color:var(--deeptutor-warn)]/30 bg-[color:var(--deeptutor-warn)]/10 text-[color:var(--deeptutor-warn)]",
-    running: "border-[color:var(--deeptutor-primary)]/30 bg-[color:var(--deeptutor-primary)]/10 text-[color:var(--deeptutor-primary)]",
-    completed: "border-[color:var(--color-success)]/30 bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]",
-    error: "border-[color:var(--color-error)]/30 bg-[color:var(--color-error)]/10 text-[color:var(--color-error)]",
+    pending: "text-[color:var(--deeptutor-warn)]",
+    running: "text-[color:var(--deeptutor-primary)]",
+    completed: "text-[color:var(--color-success)]",
+    error: "text-[color:var(--color-error)]",
   };
   const labels = { pending: "等待中", running: "执行中", completed: "完成", error: "出错" };
 
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium", styles[status])}>
+    <span className={cn("ask-tool-status", styles[status])}>
       {status === "running" && (
-        <span className="inline-block size-2.5 animate-spin rounded-full border border-current border-t-transparent" />
+        <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
       )}
       {labels[status]}
     </span>
@@ -305,29 +298,28 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
   }, [parsedInput, toolInput]);
 
   return (
-    <div>
+    <div className="ask-tool-log">
       <button
-        className="flex w-full items-center gap-2 rounded-lg border border-border/40 px-3 py-2 text-body-sm transition-colors hover:bg-accent/50"
-        style={{ backgroundColor: "var(--color-msg-bash-bg, var(--color-secondary))" }}
+        className="ask-tool-row ask-tool-row--running"
         onClick={() => setExpanded(!expanded)}
       >
         {expanded ? (
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground/70" />
         ) : (
-          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground/70" />
         )}
         <ToolIcon className="size-3.5 shrink-0" style={{ color }} />
-        <span className="font-medium" style={{ color }}>{label}</span>
+        <span className="ask-tool-name" style={{ color }}>{label}</span>
         <ToolStatusBadge status="running" />
         {!expanded && inputPreview && (
-          <span className="flex-1 truncate text-left font-mono text-[11px] text-muted-foreground">
+          <span className="ask-tool-preview">
             {inputPreview}
           </span>
         )}
       </button>
       {/* Running output placeholder for Bash tools */}
       {!expanded && toolName.toLowerCase() === "bash" && parsedInput && "command" in parsedInput && (
-        <div className="mt-0.5 rounded-b-lg border border-t-0 border-border/40 bg-muted/30 px-3 py-2 font-mono text-[11px] text-muted-foreground/60">
+        <div className="ask-tool-detail px-3 py-2 font-mono text-[11px] text-muted-foreground/60">
           <div className="text-foreground/50">$ {String(parsedInput.command).slice(0, 80)}</div>
           <div className="mt-1 flex items-center gap-1.5">
             <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
@@ -336,10 +328,7 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
         </div>
       )}
       {expanded && (
-        <div
-          className="mt-0.5 overflow-hidden rounded-b-lg border border-t-0 border-border/40"
-          style={{ backgroundColor: "var(--color-msg-bash-bg, var(--color-secondary))" }}
-        >
+        <div className="ask-tool-detail overflow-hidden">
           {parsedInput ? (
             <StructuredToolInput params={parsedInput} />
           ) : (
@@ -357,22 +346,22 @@ function ToolUseMessage({ message }: { message: ConversationMessage }) {
 
 function StructuredToolInput({ params }: { params: Record<string, unknown> }) {
   return (
-    <div className="divide-y divide-border/30">
+    <div className="divide-y divide-border/20">
       {Object.entries(params).map(([key, value]) => {
         const strValue = typeof value === "string" ? value : JSON.stringify(value, null, 2);
         const isLong = strValue.length > 120;
 
         return (
-          <div key={key} className="flex gap-2 px-3 py-1.5">
-            <span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wider text-muted-foreground">
+          <div key={key} className="flex gap-3 px-3 py-1.5">
+            <span className="w-24 shrink-0 truncate font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
               {key}
             </span>
             {isLong ? (
-              <pre className="flex-1 overflow-x-auto whitespace-pre-wrap font-mono text-label text-foreground/80">
+              <pre className="flex-1 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/80">
                 {strValue}
               </pre>
             ) : (
-              <span className="flex-1 truncate font-mono text-label text-foreground/80">
+              <span className="flex-1 truncate font-mono text-[11px] text-foreground/80">
                 {strValue}
               </span>
             )}
@@ -401,13 +390,13 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
   const { icon: ToolIcon, color } = getToolMeta(toolName);
 
   return (
-    <div>
+    <div className="ask-tool-log">
       <button
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-body-sm transition-colors",
+          "ask-tool-row",
           isError
-            ? "border-[color:var(--color-error)]/30 bg-[color:var(--color-error)]/5 hover:bg-[color:var(--color-error)]/10"
-            : "border-[color:var(--color-success)]/20 bg-[color:var(--color-success)]/5 hover:bg-[color:var(--color-success)]/10"
+            ? "ask-tool-row--error"
+            : "ask-tool-row--completed"
         )}
         onClick={() => setExpanded(!expanded)}
       >
@@ -421,26 +410,23 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
         ) : (
           <ToolIcon className="size-3.5 shrink-0" style={{ color }} />
         )}
-        <span className="font-medium">{toolName}</span>
+        <span className="ask-tool-name">{toolName}</span>
         <ToolStatusBadge status={isError ? "error" : "completed"} />
         {!expanded && (
           <>
             {isLong && (
-              <span className="rounded bg-muted/50 px-1 py-0.5 text-[10px] text-muted-foreground">
+              <span className="rounded bg-muted/50 px-1 py-0.5 text-[10px] text-muted-foreground/70">
                 {lineCount} 行
               </span>
             )}
-            <span className="flex-1 truncate text-left font-mono text-[11px] text-muted-foreground">
+            <span className="ask-tool-preview">
               {lines[0]?.slice(0, 80)}
             </span>
           </>
         )}
       </button>
       {expanded && (
-        <div
-          className="mt-0.5 max-h-[400px] overflow-auto rounded-b-lg border border-t-0 border-border/40"
-          style={{ backgroundColor: "var(--color-msg-bash-bg, var(--color-secondary))" }}
-        >
+        <div className="ask-tool-detail max-h-[400px] overflow-auto">
           <ToolResultContent toolName={toolName} output={output} isDiff={isDiff} isError={isError} />
         </div>
       )}
@@ -495,7 +481,7 @@ function ToolResultContent({
 
   // Default
   return (
-    <pre className="whitespace-pre-wrap p-3 font-mono text-label leading-[1.6] text-foreground/80">
+    <pre className="whitespace-pre-wrap p-3 font-mono text-[11px] leading-[1.65] text-foreground/80">
       {output}
     </pre>
   );
@@ -514,25 +500,22 @@ function GlobResult({ output }: { output: string }) {
         const dir = file.slice(0, file.length - name.length);
 
         return (
-          <div
-            key={i}
-            className="flex items-center gap-2 px-3 py-1"
-          >
+          <div key={i} className="flex items-center gap-2 px-3 py-1">
             {isDir ? (
               <Folder className="size-3 shrink-0" style={{ color: "var(--color-warning)" }} />
             ) : (
               <File className="size-3 shrink-0 text-muted-foreground" />
             )}
-            <span className="font-mono text-label text-muted-foreground/60">
+            <span className="font-mono text-[11px] text-muted-foreground/60">
               {dir}
             </span>
-            <span className="font-mono text-label text-foreground/80">
+            <span className="font-mono text-[11px] text-foreground/80">
               {name}
             </span>
           </div>
         );
       })}
-      <div className="px-3 py-1 text-caption text-muted-foreground">
+      <div className="px-3 py-1 text-[11px] text-muted-foreground">
         {files.length} 个文件匹配
       </div>
     </div>
@@ -545,7 +528,7 @@ function GrepResult({ output }: { output: string }) {
   const lines = output.split("\n").filter((l) => l.trim());
 
   return (
-    <pre className="p-3 font-mono text-label leading-[1.6]">
+    <pre className="p-3 font-mono text-[11px] leading-[1.65]">
       {lines.map((line, i) => {
         // File path headers (e.g. "src/main.rs:42:")
         const hasFilePrefix = /^[^\s].*:\d+[:-]/.test(line);
@@ -575,7 +558,7 @@ function GrepResult({ output }: { output: string }) {
           </div>
         );
       })}
-      <div className="mt-1 border-t border-border/20 pt-1 text-caption text-muted-foreground">
+      <div className="mt-1 border-t border-border/20 pt-1 text-[11px] text-muted-foreground">
         {lines.length} 行
       </div>
     </pre>
@@ -587,13 +570,13 @@ function GrepResult({ output }: { output: string }) {
 function FileOpResult({ output, isError }: { output: string; isError: boolean }) {
   return (
     <div className="p-3">
-      <div className="flex items-center gap-2 text-label">
+      <div className="flex items-center gap-2 text-[11px]">
         {isError ? (
           <AlertCircle className="size-3.5" style={{ color: "var(--color-error)" }} />
         ) : (
           <CheckCircle2 className="size-3.5" style={{ color: "var(--color-success)" }} />
         )}
-        <pre className="whitespace-pre-wrap font-mono text-label leading-[1.6] text-foreground/80">
+        <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.65] text-foreground/80">
           {output}
         </pre>
       </div>
@@ -606,11 +589,11 @@ function FileOpResult({ output, isError }: { output: string; isError: boolean })
 function AgentResult({ output }: { output: string }) {
   return (
     <div className="p-3">
-      <div className="mb-2 flex items-center gap-1.5 text-caption font-medium" style={{ color: "var(--agent-purple)" }}>
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium" style={{ color: "var(--agent-purple)" }}>
         <Brain className="size-3" />
         <span>子代理结果</span>
       </div>
-      <pre className="whitespace-pre-wrap font-mono text-label leading-[1.6] text-foreground/80">
+      <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.65] text-foreground/80">
         {output}
       </pre>
     </div>
@@ -629,16 +612,16 @@ function WebResult({ output, isSearch }: { output: string; isSearch: boolean }) 
       {urlLine && (
         <div className="mb-2 flex items-center gap-1.5 rounded-md bg-muted/30 px-2 py-1">
           <Globe className="size-3 shrink-0" style={{ color: "var(--claude-blue)" }} />
-          <span className="flex-1 truncate font-mono text-label text-foreground/70">
+          <span className="flex-1 truncate font-mono text-[11px] text-foreground/70">
             {urlLine}
           </span>
           <ExternalLink className="size-3 shrink-0 text-muted-foreground" />
         </div>
       )}
-      <div className="mb-1 text-caption font-medium text-muted-foreground">
+      <div className="mb-1 text-[11px] font-medium text-muted-foreground">
         {isSearch ? "搜索结果" : "抓取内容"}
       </div>
-      <pre className="whitespace-pre-wrap font-mono text-label leading-[1.6] text-foreground/80">
+      <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.65] text-foreground/80">
         {urlLine ? lines.filter((l) => l !== urlLine).join("\n") : output}
       </pre>
     </div>
@@ -649,7 +632,7 @@ function WebResult({ output, isSearch }: { output: string; isSearch: boolean }) 
 
 function DiffDisplay({ content }: { content: string }) {
   return (
-    <pre className="p-3 font-mono text-label leading-[1.6]">
+    <pre className="p-3 font-mono text-[11px] leading-[1.65]">
       {content.split("\n").map((line, i) => {
         let lineClass = "text-foreground/80";
         if (line.startsWith("+") && !line.startsWith("+++")) {
@@ -696,7 +679,7 @@ function ErrorMessage({ content }: { content: string }) {
   }
   return (
     <div
-      className="flex items-start gap-2 rounded-lg border px-3 py-2"
+      className="ask-error-note"
       style={{
         borderColor: "var(--deeptutor-danger, var(--color-error))",
         backgroundColor: "var(--deeptutor-danger-soft, color-mix(in srgb, var(--color-error) 5%, transparent))",
@@ -799,11 +782,11 @@ function TodoMessage({ message }: { message: ConversationMessage }) {
   }
 
   return (
-    <div className="rounded-lg border border-[color:var(--color-terminal-tool)]/20 bg-[color:var(--color-terminal-tool)]/5 p-3">
-      <div className="mb-2 flex items-center gap-2 text-body font-medium">
+    <div className="ask-todo-log">
+      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
         <CheckCircle2 className="size-4" style={{ color: "var(--color-terminal-tool)" }} />
         <span>任务列表</span>
-        <span className="ml-auto rounded bg-muted/50 px-1.5 py-0.5 text-caption text-muted-foreground">
+        <span className="ml-auto rounded bg-muted/50 px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {todos.filter((t) => t.status === "completed").length}/{todos.length}
         </span>
       </div>
@@ -823,7 +806,7 @@ function TodoMessage({ message }: { message: ConversationMessage }) {
             </span>
             <span
               className={cn(
-                "text-body-sm",
+                "text-sm",
                 todo.status === "completed" && "text-muted-foreground line-through",
                 todo.status === "in_progress" && "font-medium",
               )}

@@ -51,6 +51,13 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import type { ConversationMessage } from "@/features/common/message-types";
 import { MOCK_DEMO_MESSAGES } from "./mockDemoMessages";
+import {
+  REPLAY_PROFILES,
+  createStreamingReplayRun,
+  nextReplayOffset,
+  type ReplayProfileId,
+  type StreamingReplayRun,
+} from "./streamingReplayHarness";
 import { useAskUiStore } from "@/state/ask-ui-store";
 import { formatIngestError } from "@/lib/ingest/format-error";
 import { FailureBanner } from "@/components/ui/failure-banner";
@@ -59,6 +66,15 @@ import {
   type AskErrorClassification,
 } from "./ask-error-classifier";
 import { useNavigate } from "react-router-dom";
+
+type ReplayPhase = "idle" | "streaming" | "handoff" | "complete";
+
+interface StreamingReplayState {
+  run: StreamingReplayRun | null;
+  phase: ReplayPhase;
+  content: string;
+  offset: number;
+}
 
 /** Pull the optional `enrich_status` off a session detail. Returns
  * `undefined` when the session object isn't loaded yet, `null` when
@@ -232,6 +248,113 @@ export function AskWorkbench({
   const setShowDemo = useAskUiStore((s) => s.setShowDemo);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const replayTimerRef = useRef<number | null>(null);
+  const replayHandoffTimerRef = useRef<number | null>(null);
+  const [streamingReplay, setStreamingReplay] =
+    useState<StreamingReplayState>({
+      run: null,
+      phase: "idle",
+      content: "",
+      offset: 0,
+    });
+
+  const clearReplayTimers = useCallback(() => {
+    if (replayTimerRef.current !== null) {
+      window.clearTimeout(replayTimerRef.current);
+      replayTimerRef.current = null;
+    }
+    if (replayHandoffTimerRef.current !== null) {
+      window.clearTimeout(replayHandoffTimerRef.current);
+      replayHandoffTimerRef.current = null;
+    }
+  }, []);
+
+  const stopStreamingReplay = useCallback(() => {
+    clearReplayTimers();
+    setStreamingReplay({
+      run: null,
+      phase: "idle",
+      content: "",
+      offset: 0,
+    });
+  }, [clearReplayTimers]);
+
+  const startStreamingReplay = useCallback(
+    (profileId: ReplayProfileId) => {
+      clearReplayTimers();
+      const run = createStreamingReplayRun(profileId);
+      let stepIndex = 0;
+
+      setShowDemo(true);
+      setStreamingReplay({
+        run,
+        phase: "streaming",
+        content: "",
+        offset: 0,
+      });
+
+      const scheduleNext = (offset: number) => {
+        replayTimerRef.current = window.setTimeout(() => {
+          replayTimerRef.current = null;
+          const nextOffset = nextReplayOffset(run, offset, stepIndex);
+          stepIndex += 1;
+
+          setStreamingReplay((prev) =>
+            prev.run?.id === run.id
+              ? {
+                  ...prev,
+                  content: run.content.slice(0, nextOffset),
+                  offset: nextOffset,
+                }
+              : prev,
+          );
+
+          if (nextOffset < run.totalChars) {
+            scheduleNext(nextOffset);
+            return;
+          }
+
+          replayHandoffTimerRef.current = window.setTimeout(() => {
+            setStreamingReplay((prev) =>
+              prev.run?.id === run.id
+                ? {
+                    ...prev,
+                    phase: "handoff",
+                    content: run.content,
+                    offset: run.totalChars,
+                  }
+                : prev,
+            );
+
+            replayHandoffTimerRef.current = window.setTimeout(() => {
+              replayHandoffTimerRef.current = null;
+              setStreamingReplay((prev) =>
+                prev.run?.id === run.id
+                  ? {
+                      ...prev,
+                      phase: "complete",
+                      content: run.content,
+                      offset: run.totalChars,
+                    }
+                  : prev,
+              );
+            }, 1600);
+          }, 280);
+        }, run.profile.intervalMs);
+      };
+
+      scheduleNext(0);
+    },
+    [clearReplayTimers, setShowDemo],
+  );
+
+  useEffect(() => () => clearReplayTimers(), [clearReplayTimers]);
+
+  useEffect(() => {
+    if (!showDemo && streamingReplay.run) {
+      stopStreamingReplay();
+    }
+  }, [showDemo, stopStreamingReplay, streamingReplay.run]);
 
   const messages = useMemo(
     () =>
@@ -250,11 +373,19 @@ export function AskWorkbench({
       ),
     [session?.session.messages, session?.context_basis]
   );
+  const replayMessages = useMemo(() => {
+    if (!streamingReplay.run) return null;
+    if (streamingReplay.phase === "streaming") {
+      return streamingReplay.run.messages;
+    }
+    return [...streamingReplay.run.messages, streamingReplay.run.finalMessage];
+  }, [streamingReplay.phase, streamingReplay.run]);
   const displayMessages = useMemo(() => {
+    if (replayMessages) return replayMessages;
     if (messages.length > 0) return [...messages, ...localMessages];
     if (showDemo) return [...MOCK_DEMO_MESSAGES, ...localMessages];
     return localMessages;
-  }, [messages, showDemo, localMessages]);
+  }, [messages, replayMessages, showDemo, localMessages]);
 
   const agentCount = useMemo(
     () => extractSubagents(displayMessages).length,
@@ -281,11 +412,33 @@ export function AskWorkbench({
     return () => clearTimeout(t);
   }, [extendedRunning, session?.turn_state]);
   const isRunning = session?.turn_state === "running" || isSending || extendedRunning;
+  const isReplayStreaming =
+    streamingReplay.phase === "streaming" || streamingReplay.phase === "handoff";
+  const effectiveStreamingContent = streamingReplay.run
+    ? streamingReplay.content
+    : streamingContent;
+  const effectiveStreamingThinking = streamingReplay.run
+    ? ""
+    : streamingThinking;
+  const effectiveIsStreaming =
+    (isReplayStreaming || isRunning) && !pendingPermission;
+  const replayProgressLabel = streamingReplay.run
+    ? `${streamingReplay.run.profile.label} · ${Math.round(
+        (streamingReplay.offset / streamingReplay.run.totalChars) * 100,
+      )}% · ${streamingReplay.run.totalChars.toLocaleString()} chars`
+    : null;
 
   // Clear local messages when session changes
   useEffect(() => {
     setLocalMessages([]);
-  }, [session?.id]);
+    clearReplayTimers();
+    setStreamingReplay({
+      run: null,
+      phase: "idle",
+      content: "",
+      offset: 0,
+    });
+  }, [clearReplayTimers, session?.id]);
 
   const handlePermissionDecision = useCallback(
     (action: PermissionAction) => {
@@ -619,7 +772,7 @@ export function AskWorkbench({
           projectPath={projectPath}
           modelLabel={modelLabel}
           environmentLabel={environmentLabel}
-          isStreaming={isRunning}
+          isStreaming={effectiveIsStreaming}
           agentCount={agentCount}
           showAgentPanel={showAgentPanel}
           onToggleAgentPanel={() => setShowAgentPanel((v) => !v)}
@@ -667,6 +820,30 @@ export function AskWorkbench({
                   演示模式 — 展示示例对话
                 </span>
                 <div className="flex items-center gap-2">
+                  {replayProgressLabel && (
+                    <span className="hidden text-label text-muted-foreground/70 md:inline">
+                      {replayProgressLabel}
+                    </span>
+                  )}
+                  {REPLAY_PROFILES.map((profile) => (
+                    <button
+                      key={profile.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-border/40 px-2 py-0.5 text-label font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted/20 hover:text-foreground disabled:cursor-wait disabled:opacity-50"
+                      onClick={() => startStreamingReplay(profile.id)}
+                      disabled={streamingReplay.phase === "streaming"}
+                    >
+                      <Sparkles className="size-3" aria-hidden />
+                      {profile.label.replace("Replay ", "")}
+                    </button>
+                  ))}
+                  {streamingReplay.run && (
+                    <button
+                      className="text-label font-medium text-muted-foreground hover:text-foreground hover:underline"
+                      onClick={stopStreamingReplay}
+                    >
+                      Stop replay
+                    </button>
+                  )}
                   {!pendingPermission && (
                     <button
                       className="text-label font-medium text-muted-foreground hover:text-foreground hover:underline"
@@ -686,7 +863,10 @@ export function AskWorkbench({
                   )}
                   <button
                     className="text-label font-medium text-foreground hover:underline"
-                    onClick={() => setShowDemo(false)}
+                    onClick={() => {
+                      stopStreamingReplay();
+                      setShowDemo(false);
+                    }}
                   >
                     退出演示
                   </button>
@@ -700,9 +880,12 @@ export function AskWorkbench({
               key={session?.id ?? "ask-empty"}
               sessionKey={session?.id ?? "ask-empty"}
               messages={displayMessages}
-              streamingContent={streamingContent}
-              streamingThinking={streamingThinking}
-              isStreaming={isRunning && !pendingPermission}
+              streamingContent={effectiveStreamingContent}
+              streamingThinking={effectiveStreamingThinking}
+              isStreaming={effectiveIsStreaming}
+              isStartingTurn={
+                streamingReplay.run ? false : isSending || extendedRunning
+              }
               onPromoteToSession={handlePromoteToSession}
             />
 

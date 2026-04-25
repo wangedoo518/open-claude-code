@@ -28,7 +28,7 @@
  */
 
 import { memo, useState, useEffect, useRef } from "react";
-import { Brain, ChevronRight, ChevronDown, Bot } from "lucide-react";
+import { Brain, ChevronRight, ChevronDown } from "lucide-react";
 import { AskMarkdown } from "./AskMarkdown";
 import { Shimmer } from "./Shimmer";
 
@@ -44,7 +44,13 @@ export const StreamingMessage = memo(function StreamingMessage({
   isComplete = false,
 }: StreamingMessageProps) {
   const [elapsed, setElapsed] = useState(0);
+  const [displayContent, setDisplayContent] = useState(() =>
+    isComplete ? content : "",
+  );
   const startRef = useRef(Date.now());
+  const targetContentRef = useRef(content);
+  const displayContentRef = useRef(isComplete ? content : "");
+  const revealRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isComplete) return;
@@ -55,85 +61,138 @@ export const StreamingMessage = memo(function StreamingMessage({
     return () => clearInterval(timer);
   }, [isComplete]);
 
-  // No content yet → phased shimmer, Claude-style "subtle waiting".
+  useEffect(() => {
+    targetContentRef.current = content;
+
+    const cancelReveal = () => {
+      if (revealRafRef.current !== null) {
+        cancelAnimationFrame(revealRafRef.current);
+        revealRafRef.current = null;
+      }
+    };
+
+    if (isComplete) {
+      cancelReveal();
+      displayContentRef.current = content;
+      setDisplayContent(content);
+      return cancelReveal;
+    }
+
+    const current = displayContentRef.current;
+    if (!content.startsWith(current) || content.length < current.length) {
+      displayContentRef.current = content;
+      setDisplayContent(content);
+      return cancelReveal;
+    }
+
+    const revealNextFrame = () => {
+      if (revealRafRef.current !== null) return;
+      revealRafRef.current = requestAnimationFrame(() => {
+        revealRafRef.current = null;
+        setDisplayContent((prev) => {
+          const target = targetContentRef.current;
+          if (!target.startsWith(prev) || target.length <= prev.length) {
+            displayContentRef.current = target;
+            return target;
+          }
+
+          const remaining = target.length - prev.length;
+          const step = Math.min(remaining, Math.max(96, Math.ceil(remaining * 0.24)));
+          const next = target.slice(0, prev.length + step);
+          displayContentRef.current = next;
+          return next;
+        });
+
+        if (displayContentRef.current.length < targetContentRef.current.length) {
+          revealNextFrame();
+        }
+      });
+    };
+
+    revealNextFrame();
+    return cancelReveal;
+  }, [content, isComplete]);
+
+  const statusText =
+    content
+      ? "正在写入回答"
+      : thinkingContent
+        ? "正在整理思路"
+        : elapsed < 5
+          ? "正在分析上下文"
+          : elapsed < 15
+            ? "正在调用工具与检索"
+            : "正在组织回答";
+
+  // No content yet → phased work-log shimmer, not a chat bubble.
   if (!content && !thinkingContent) {
     return (
-      <div className="flex items-start gap-2.5 pb-3">
-        <AssistantAvatar />
-        <div className="flex items-center gap-3 py-2">
-          <Shimmer className="text-sm font-medium">
-            {elapsed < 5
-              ? "思考中…"
-              : elapsed < 15
-                ? "深度思考中…"
-                : "准备回复…"}
-          </Shimmer>
-          {elapsed >= 2 && (
-            <span className="tabular-nums text-[11px] text-muted-foreground/40">
-              {elapsed}s
-            </span>
-          )}
+      <div className="ask-turn ask-turn-assistant">
+        <div className="ask-transcript-shell ask-transcript-shell--streaming">
+          <div className="ask-transcript-rail ask-transcript-rail--active" aria-hidden />
+          <div className="ask-stream-status">
+            <span className="ask-stream-dot" aria-hidden />
+            <Shimmer className="text-sm font-medium">{statusText}…</Shimmer>
+            {elapsed >= 2 && (
+              <span className="tabular-nums text-[11px] text-muted-foreground/45">
+                {elapsed}s
+              </span>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex items-start gap-2.5 pb-3">
-      <AssistantAvatar />
-
-      <div className="min-w-0 flex-1">
-        {/* Thinking summary — only rendered when the backend has
-            provided a reasoning payload. No fake summaries. */}
-        {thinkingContent && (
-          <ThinkingBlock content={thinkingContent} isStreaming={!isComplete} />
-        )}
-
-        {/* Streaming body reuses AskMarkdown so the element tree
-            matches the final AssistantMessage; code blocks render
-            in their streaming variant until the turn completes. */}
-        {content && (
-          <div
-            className="ask-stream-fade overflow-hidden text-[15px] leading-[1.8] text-foreground"
-            style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
-          >
-            <AskMarkdown content={content} streaming={!isComplete} />
-            {!isComplete && (
-              <span
-                className="ask-blink-cursor ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-foreground/70"
-                aria-hidden
-              />
+    <div className="ask-turn ask-turn-assistant">
+      <div className="ask-transcript-shell ask-transcript-shell--streaming">
+        <div className="ask-transcript-rail ask-transcript-rail--active" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="ask-stream-status">
+            <span className="ask-stream-dot" aria-hidden />
+            <Shimmer className="text-sm font-medium">{statusText}</Shimmer>
+            {!isComplete && elapsed >= 2 && (
+              <span className="tabular-nums text-[11px] text-muted-foreground/45">
+                {elapsed >= 60
+                  ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+                  : `${elapsed}s`}
+              </span>
             )}
           </div>
-        )}
 
-        {/* Quiet elapsed timer, hidden for very short turns. */}
-        {!isComplete && elapsed >= 2 && (
-          <div className="mt-1 text-right">
-            <span className="tabular-nums text-[11px] text-muted-foreground/40">
-              {elapsed >= 60
-                ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-                : `${elapsed}s`}
-            </span>
-          </div>
-        )}
+          {/* Thinking summary — only rendered when the backend has
+              provided a reasoning payload. No fake summaries. */}
+          {thinkingContent && (
+            <ThinkingBlock content={thinkingContent} isStreaming={!isComplete} />
+          )}
+
+          {/* Streaming body reuses AskMarkdown so the element tree
+              matches the final AssistantMessage; code blocks render
+              in their streaming variant until the turn completes. */}
+          {displayContent && (
+            <div
+              className={`ask-assistant-prose ask-stream-body ask-stream-fade overflow-hidden text-foreground ${
+                !isComplete && displayContent.length < content.length
+                  ? "ask-stream-body--catching-up"
+                  : ""
+              }`}
+              style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+            >
+              <AskMarkdown content={displayContent} streaming={!isComplete} />
+              {!isComplete && (
+                <span
+                  className="ask-blink-cursor ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-foreground/70"
+                  aria-hidden
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 });
-
-function AssistantAvatar() {
-  return (
-    <div
-      className="flex size-7 shrink-0 items-center justify-center rounded-full"
-      style={{
-        backgroundColor: "var(--deeptutor-primary, var(--claude-orange))",
-      }}
-    >
-      <Bot className="size-3.5 text-white" />
-    </div>
-  );
-}
 
 /* ─── Thinking block (collapsible) ──────────────────────────────── */
 
@@ -175,7 +234,7 @@ function ThinkingBlock({
   })();
 
   return (
-    <div className="mb-2">
+    <div className="ask-thinking-block">
       <button
         type="button"
         className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/30"
@@ -201,7 +260,7 @@ function ThinkingBlock({
         )}
       </button>
       {expanded && (
-        <div className="ml-5 mt-1 border-l-2 border-border/30 pl-3">
+        <div className="ml-5 mt-1 border-l border-border/40 pl-3">
           <pre className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted-foreground">
             {content}
           </pre>

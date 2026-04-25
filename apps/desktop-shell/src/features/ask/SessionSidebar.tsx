@@ -14,12 +14,14 @@ import {
   MessageSquare,
   Loader2,
   Sparkles,
+  PanelLeftClose,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   listSessions,
   deleteSession,
+  deleteSessions,
   renameSession,
   cleanupEmptySessions,
 } from "./api/client";
@@ -36,7 +38,7 @@ interface SessionSidebarProps {
   onNewSession: () => void;
   /** @deprecated Shell sidebar now handles collapse. Ignored. */
   collapsed?: boolean;
-  /** @deprecated Shell sidebar now handles collapse. Ignored. */
+  /** Collapse the Ask history column while keeping a small restore handle. */
   onToggleCollapse?: () => void;
 }
 
@@ -44,6 +46,7 @@ export function SessionSidebar({
   activeSessionId,
   onSelectSession,
   onNewSession,
+  onToggleCollapse,
 }: SessionSidebarProps) {
   const queryClient = useQueryClient();
 
@@ -82,10 +85,91 @@ export function SessionSidebar({
     },
   });
 
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setBulkDeleteConfirmOpen(false);
+  }, []);
+
+  const toggleSessionSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllSessions = useCallback(() => {
+    setSelectedIds(new Set(sessions.map((session) => session.id)));
+  }, [sessions]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  useEffect(() => {
+    const liveIds = new Set(sessions.map((session) => session.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (liveIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [sessions]);
+
+  const bulkDeleteMut = useMutation({
+    mutationFn: (ids: string[]) => deleteSessions(ids),
+    onSuccess: (result) => {
+      if (result.deleted_count > 0) {
+        void queryClient.invalidateQueries({ queryKey: sessionListKeys.all });
+      }
+
+      if (activeSessionId && result.deleted_ids.includes(activeSessionId)) {
+        onNewSession();
+      }
+
+      if (result.failed_count === 0) {
+        toast.success(`已删除 ${result.deleted_count} 条对话`);
+        exitSelectionMode();
+        return;
+      }
+
+      setSelectedIds(new Set(result.failed.map((item) => item.id)));
+      if (result.deleted_count > 0) {
+        toast.warning(
+          `已删除 ${result.deleted_count} 条，${result.failed_count} 条删除失败`,
+        );
+      } else {
+        toast.error(`批量删除失败：${result.failed[0]?.error ?? "未知错误"}`);
+      }
+    },
+    onError: (err) => {
+      toast.error(
+        `批量删除失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    },
+  });
+
   // Group by bucket
   const today = sessions.filter((s) => s.bucket === "today");
   const yesterday = sessions.filter((s) => s.bucket === "yesterday");
   const older = sessions.filter((s) => s.bucket === "older");
+  const selectedCount = selectedIds.size;
+  const allSelected = sessions.length > 0 && selectedCount === sessions.length;
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -102,6 +186,30 @@ export function SessionSidebar({
             title="新建对话"
           >
             <Plus className="size-3.5" />
+          </button>
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+              title="收起对话历史"
+              aria-label="收起对话历史"
+            >
+              <PanelLeftClose className="size-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={selectionMode ? exitSelectionMode : () => setSelectionMode(true)}
+            disabled={sessions.length === 0 || bulkDeleteMut.isPending}
+            className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent disabled:opacity-40"
+            title={selectionMode ? "退出批量选择" : "批量删除对话"}
+          >
+            {selectionMode ? (
+              <X className="size-3.5" />
+            ) : (
+              <Trash2 className="size-3.5" />
+            )}
           </button>
           <button
             type="button"
@@ -120,6 +228,49 @@ export function SessionSidebar({
         </div>
       </div>
 
+      {selectionMode && (
+        <div className="border-b border-border/50 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+              {selectedCount > 0
+                ? `已选择 ${selectedCount} / ${sessions.length} 条`
+                : "选择要删除的对话"}
+            </span>
+            <button
+              type="button"
+              onClick={allSelected ? clearSelection : selectAllSessions}
+              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground hover:bg-sidebar-accent"
+            >
+              {allSelected ? "取消全选" : "全选"}
+            </button>
+          </div>
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setBulkDeleteConfirmOpen(true)}
+              disabled={selectedCount === 0 || bulkDeleteMut.isPending}
+              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ backgroundColor: "var(--color-error)" }}
+            >
+              {bulkDeleteMut.isPending ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Trash2 className="size-3" />
+              )}
+              删除所选
+            </button>
+            <button
+              type="button"
+              onClick={exitSelectionMode}
+              disabled={bulkDeleteMut.isPending}
+              className="rounded-md border border-border px-2 py-1 text-[11px] text-sidebar-foreground hover:bg-sidebar-accent disabled:opacity-40"
+            >
+              退出
+            </button>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={cleanupConfirmOpen}
         onOpenChange={setCleanupConfirmOpen}
@@ -129,6 +280,20 @@ export function SessionSidebar({
         onConfirm={() => {
           cleanupMut.mutate();
           setCleanupConfirmOpen(false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={setBulkDeleteConfirmOpen}
+        title="删除所选对话？"
+        description={`将删除 ${selectedCount} 条对话。删除后无法恢复。`}
+        confirmLabel="删除"
+        variant="destructive"
+        onConfirm={() => {
+          const ids = Array.from(selectedIds);
+          if (ids.length === 0) return;
+          bulkDeleteMut.mutate(ids);
         }}
       />
 
@@ -152,6 +317,9 @@ export function SessionSidebar({
                 activeId={activeSessionId}
                 onSelect={onSelectSession}
                 queryClient={queryClient}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelected={toggleSessionSelection}
               />
             )}
             {yesterday.length > 0 && (
@@ -161,6 +329,9 @@ export function SessionSidebar({
                 activeId={activeSessionId}
                 onSelect={onSelectSession}
                 queryClient={queryClient}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelected={toggleSessionSelection}
               />
             )}
             {older.length > 0 && (
@@ -170,6 +341,9 @@ export function SessionSidebar({
                 activeId={activeSessionId}
                 onSelect={onSelectSession}
                 queryClient={queryClient}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelected={toggleSessionSelection}
               />
             )}
           </>
@@ -187,12 +361,18 @@ function SessionGroup({
   activeId,
   onSelect,
   queryClient,
+  selectionMode,
+  selectedIds,
+  onToggleSelected,
 }: {
   label: string;
   sessions: DesktopSessionSummary[];
   activeId: string | null;
   onSelect: (id: string) => void;
   queryClient: ReturnType<typeof useQueryClient>;
+  selectionMode: boolean;
+  selectedIds: Set<string>;
+  onToggleSelected: (id: string) => void;
 }) {
   return (
     <div className="py-1">
@@ -204,8 +384,11 @@ function SessionGroup({
           key={s.id}
           session={s}
           isActive={s.id === activeId}
+          isSelected={selectedIds.has(s.id)}
           onSelect={() => onSelect(s.id)}
+          onToggleSelected={() => onToggleSelected(s.id)}
           queryClient={queryClient}
+          selectionMode={selectionMode}
         />
       ))}
     </div>
@@ -217,13 +400,19 @@ function SessionGroup({
 function SessionItem({
   session,
   isActive,
+  isSelected,
   onSelect,
+  onToggleSelected,
   queryClient,
+  selectionMode,
 }: {
   session: DesktopSessionSummary;
   isActive: boolean;
+  isSelected: boolean;
   onSelect: () => void;
+  onToggleSelected: () => void;
   queryClient: ReturnType<typeof useQueryClient>;
+  selectionMode: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.title);
@@ -305,16 +494,31 @@ function SessionItem({
         "group flex cursor-pointer items-center gap-2 rounded-md border-l-[2px] px-3 py-1.5 text-[11px] transition-colors",
         isActive
           ? "border-primary bg-sidebar-accent text-sidebar-accent-foreground"
-          : "border-l-transparent text-sidebar-foreground hover:bg-sidebar-accent/50"
+          : "border-l-transparent text-sidebar-foreground hover:bg-sidebar-accent/50",
+        selectionMode && isSelected && !isActive && "bg-sidebar-accent/70"
       )}
-      onClick={onSelect}
+      onClick={selectionMode ? onToggleSelected : onSelect}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
-      <MessageSquare className="size-3 shrink-0 opacity-40" />
+      {selectionMode ? (
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={(e) => {
+            e.stopPropagation();
+            onToggleSelected();
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="size-3 shrink-0 accent-primary"
+          aria-label={`选择对话 ${session.title || "新对话"}`}
+        />
+      ) : (
+        <MessageSquare className="size-3 shrink-0 opacity-40" />
+      )}
       <span className="min-w-0 flex-1 truncate">{session.title || "新对话"}</span>
 
-      {showActions && (
+      {!selectionMode && showActions && (
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             onClick={(e) => {

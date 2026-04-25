@@ -657,9 +657,582 @@
   animation: ask-stream-fade 150ms ease-out both;
 }
 
-/* Tool actions group card */
+.ask-stream-body {
+  position: relative;
+  transition:
+    filter 160ms ease,
+    opacity 160ms ease;
+}
+
+.ask-stream-body::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 42px;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, transparent, color-mix(in srgb, var(--color-background) 68%, transparent));
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.ask-stream-body--catching-up::after {
+  opacity: 0.42;
+}
+
+/* Claude Code-inspired transcript rhythm for Ask. */
+.ask-turn {
+  width: min(100%, 920px);
+  margin: 0 auto;
+  --ask-highlight-warm: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 16%, transparent);
+  --ask-highlight-cool: color-mix(in srgb, var(--claude-blue, var(--color-accent)) 10%, transparent);
+  --ask-ink-soft: color-mix(in srgb, var(--color-foreground) 78%, transparent);
+  --ask-hairline: color-mix(in srgb, var(--color-border) 56%, transparent);
+}
+
+.ask-turn-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ask-turn-assistant {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.ask-user-bubble {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-foreground) 9%, var(--deeptutor-primary, var(--claude-orange)) 8%);
+  border-radius: 18px 18px 4px 18px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-card) 92%, var(--deeptutor-primary, var(--claude-orange)) 8%), color-mix(in srgb, var(--color-muted) 34%, var(--color-card) 66%));
+  box-shadow:
+    0 16px 34px color-mix(in srgb, var(--color-foreground) 7%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 34%, transparent);
+  color: var(--color-foreground);
+  font-size: 14px;
+  line-height: 1.65;
+  padding: 10px 14px;
+}
+
+.ask-user-bubble::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    radial-gradient(circle at 16% 0%, color-mix(in srgb, white 58%, transparent), transparent 38%),
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 10%, transparent), transparent);
+  opacity: 0.75;
+}
+
+.ask-transcript-shell {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  width: min(100%, 820px);
+  gap: 14px;
+  margin-left: -12px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  padding: 9px 12px 15px;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.ask-transcript-shell::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 7% 6%, var(--ask-highlight-warm), transparent 34%),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-card) 54%, transparent), transparent 76%);
+  opacity: 0.34;
+  transition: opacity 180ms ease;
+}
+
+.ask-turn-assistant:hover .ask-transcript-shell,
+.ask-transcript-shell:focus-within {
+  border-color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 15%, var(--color-border) 36%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-card) 44%, transparent), color-mix(in srgb, var(--color-muted) 14%, transparent));
+  box-shadow:
+    0 18px 52px color-mix(in srgb, var(--color-foreground) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+}
+
+.ask-turn-assistant:hover .ask-transcript-shell::before,
+.ask-transcript-shell:focus-within::before {
+  opacity: 0.72;
+}
+
+.ask-transcript-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.ask-transcript-shell--streaming {
+  border-color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 16%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-card) 50%, transparent), color-mix(in srgb, var(--color-muted) 18%, transparent));
+  padding-bottom: 15px;
+}
+
+.ask-transcript-rail {
+  position: relative;
+  width: 2px;
+  min-height: 28px;
+  flex-shrink: 0;
+  align-self: stretch;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 72%, white 10%), color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 38%, transparent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent),
+    0 0 18px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent);
+}
+
+.ask-transcript-rail::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border: 1px solid color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 24%, var(--color-background) 76%);
+  border-radius: 999px;
+  background: var(--color-background);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent);
+  transform: translateX(-50%);
+}
+
+.ask-transcript-rail--active {
+  animation: ask-rail-pulse 2s ease-in-out infinite;
+}
+
+@keyframes ask-rail-pulse {
+  0%, 100% {
+    opacity: 0.78;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent);
+  }
+}
+
+.ask-transcript-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-muted-foreground) 76%, transparent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ask-transcript-label::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 18%, transparent), transparent);
+  opacity: 0.72;
+}
+
+.ask-transcript-label span + span {
+  color: color-mix(in srgb, var(--color-muted-foreground) 55%, transparent);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ask-assistant-prose {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  line-height: 1.82;
+}
+
+.ask-assistant-prose :where(p, li) {
+  text-wrap: pretty;
+}
+
+.ask-assistant-prose :where(h1, h2, h3) {
+  color: color-mix(in srgb, var(--color-foreground) 90%, var(--deeptutor-primary, var(--claude-orange)) 10%);
+  letter-spacing: -0.025em;
+}
+
+.ask-assistant-prose :where(ul, ol) {
+  margin-left: 1px;
+}
+
+.ask-assistant-prose :where(li)::marker {
+  color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 62%, var(--color-muted-foreground) 38%);
+}
+
+.ask-assistant-prose :where(strong) {
+  color: color-mix(in srgb, var(--color-foreground) 92%, var(--deeptutor-primary, var(--claude-orange)) 8%);
+}
+
+.ask-inline-code {
+  border: 1px solid color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, var(--color-border) 42%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-card) 70%, transparent), color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 8%, var(--color-muted) 18%));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+}
+
+.ask-blockquote {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 42%, var(--color-border) 58%) !important;
+  border-radius: 0 10px 10px 0;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 8%, transparent), transparent 72%);
+  padding-bottom: 6px;
+  padding-top: 6px;
+}
+
+.ask-table-wrap {
+  border: 1px solid color-mix(in srgb, var(--color-border) 46%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-card) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+}
+
+.ask-markdown-table th {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-muted) 56%, transparent), color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 6%, transparent));
+  color: color-mix(in srgb, var(--color-foreground) 86%, transparent);
+}
+
+.ask-markdown-table td,
+.ask-markdown-table th {
+  border-color: color-mix(in srgb, var(--color-border) 48%, transparent);
+}
+
+.ask-transcript-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  color: color-mix(in srgb, var(--color-muted-foreground) 58%, transparent);
+  font-size: 12px;
+  opacity: 0.22;
+  transform: translateY(-1px);
+  transition:
+    color 150ms ease,
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.ask-turn-assistant:hover .ask-transcript-actions,
+.ask-transcript-shell:focus-within .ask-transcript-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ask-transcript-actions button {
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
+.ask-transcript-actions button:hover {
+  background: color-mix(in srgb, var(--color-accent) 48%, transparent);
+}
+
+.ask-system-note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
+.ask-error-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: min(100%, 820px);
+  margin: 0 auto;
+  border: 1px solid;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
 .ask-tool-group {
-  box-shadow: var(--shadow-warm-ring);
+  position: relative;
+  isolation: isolate;
+  width: min(100%, 820px);
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border) 52%, var(--deeptutor-primary, var(--claude-orange)) 8%);
+  border-radius: 15px;
+  background:
+    radial-gradient(circle at 4% 0%, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent), transparent 28%),
+    linear-gradient(180deg, color-mix(in srgb, var(--color-card) 86%, transparent), color-mix(in srgb, var(--color-muted) 20%, transparent));
+  box-shadow:
+    0 14px 36px color-mix(in srgb, var(--color-foreground) 4%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
+}
+
+.ask-tool-group-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  color: var(--color-foreground);
+  font-size: 13px;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.ask-tool-group-header:hover {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 10%, transparent), color-mix(in srgb, var(--color-accent) 36%, transparent));
+}
+
+.ask-tool-group-header[aria-expanded="false"] {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-card) 44%, transparent), transparent 72%);
+}
+
+.ask-tool-group-title {
+  letter-spacing: -0.01em;
+}
+
+.ask-tool-group-status {
+  border: 1px solid color-mix(in srgb, var(--color-border) 42%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-background) 42%, transparent);
+  padding: 2px 7px;
+}
+
+.ask-tool-group-body {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 52%, transparent);
+  padding: 7px;
+}
+
+.ask-work-dot,
+.ask-stream-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-muted-foreground) 58%, transparent);
+}
+
+.ask-work-dot--active,
+.ask-stream-dot {
+  background: var(--deeptutor-primary, var(--claude-orange));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent);
+}
+
+.ask-work-dot--active,
+.ask-stream-dot,
+.ask-tool-row--running .ask-work-dot {
+  animation: ask-dot-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes ask-dot-breathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 12%, transparent);
+  }
+  50% {
+    transform: scale(0.84);
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 7%, transparent);
+  }
+}
+
+.ask-stream-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 26px;
+  color: color-mix(in srgb, var(--color-muted-foreground) 80%, transparent);
+}
+
+.ask-thinking-block {
+  margin: 4px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 34%, transparent);
+  border-radius: 11px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 8%, transparent), color-mix(in srgb, var(--color-muted) 18%, transparent));
+}
+
+.ask-tool-log {
+  width: 100%;
+}
+
+.ask-tool-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 12px;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
+}
+
+.ask-tool-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-muted-foreground) 20%, transparent);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.ask-tool-row:hover {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 48%, transparent), color-mix(in srgb, var(--color-accent) 18%, transparent));
+}
+
+.ask-tool-row:hover::before,
+.ask-tool-row--running::before,
+.ask-tool-row--completed::before,
+.ask-tool-row--error::before {
+  opacity: 1;
+}
+
+.ask-tool-row--running {
+  border-color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 18%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 8%, transparent), color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 3%, transparent));
+}
+
+.ask-tool-row--running::before {
+  background: var(--deeptutor-primary, var(--claude-orange));
+}
+
+.ask-tool-row--completed {
+  border-color: color-mix(in srgb, var(--color-success) 18%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-success) 7%, transparent), color-mix(in srgb, var(--color-success) 3%, transparent));
+}
+
+.ask-tool-row--completed::before {
+  background: var(--color-success);
+}
+
+.ask-tool-row--error {
+  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-error) 8%, transparent), color-mix(in srgb, var(--color-error) 3%, transparent));
+}
+
+.ask-tool-row--error::before {
+  background: var(--color-error);
+}
+
+.ask-tool-name {
+  border: 1px solid color-mix(in srgb, var(--color-border) 40%, transparent);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-card) 86%, transparent), color-mix(in srgb, var(--color-muted) 28%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+  flex-shrink: 0;
+  font-weight: 650;
+  padding: 1px 5px;
+}
+
+.ask-tool-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.ask-tool-preview {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--color-muted-foreground) 72%, transparent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.ask-tool-detail {
+  margin: 2px 0 6px 22px;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  background: color-mix(in srgb, var(--color-muted) 18%, transparent);
+}
+
+.ask-code-block {
+  border-color: color-mix(in srgb, var(--color-foreground) 18%, var(--deeptutor-primary, var(--claude-orange)) 10%) !important;
+  border-radius: 13px !important;
+  background:
+    radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 14%, transparent), transparent 28%),
+    #1f2937 !important;
+  box-shadow:
+    0 18px 48px color-mix(in srgb, black 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.ask-code-block-header {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 5%, transparent), color-mix(in srgb, black 10%, transparent));
+}
+
+.ask-todo-log {
+  border: 1px solid color-mix(in srgb, var(--color-terminal-tool) 24%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-terminal-tool) 6%, transparent);
+  padding: 12px;
+}
+
+@media (hover: none) {
+  .ask-transcript-actions {
+    opacity: 0.78;
+    transform: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .ask-turn,
+  .ask-tool-group,
+  .ask-error-note {
+    width: 100%;
+  }
+
+  .ask-transcript-shell {
+    gap: 10px;
+  }
+
+  .ask-user-bubble {
+    font-size: 13px;
+  }
+
+  .ask-assistant-prose {
+    font-size: 14px;
+  }
 }
 
 /* v2: Compact mode for AskWorkbench when rendered inside ChatSidePanel.
@@ -673,7 +1246,6 @@
   margin-top: 8px; /* message gap: 12px → 8px */
 }
 .compact-ask .ask-tool-group {
-  padding: 6px 8px;
   font-size: 12px;
 }
 /* Composer sits at the bottom — keep usable but reduce padding. */
@@ -810,11 +1382,102 @@
 .ds-rail-secondary {
   width: 224px;
   flex-shrink: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--color-sidebar, var(--parchment, oklch(0.9660 0.0093 100.0)));
   border-right: 1px solid var(--color-sidebar-border, var(--color-border));
   overflow: hidden;
+  transition:
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    box-shadow 220ms ease,
+    background-color 180ms ease;
+  will-change: width;
+}
+
+.ds-rail-secondary--expanded {
+  box-shadow: 10px 0 28px color-mix(in srgb, var(--color-foreground) 3%, transparent);
+}
+
+.ds-rail-secondary--collapsed {
+  width: 40px;
+  border-right-color: color-mix(in srgb, var(--color-sidebar-border, var(--color-border)) 72%, transparent);
+  box-shadow: none;
+}
+
+.ds-rail-secondary-content {
+  width: 224px;
+  min-width: 224px;
+  height: 100%;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  transform-origin: left center;
+  transition:
+    opacity 160ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ds-rail-secondary--collapsed .ds-rail-secondary-content {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-14px) scale(0.985);
+}
+
+.ds-rail-secondary-restore {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px) scale(0.96);
+  transition:
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ds-rail-secondary--collapsed .ds-rail-secondary-restore {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+  transition-delay: 90ms;
+}
+
+.ds-rail-secondary-toggle {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--color-sidebar-foreground, var(--color-foreground));
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.ds-rail-secondary-toggle:hover {
+  background: var(--color-sidebar-accent, var(--color-muted));
+  color: var(--color-sidebar-accent-foreground, var(--color-foreground));
+  transform: translateX(1px);
+}
+
+.ds-rail-secondary--collapsed .ds-rail-secondary-toggle {
+  box-shadow:
+    0 8px 18px color-mix(in srgb, var(--color-foreground) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-rail-secondary,
+  .ds-rail-secondary-content,
+  .ds-rail-secondary-restore,
+  .ds-rail-secondary-toggle {
+    transition: none;
+  }
 }
 
 /* ── Home hero · center-aligned greet + tagline ─────────────── */

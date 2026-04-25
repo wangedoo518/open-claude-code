@@ -413,6 +413,7 @@ impl MessageHandler for DesktopAgentHandler {
             // by moving the text-handling branch above into an adapter
             // dispatch.
             let mut ingest_ok = true;
+            let mut url_ingest_reply: Option<String> = None;
             if let Some(paths) = handler.wiki_paths.clone() {
                 let user_text_for_wiki = user_text.clone();
                 let from_user_id_for_wiki = from_user_id.clone();
@@ -421,10 +422,12 @@ impl MessageHandler for DesktopAgentHandler {
                         &paths,
                         &from_user_id_for_wiki,
                         &user_text_for_wiki,
-                    );
+                    )
                 })
                 .await;
-                if join.is_err() {
+                if let Ok(reply) = join {
+                    url_ingest_reply = reply;
+                } else {
                     // A panic inside the blocking task is the only way
                     // to land here. Treat it as an ingest failure so
                     // we do NOT mark the event as processed — the
@@ -441,6 +444,21 @@ impl MessageHandler for DesktopAgentHandler {
             // `processed_msg_count` field.
             if ingest_ok {
                 dedupe::global().mark_processed(&event_key_for_task);
+            }
+
+            if let Some(reply_text) = url_ingest_reply {
+                let reply = build_text_reply(&from_user_id, &context_token, &reply_text);
+                match client.send_message(reply).await {
+                    Ok(()) => {
+                        eprintln!(
+                            "[wechat agent] url ingest reply sent: openid={from_user_id}"
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("[wechat agent] url ingest reply send failed: {e}");
+                    }
+                }
+                return;
             }
 
             // Find or create a session for this WeChat user.
@@ -614,7 +632,7 @@ fn ingest_wechat_text_to_wiki(
     paths: &wiki_store::WikiPaths,
     from_user_id: &str,
     user_text: &str,
-) {
+) -> Option<String> {
     // URL auto-detect: if the trimmed message contains an HTTP(S)
     // URL, funnel it through the M2 `url_ingest::ingest_url`
     // orchestrator so the fetch + quality check + raw write + inbox
@@ -722,19 +740,101 @@ fn ingest_wechat_text_to_wiki(
                         "[wechat agent] url_ingest did not persist — chat reply path continues"
                     );
                 }
+                return Some(ilink_url_ingest_reply(&o));
             }
             None => {
                 // Runtime unavailable / thread panic. Fall back to the
                 // plain-text write path below so we still capture the
                 // conversation rather than silently dropping it.
                 write_plain_text_raw(paths, from_user_id, user_text);
+                return Some(
+                    "⚠️ 我识别到了链接，但链接抓取服务暂时不可用。已先保存原始消息，不会把裸链接交给模型回答。请稍后重发，或直接把文章正文复制给我。"
+                        .to_string(),
+                );
             }
         }
-        return;
     }
 
     // Plain text message — store as-is (no URL so orchestrator doesn't apply).
     write_plain_text_raw(paths, from_user_id, user_text);
+    None
+}
+
+fn ilink_url_ingest_reply(outcome: &crate::url_ingest::IngestOutcome) -> String {
+    match outcome {
+        crate::url_ingest::IngestOutcome::Ingested {
+            entry,
+            title,
+            ..
+        } => format!(
+            "✅ 已收到链接并入库：{}\n素材 #{:05} 已进入知识库处理队列。",
+            display_raw_title(entry, Some(title)),
+            entry.id
+        ),
+        crate::url_ingest::IngestOutcome::IngestedInboxSuppressed {
+            entry, ..
+        } => format!(
+            "✅ 已收到链接，素材 #{:05}「{}」已在处理队列中。",
+            entry.id,
+            display_raw_title(entry, None)
+        ),
+        crate::url_ingest::IngestOutcome::ReusedExisting {
+            entry,
+            decision,
+            ..
+        } => format!(
+            "✅ 这个链接之前已经入库：素材 #{:05}「{}」（{}）。",
+            entry.id,
+            display_raw_title(entry, None),
+            decision.tag()
+        ),
+        crate::url_ingest::IngestOutcome::FallbackToText {
+            entry,
+            reason,
+            ..
+        } => format!(
+            "⚠️ 我识别到了链接，但这次没能抓到文章正文。\n已先保存原始链接为素材 #{:05}，不会把裸链接交给模型回答。\n原因：{}\n你可以稍后重发，或直接把文章正文复制给我。",
+            entry.id,
+            reason
+        ),
+        crate::url_ingest::IngestOutcome::RejectedQuality { reason } => format!(
+            "⚠️ 我识别到了链接，但抓到的内容没有通过质量检查：{}\n我不会基于这个裸链接回答。请稍后重发，或直接把文章正文复制给我。",
+            reason
+        ),
+        crate::url_ingest::IngestOutcome::FetchFailed { error } => format!(
+            "⚠️ 我识别到了链接，但无法获取文章正文：{}\n我不会基于这个裸链接回答。请稍后重发，或直接把文章正文复制给我。",
+            error
+        ),
+        crate::url_ingest::IngestOutcome::PrerequisiteMissing {
+            dep,
+            hint,
+        } => format!(
+            "⚠️ 我识别到了链接，但本机缺少抓取依赖：{}\n{}\n请补齐依赖后重发链接，或直接把文章正文复制给我。",
+            dep,
+            hint
+        ),
+        crate::url_ingest::IngestOutcome::InvalidUrl { reason } => format!(
+            "⚠️ 这个链接格式无效：{}\n请检查链接后重新发送。",
+            reason
+        ),
+    }
+}
+
+fn display_raw_title(entry: &wiki_store::RawEntry, fetched_title: Option<&str>) -> String {
+    let title = fetched_title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(entry.slug.as_str());
+    truncate_display(title, 80)
+}
+
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    out.push('…');
+    out
 }
 
 /// Plain-text fallback: no URL detected (or the orchestrator's host

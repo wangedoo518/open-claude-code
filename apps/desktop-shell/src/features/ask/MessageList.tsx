@@ -5,7 +5,7 @@
  * Auto-scrolls to bottom when user was at bottom.
  */
 
-import { memo, useMemo, useEffect } from "react";
+import { memo, useMemo, useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Message } from "./Message";
 import { ToolActionsGroup } from "./ToolActionsGroup";
@@ -28,6 +28,14 @@ interface MessageListProps {
    */
   streamingThinking?: string;
   isStreaming?: boolean;
+  /**
+   * True while the outgoing POST has started but the backend snapshot may
+   * not have appended the new user turn yet. In that short window the
+   * previous assistant message can still be the tail, so we keep showing
+   * the working indicator instead of treating the old assistant tail as a
+   * completed handoff.
+   */
+  isStartingTurn?: boolean;
   /**
    * A3 — forwarded to <Message> → <UsedSourcesBar> so the inline
    * "固定到会话" action can upgrade an auto-bound turn source
@@ -62,9 +70,24 @@ function buildItems(
   streamingContent: string | undefined,
   streamingThinking: string | undefined,
   isStreaming: boolean,
+  isStartingTurn: boolean,
 ): RenderItem[] {
   const items: RenderItem[] = [];
   let toolBuf: ConversationMessage[] = [];
+  const lastMessage = messages[messages.length - 1];
+  const terminalAssistantMessage =
+    !isStartingTurn &&
+    isStreaming &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.type === "text"
+      ? lastMessage
+      : undefined;
+  // SSE can deliver the completed assistant message before the session
+  // flips to idle. Keep rendering that tail through StreamingMessage so
+  // the transcript settles instead of snapping from stream -> final.
+  const messagesToRender = terminalAssistantMessage
+    ? messages.slice(0, -1)
+    : messages;
 
   const flushToolBuf = () => {
     if (toolBuf.length > 0) {
@@ -77,7 +100,7 @@ function buildItems(
     }
   };
 
-  for (const msg of messages) {
+  for (const msg of messagesToRender) {
     if (msg.type === "tool_use" || msg.type === "tool_result") {
       toolBuf.push(msg);
     } else {
@@ -87,10 +110,16 @@ function buildItems(
   }
   flushToolBuf();
 
-  if (isStreaming) {
+  const hasTerminalAssistantTail =
+    lastMessage?.role === "assistant" && lastMessage.type === "text";
+
+  if (
+    isStreaming &&
+    (isStartingTurn || !hasTerminalAssistantTail || terminalAssistantMessage)
+  ) {
     items.push({
       kind: "streaming",
-      content: streamingContent ?? "",
+      content: terminalAssistantMessage?.content ?? streamingContent ?? "",
       thinking: streamingThinking ?? "",
       key: "streaming",
     });
@@ -105,20 +134,28 @@ export const MessageList = memo(function MessageList({
   streamingContent,
   streamingThinking,
   isStreaming = false,
+  isStartingTurn = false,
   onPromoteToSession,
 }: MessageListProps) {
   const { scrollElement, isAtBottom } = useStickToBottomContext();
+  const scrollRafRef = useRef<number | null>(null);
   const items = useMemo(
     () =>
-      buildItems(messages, streamingContent, streamingThinking, isStreaming),
-    [messages, streamingContent, streamingThinking, isStreaming],
+      buildItems(
+        messages,
+        streamingContent,
+        streamingThinking,
+        isStreaming,
+        isStartingTurn,
+      ),
+    [messages, streamingContent, streamingThinking, isStreaming, isStartingTurn],
   );
 
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollElement,
     getItemKey: (index) => items[index]?.key ?? index,
-    estimateSize: () => 80,
+    estimateSize: () => 96,
     overscan: 5,
   });
 
@@ -140,13 +177,24 @@ export const MessageList = memo(function MessageList({
   // tail. `isStreaming` is also included for symmetry when the streaming item
   // is first appended / removed.
   useEffect(() => {
-    if (items.length > 0 && isAtBottom) {
-      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    if (items.length === 0 || !isAtBottom) return;
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current);
     }
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    });
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
   }, [
     items.length,
-    streamingContent,
-    streamingThinking,
+    streamingContent?.length,
+    streamingThinking?.length,
     isStreaming,
     virtualizer,
     isAtBottom,
@@ -176,7 +224,7 @@ export const MessageList = memo(function MessageList({
               left: 0,
               width: "100%",
               transform: `translateY(${virtualItem.start}px)`,
-              padding: "4px 16px",
+              padding: "6px clamp(14px, 4vw, 48px)",
               overflow: "hidden",
             }}
           >
