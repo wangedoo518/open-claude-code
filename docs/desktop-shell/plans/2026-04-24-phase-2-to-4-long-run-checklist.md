@@ -100,10 +100,14 @@ than an application-code blocker.
   move Wiki task handlers (`absorb`, `absorb/events`, `query`) and their DTOs
   into `handlers/wiki_tasks.rs` while keeping route names stable through crate
   re-exports.
+- [x] Rust server handler split third slice:
+  move Codex runtime/auth and providers.json CRUD handlers into
+  `handlers/provider_runtime.rs` while keeping desktop route names stable
+  through crate re-exports.
 - [ ] Rust server handler split follow-up:
   continue moving handler DTOs and implementations out of `lib.rs` by domain;
-  suggested next slices are provider/runtime handlers, desktop session handlers,
-  then inbox/raw/wiki page CRUD handlers.
+  suggested next slices are desktop session handlers, desktop settings/storage
+  utility handlers, then inbox/raw/wiki page CRUD handlers.
 - [x] Current-truth docs:
   refresh `docs/desktop-shell/architecture/overview.md` and `rust/README.md`
   whenever a slice lands.
@@ -148,5 +152,6 @@ than an application-code blocker.
 - [x] Then Rust route assembly split into domain route modules.
 - [x] Then handler-body split first slice for Wiki report/maintenance handlers.
 - [x] Then handler-body split second slice for query/absorb task handlers.
-- [ ] Next: continue handler-body split with provider/runtime handlers, after
+- [x] Then handler-body split third slice for provider/runtime handlers.
+- [ ] Next: continue handler-body split with desktop session handlers, after
   Phase 2 closure remains green.

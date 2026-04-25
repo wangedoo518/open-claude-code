@@ -57,7 +57,8 @@ This document answers: how `desktop-shell` is currently organized.
   domain. Landed slices include `handlers/wiki_reports.rs` for Wiki cleanup,
   patrol, absorb-log, backlinks index, stats, patrol report, and schema template
   endpoints, plus `handlers/wiki_tasks.rs` for absorb/query task endpoints and
-  absorb progress SSE.
+  absorb progress SSE, plus `handlers/provider_runtime.rs` for Codex
+  runtime/auth and providers.json CRUD endpoints.
 - `desktop-server/src/lib.rs` still owns shared `AppState`, common response
   types, and handler bodies that have not yet moved. New handler-body split
   work should add domain modules instead of growing `lib.rs`.

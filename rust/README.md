@@ -40,8 +40,9 @@ Current upstream pin:
   domain under `crates/desktop-server/src/handlers/`. Landed slices include
   `handlers/wiki_reports.rs` for Wiki cleanup/patrol/report/stat endpoints and
   `handlers/wiki_tasks.rs` for absorb/query task endpoints and absorb progress
-  SSE. Remaining handler bodies still live in `lib.rs` until their domain
-  slices move.
+  SSE, plus `handlers/provider_runtime.rs` for Codex runtime/auth and
+  providers.json CRUD endpoints. Remaining handler bodies still live in
+  `lib.rs` until their domain slices move.
 
 ## Build and verify
 
