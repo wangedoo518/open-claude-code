@@ -14,8 +14,8 @@ import {
   getKefuContactUrl,
   startKefuMonitor,
   stopKefuMonitor,
-} from "@/features/settings/api/client";
-import type { KefuCapabilities } from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
+import type { KefuCapabilities } from "@/api/desktop/settings";
 import { useKefuStatus } from "./useKefuStatus";
 import { kefuQueryKeys } from "./kefu-query-keys";
 

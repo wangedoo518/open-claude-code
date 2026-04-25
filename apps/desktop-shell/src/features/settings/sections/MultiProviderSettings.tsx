@@ -38,7 +38,7 @@ import {
   type DesktopProviderTemplate,
   type ProviderKind,
   type ProviderTestResult,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 
 /**
  * Phase 5.4 — Multi-provider registry UI.

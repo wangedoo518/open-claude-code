@@ -15,7 +15,7 @@ import {
   activateProvider,
   getSettings,
   listProviders,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 
 export function AskPage() {
   const {

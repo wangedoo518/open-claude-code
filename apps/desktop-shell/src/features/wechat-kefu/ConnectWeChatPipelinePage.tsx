@@ -24,11 +24,11 @@ import {
   getKefuPipelineStatus,
   cancelKefuPipeline,
   getKefuContactUrl,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 import type {
   KefuPipelineState,
   PipelinePhaseState,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 import { kefuQueryKeys } from "./kefu-query-keys";
 import { useSettingsStore } from "@/state/settings-store";
 

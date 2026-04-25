@@ -37,8 +37,9 @@ This document answers: how `desktop-shell` is currently organized.
 - `features/inbox/candidate-scoring.ts` and
   `features/inbox/target-resolver.ts` are legacy compatibility re-exports for
   `src/domain/wiki`.
-- `features/ask/api/client.ts` and `features/settings/api/client.ts` are
-  legacy compatibility re-exports for `src/api/desktop`.
+- `features/ask/api/client.ts`, `features/settings/api/client.ts`, and
+  `features/settings/api/private-cloud.ts` are legacy compatibility re-exports
+  for `src/api/desktop`.
 
 ## State Ownership
 

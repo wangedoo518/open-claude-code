@@ -28,7 +28,7 @@ import {
   activateProvider,
   getSettings,
   listProviders,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 
 export function ChatSidePanel() {
   const collapsed = useSettingsStore((s) => s.chatPanelCollapsed);

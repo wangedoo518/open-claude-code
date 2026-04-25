@@ -53,8 +53,8 @@ import {
   getPatrolReport,
   triggerPatrol,
 } from "@/api/wiki/repository";
-import { getBootstrap, getKefuStatus } from "@/features/settings/api/client";
-import { getBrokerStatus } from "@/features/settings/api/private-cloud";
+import { getBootstrap, getKefuStatus } from "@/api/desktop/settings";
+import { getBrokerStatus } from "@/api/desktop/private-cloud";
 import { SkillCard } from "@/components/ds/SkillCard";
 import { StatCard } from "@/components/ds/StatCard";
 

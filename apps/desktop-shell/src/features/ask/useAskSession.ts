@@ -47,7 +47,7 @@ import {
 // cwd), which on the gray build is the outer repo root and therefore
 // never contains `.claw/providers.json` — so `model_label` stays on the
 // "Opus 4.6" placeholder forever. See corrections.jsonl 2026-04-21.
-import { getSettings } from "@/features/settings/api/client";
+import { getSettings } from "@/api/desktop/settings";
 import type {
   ContextMode,
   DesktopSessionDetail,

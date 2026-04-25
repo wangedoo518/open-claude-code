@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { getKefuStatus } from "@/features/settings/api/client";
-import type { KefuStatus } from "@/features/settings/api/client";
+import { getKefuStatus } from "@/api/desktop/settings";
+import type { KefuStatus } from "@/api/desktop/settings";
 import { kefuQueryKeys } from "./kefu-query-keys";
 
 export type ChannelStatus =

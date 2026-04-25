@@ -54,7 +54,7 @@ import {
   type WeChatAccountStatus,
   type WeChatLoginStartResponse,
   type WeChatLoginStatusResponse,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 import { formatIngestError } from "@/lib/ingest/format-error";
 import { EnvironmentDoctor } from "@/components/EnvironmentDoctor";
 import { RecentIngestCard } from "@/components/RecentIngestCard";

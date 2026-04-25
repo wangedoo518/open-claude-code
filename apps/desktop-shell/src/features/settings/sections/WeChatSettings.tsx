@@ -30,7 +30,7 @@ import {
   type WeChatAccountSummary,
   type WeChatLoginStatus,
   type WeChatLoginStatusResponse,
-} from "@/features/settings/api/client";
+} from "@/api/desktop/settings";
 
 /**
  * Phase 6C — WeChat account management UI.

@@ -81,6 +81,10 @@ than an application-code blocker.
 - [x] Desktop API first slice:
   move session and settings/provider/wechat desktop HTTP clients under
   `src/api/desktop`, with old feature paths kept as compatibility re-exports.
+- [x] Desktop API consumer migration:
+  move active settings, WeChat, Ask, Dashboard, and private-cloud imports from
+  `features/settings/api/*` to `src/api/desktop/*`; keep old feature paths as
+  compatibility re-exports only.
 - [x] Wiki repository boundary:
   migrate common Wiki data access from `features/ingest/persist.ts` to
   `src/api/wiki` or `src/domain/wiki/repository`.
