@@ -26,9 +26,10 @@ import type {
   ContextMode,
   CreateDesktopSessionResponse,
   DesktopSessionDetail,
+  DesktopSessionEvent,
   DesktopSessionsResponse,
   SourceRef,
-} from "@/lib/tauri";
+} from "@/api/contracts/desktop";
 
 export async function listSessions(): Promise<DesktopSessionsResponse> {
   return fetchJson<DesktopSessionsResponse>("/api/desktop/sessions");
@@ -142,7 +143,7 @@ export async function compactSession(
  */
 export function subscribeToSessionEvents(
   sessionId: string,
-  onEvent: (event: import("@/lib/tauri").DesktopSessionEvent) => void,
+  onEvent: (event: DesktopSessionEvent) => void,
   onError?: (error: Error) => void,
 ): AbortController {
   const controller = new AbortController();
@@ -184,7 +185,7 @@ export function subscribeToSessionEvents(
             const jsonStr = dataLines.join("\n");
             dataLines = [];
             try {
-              const event = JSON.parse(jsonStr) as import("@/lib/tauri").DesktopSessionEvent;
+              const event = JSON.parse(jsonStr) as DesktopSessionEvent;
               onEvent(event);
             } catch (parseErr) {
               console.warn("[sse] dropped malformed event:", jsonStr.slice(0, 200), parseErr);

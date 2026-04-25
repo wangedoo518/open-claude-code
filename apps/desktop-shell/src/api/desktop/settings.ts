@@ -10,7 +10,7 @@ import type {
   DesktopManagedAuthLoginSessionResponse,
   DesktopManagedAuthProvidersResponse,
   DesktopSettingsResponse,
-} from "@/lib/tauri";
+} from "@/api/contracts/desktop";
 
 // S0.4: getBootstrap moved here from features/workbench/api/client.ts
 // (deleted on cut day). It's the only function from that file with a

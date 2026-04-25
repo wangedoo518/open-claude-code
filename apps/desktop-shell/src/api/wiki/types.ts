@@ -461,3 +461,211 @@ export interface QuerySource {
   relevance_score: number;
   snippet: string;
 }
+
+// Workbench API extensions formerly exported from `lib/tauri.ts`.
+
+export interface BatchFailedItem {
+  id: number;
+  error: string;
+}
+
+export interface BatchResolveInboxResponse {
+  success: number[];
+  failed: BatchFailedItem[];
+  total: number;
+  processed: number;
+}
+
+export interface CombinedProposalSource {
+  inbox_id: number;
+  title: string;
+  source_raw_id?: number | null;
+}
+
+export interface CombinedProposalRequest {
+  target_slug: string;
+  inbox_ids: number[];
+}
+
+export interface CombinedProposalResponse {
+  target_slug: string;
+  inbox_ids: number[];
+  before_markdown: string;
+  after_markdown: string;
+  summary: string;
+  before_hash: string;
+  generated_at: number;
+  source_titles: CombinedProposalSource[];
+}
+
+export interface CombinedApplyRequest {
+  target_slug: string;
+  inbox_ids: number[];
+  expected_before_hash: string;
+  after_markdown: string;
+  summary: string;
+}
+
+export type CombinedApplyOutcome =
+  | "applied"
+  | "partial_applied"
+  | "concurrent_edit"
+  | "stale_inbox";
+
+export interface CombinedApplyResponse {
+  outcome: CombinedApplyOutcome;
+  target_page_slug: string;
+  applied_inbox_ids: number[];
+  failed_inbox_ids?: number[];
+  audit_entry: string;
+}
+
+export type CandidateTier = "strong" | "likely" | "weak";
+
+export type CandidateSource =
+  | "existing_target"
+  | "existing_proposed"
+  | "resolved";
+
+export interface CandidateReason {
+  code: string;
+  weight: number;
+  detail: string;
+}
+
+export interface TargetCandidate {
+  slug: string;
+  title: string;
+  score: number;
+  tier: CandidateTier;
+  source: CandidateSource;
+  reasons: CandidateReason[];
+}
+
+export interface InboxCandidatesResponse {
+  inbox_id: number;
+  candidates: TargetCandidate[];
+}
+
+export interface RelatedPageHit {
+  slug: string;
+  title: string;
+  category: string;
+  summary?: string;
+  reasons: string[];
+  score: number;
+}
+
+export interface PageGraphNode {
+  slug: string;
+  title: string;
+  category: string;
+}
+
+export interface PageGraph {
+  slug: string;
+  title: string;
+  category: string;
+  summary?: string;
+  outgoing: PageGraphNode[];
+  backlinks: PageGraphNode[];
+  related: RelatedPageHit[];
+}
+
+export type IngestDecision =
+  | { kind: "created_new" }
+  | { kind: "reused_with_pending_inbox"; reason: string }
+  | { kind: "reused_approved"; reason: string }
+  | { kind: "reused_after_reject"; reason: string }
+  | { kind: "reused_silent"; reason: string }
+  | { kind: "explicit_reingest"; previous_raw_id: number }
+  | {
+      kind: "refreshed_content";
+      previous_raw_id: number;
+      previous_content_hash: string;
+    }
+  | {
+      kind: "content_duplicate";
+      matching_raw_id: number;
+      matching_url: string;
+    };
+
+export type RecentIngestOutcomeKind =
+  | "ingested"
+  | "reused_existing"
+  | "inbox_suppressed"
+  | "fallback_to_text"
+  | "rejected_quality"
+  | "fetch_failed"
+  | "prerequisite_missing"
+  | "invalid_url";
+
+export interface RecentIngestEntry {
+  timestamp_ms: number;
+  canonical_url: string;
+  original_url: string;
+  entry_point: string;
+  outcome_kind: RecentIngestOutcomeKind;
+  decision?: IngestDecision | null;
+  raw_id?: number | null;
+  inbox_id?: number | null;
+  adapter?: string | null;
+  duration_ms?: number | null;
+  summary: string;
+  decision_reason?: string | null;
+  content_hash?: string | null;
+  content_hash_hit?: boolean | null;
+}
+
+export interface RecentIngestStats {
+  by_kind: Record<string, number>;
+  by_entry_point: Record<string, number>;
+}
+
+export interface RecentIngestResponse {
+  decisions: RecentIngestEntry[];
+  total: number;
+  capacity: number;
+  stats?: RecentIngestStats;
+}
+
+export type LineageEventType =
+  | "raw_written"
+  | "inbox_appended"
+  | "proposal_generated"
+  | "wiki_page_applied"
+  | "combined_wiki_page_applied"
+  | "inbox_rejected"
+  | "wechat_message_received"
+  | "url_ingested";
+
+export type LineageRef =
+  | { kind: "raw"; id: number }
+  | { kind: "inbox"; id: number }
+  | { kind: "wiki_page"; slug: string; title?: string }
+  | { kind: "wechat_message"; event_key: string }
+  | { kind: "url_source"; canonical: string };
+
+export interface LineageEvent {
+  event_id: string;
+  event_type: LineageEventType;
+  timestamp_ms: number;
+  upstream: LineageRef[];
+  downstream: LineageRef[];
+  display_title: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WikiLineageResponse {
+  events: LineageEvent[];
+  total_count: number;
+}
+
+export interface InboxLineageResponse {
+  upstream_events: LineageEvent[];
+  downstream_events: LineageEvent[];
+}
+
+export interface RawLineageResponse {
+  events: LineageEvent[];
+}

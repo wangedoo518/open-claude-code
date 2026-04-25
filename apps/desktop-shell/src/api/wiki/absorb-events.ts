@@ -1,4 +1,4 @@
-import type { DesktopSessionEvent } from "@/lib/tauri";
+import type { DesktopSessionEvent } from "@/api/contracts/desktop";
 
 export type AbsorbEvent = Extract<
   DesktopSessionEvent,

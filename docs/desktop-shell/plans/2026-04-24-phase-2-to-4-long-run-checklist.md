@@ -74,7 +74,7 @@ than an application-code blocker.
 - [x] Route config single source of truth:
   `CLAWWIKI_ROUTES`, sidebar, palette, and `<Routes>` must derive from one
   canonical route config, including `/connect-wechat`.
-- [ ] Frontend API boundary:
+- [x] Frontend API boundary:
   split `src/lib/tauri.ts` into neutral contracts and API clients under
   `src/api/desktop`, `src/api/wiki`, `src/api/wechat`, and
   `src/api/contracts`.
@@ -125,10 +125,11 @@ than an application-code blocker.
   move WeChat account login, bridge health/config, and Kefu
   account/monitor/callback/pipeline handlers into `handlers/wechat.rs` while
   keeping route names stable through crate re-exports.
-- [ ] Rust server handler split follow-up:
-  continue moving handler DTOs and implementations out of `lib.rs` by domain;
-  remaining suggested next slices are desktop storage utility handlers, then
-  inbox/raw/wiki page CRUD handlers.
+- [x] Rust server handler split follow-up:
+  moved desktop storage/doctor utility handlers into
+  `handlers/desktop_storage.rs`, and moved inbox/raw/wiki page CRUD,
+  lineage, proposal, combined-merge, and inbox notification handlers into
+  `handlers/wiki_crud.rs`.
 - [x] Current-truth docs:
   refresh `docs/desktop-shell/architecture/overview.md` and `rust/README.md`
   whenever a slice lands.
@@ -183,7 +184,7 @@ than an application-code blocker.
 - [x] Then handler-body split third slice for provider/runtime handlers.
 - [x] Then handler-body split fourth/fifth/sixth slices for desktop
   sessions/utilities and WeChat account/Kefu handlers.
-- [ ] Next: continue handler-body split with desktop storage utilities or
+- [x] Finish handler-body split with desktop storage utilities and
   inbox/raw/wiki page CRUD, after Phase 2/3 closure remains green.
-- [ ] Parallel architecture debt: finish the remaining `src/lib/tauri.ts`
-  contract/API split without reintroducing feature-layer imports.
+- [x] Finish the remaining `src/lib/tauri.ts` contract/API split without
+  reintroducing feature-layer imports.

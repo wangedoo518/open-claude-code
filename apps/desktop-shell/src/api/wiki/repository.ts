@@ -455,7 +455,7 @@ export async function cancelProposal(inboxId: number): Promise<void> {
 // the page graph client-side, so `with_graph` is silently dropped in
 // the fallback branch.
 
-import type { InboxCandidatesResponse } from "@/lib/tauri";
+import type { InboxCandidatesResponse } from "@/api/wiki/types";
 
 export async function fetchInboxCandidates(
   id: number,

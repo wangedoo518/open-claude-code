@@ -64,10 +64,14 @@ This document answers: how `desktop-shell` is currently organized.
   binding, session SSE, compaction, and permission forwarding, plus
   `handlers/desktop_utilities.rs` for desktop bootstrap/settings,
   scheduled/dispatch CRUD, attachments, skills, MCP debug, and permission-mode
-  endpoints.
-- `desktop-server/src/lib.rs` still owns shared `AppState`, common response
-  types, and handler bodies that have not yet moved. New handler-body split
-  work should add domain modules instead of growing `lib.rs`.
+  endpoints, plus `handlers/desktop_storage.rs` for storage migration,
+  MarkItDown/WeChat fetch helpers, URL-ingest diagnostics, and environment
+  doctor probes, plus `handlers/wiki_crud.rs` for raw/inbox/page CRUD,
+  lineage, proposal, combined-merge, and inbox notification handlers.
+- `desktop-server/src/lib.rs` owns shared `AppState`, common response types,
+  private-cloud-only broker routes, shutdown wiring, and top-level Router
+  assembly. New handler-body work should add domain modules instead of growing
+  `lib.rs`.
 
 ## Change Policy
 
