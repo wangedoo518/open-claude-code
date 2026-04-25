@@ -1,11 +1,7 @@
-use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::time::Duration;
 
-use async_stream::stream;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -16,9 +12,8 @@ use desktop_core::{
     DesktopCodexRuntimeState, DesktopCustomizeState, DesktopDispatchItem, DesktopDispatchState,
     DesktopManagedAuthAccount, DesktopManagedAuthLoginSessionSnapshot, DesktopManagedAuthProvider,
     DesktopScheduledState, DesktopScheduledTask, DesktopSearchHit, DesktopSessionDetail,
-    DesktopSessionEvent, DesktopSessionSummary, DesktopSettingsState, DesktopState,
-    DesktopStateError, DesktopWorkbench, UpdateDesktopDispatchItemStatusRequest,
-    UpdateDesktopScheduledTaskRequest,
+    DesktopSessionSummary, DesktopSettingsState, DesktopState, DesktopStateError, DesktopWorkbench,
+    UpdateDesktopDispatchItemStatusRequest, UpdateDesktopScheduledTaskRequest,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -26,6 +21,13 @@ use tower_http::cors::{Any, CorsLayer};
 
 mod handlers;
 mod routes;
+pub(crate) use handlers::desktop_sessions::{
+    append_message, bind_source_handler, cancel_session, cleanup_empty_sessions_handler,
+    clear_source_binding_handler, compact_session, create_session, delete_session_handler,
+    fork_session, forward_permission, get_session, list_sessions, rename_session, resume_session,
+    search_sessions, set_session_flag_handler, set_session_lifecycle_handler,
+    stream_session_events, to_sse_event,
+};
 pub(crate) use handlers::provider_runtime::{
     activate_codex_auth_profile, activate_provider_handler, begin_codex_login,
     begin_managed_auth_login, codex_auth_overview, codex_runtime, delete_provider_handler,
@@ -287,11 +289,6 @@ pub struct HealthResponse {
     pub status: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct SearchQuery {
-    q: Option<String>,
-}
-
 type ApiError = (StatusCode, Json<ErrorResponse>);
 type ApiResult<T> = Result<T, ApiError>;
 
@@ -431,24 +428,6 @@ async fn settings(State(state): State<AppState>) -> Json<DesktopSettingsResponse
     })
 }
 
-async fn list_sessions(State(state): State<AppState>) -> Json<DesktopSessionsResponse> {
-    Json(DesktopSessionsResponse {
-        sessions: state.desktop().list_sessions().await,
-    })
-}
-
-async fn search_sessions(
-    State(state): State<AppState>,
-    Query(query): Query<SearchQuery>,
-) -> Json<SearchDesktopSessionsResponse> {
-    Json(SearchDesktopSessionsResponse {
-        results: state
-            .desktop()
-            .search_sessions(query.q.as_deref().unwrap_or_default())
-            .await,
-    })
-}
-
 /// Helper: validate an optional `project_path` field from a request body.
 ///
 /// Accepts `None` and empty strings (both fall through unchanged). Non-empty
@@ -463,21 +442,6 @@ fn validate_optional_project_path(path: &Option<String>) -> Result<(), ApiError>
         }
     }
     Ok(())
-}
-
-async fn create_session(
-    State(state): State<AppState>,
-    Json(payload): Json<CreateDesktopSessionRequest>,
-) -> ApiResult<(StatusCode, Json<CreateDesktopSessionResponse>)> {
-    // IM-01: reject path traversal / nonexistent project paths at the edge,
-    // before a session is created and persisted with bad metadata.
-    validate_optional_project_path(&payload.project_path)?;
-
-    let session = state.desktop().create_session(payload).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(CreateDesktopSessionResponse { session }),
-    ))
 }
 
 async fn create_scheduled_task(
@@ -565,129 +529,6 @@ async fn run_scheduled_task_now(
     Ok(Json(DesktopScheduledTaskResponse { task }))
 }
 
-async fn get_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<DesktopSessionDetail>> {
-    let session = state
-        .desktop()
-        .get_session(&id)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(session))
-}
-
-async fn append_message(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(payload): Json<AppendDesktopMessageRequest>,
-) -> ApiResult<Json<AppendDesktopMessageResponse>> {
-    // A1: forward the opt-in `mode` field from the HTTP body to the
-    // state-layer entry point. `None` (missing field on the wire)
-    // maps to `ContextMode::FollowUp` inside `append_user_message`,
-    // so old clients keep their behaviour.
-    let session = state
-        .desktop()
-        .append_user_message(&id, payload.message, payload.mode)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(AppendDesktopMessageResponse { session }))
-}
-
-/// A2 — request body for `POST .../sessions/{id}/bind`.
-///
-/// Wraps the tagged `SourceRef` and optional free-form `reason`. Using
-/// a wrapper instead of a plain `SourceRef` keeps the JSON shape
-/// explicit and leaves room for future per-bind knobs (e.g.
-/// `force_mode: "combine"`, `ttl_minutes: 30`) without another
-/// breaking change.
-#[derive(Debug, Clone, Deserialize)]
-struct BindSourceBody {
-    source: desktop_core::SourceRef,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-/// POST /api/desktop/sessions/{id}/bind
-/// POST /api/ask/sessions/{id}/bind
-///
-/// Bind a session to an explicit internal source. Body shape:
-/// ```json
-/// {
-///   "source": { "kind": "raw", "id": 42, "title": "..." },
-///   "reason": "URL handoff"   // optional
-/// }
-/// ```
-/// Returns 200 + the updated `DesktopSessionDetail` JSON.
-async fn bind_source_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<BindSourceBody>,
-) -> ApiResult<Json<DesktopSessionDetail>> {
-    let session = state
-        .desktop()
-        .bind_source(&id, body.source, body.reason)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(session))
-}
-
-/// DELETE /api/desktop/sessions/{id}/bind
-/// DELETE /api/ask/sessions/{id}/bind
-///
-/// Clear the session's source binding. Returns 200 + the updated
-/// detail (with `source_binding: None`). Idempotent — clearing an
-/// already-unbound session is a no-op write that still echoes the
-/// current state back for UI confirmation.
-async fn clear_source_binding_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<DesktopSessionDetail>> {
-    let session = state
-        .desktop()
-        .clear_source_binding(&id)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(session))
-}
-
-async fn stream_session_events(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<impl IntoResponse> {
-    let (snapshot, mut receiver) = state
-        .desktop()
-        .subscribe(&id)
-        .await
-        .map_err(into_api_error)?;
-
-    let stream = stream! {
-        if let Ok(event) = to_sse_event(&snapshot) {
-            yield Ok::<Event, Infallible>(event);
-        }
-
-        loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    if let Ok(sse_event) = to_sse_event(&event) {
-                        yield Ok::<Event, Infallible>(sse_event);
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    };
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
-}
-
-fn to_sse_event(event: &DesktopSessionEvent) -> Result<Event, serde_json::Error> {
-    Ok(Event::default()
-        .event(event.event_name())
-        .data(serde_json::to_string(event)?))
-}
-
 fn into_api_error(error: DesktopStateError) -> ApiError {
     let status = match error {
         DesktopStateError::SessionNotFound(_) => StatusCode::NOT_FOUND,
@@ -706,158 +547,6 @@ fn into_api_error(error: DesktopStateError) -> ApiError {
             error: error.to_string(),
         }),
     )
-}
-
-// ── Session manipulation handlers ──────────────────────────────────
-
-async fn delete_session_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let deleted = state
-        .desktop
-        .delete_session(&id)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "deleted": deleted })))
-}
-
-/// Body: `{ "except": "<session-id>?" }` — optional session to preserve.
-/// Response: `{ "deleted_ids": ["...", ...], "deleted_count": N }`.
-///
-/// One-click recovery for leftover empty "Ask · new conversation" sessions
-/// produced by the pre-fix `useAskSession` that auto-created on every mount.
-#[derive(Deserialize, Default)]
-struct CleanupEmptyRequest {
-    #[serde(default)]
-    except: Option<String>,
-}
-
-async fn cleanup_empty_sessions_handler(
-    State(state): State<AppState>,
-    body: Option<Json<CleanupEmptyRequest>>,
-) -> Json<serde_json::Value> {
-    let req = body.map(|b| b.0).unwrap_or_default();
-    let deleted = state
-        .desktop
-        .cleanup_empty_sessions(req.except.as_deref())
-        .await;
-    let count = deleted.len();
-    Json(serde_json::json!({
-        "deleted_ids": deleted,
-        "deleted_count": count,
-    }))
-}
-
-async fn rename_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let title = body["title"].as_str().unwrap_or("Untitled");
-    state
-        .desktop
-        .rename_session(&id, title)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-async fn cancel_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .desktop
-        .cancel_session(&id)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-async fn resume_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let session = state
-        .desktop
-        .resume_session(&id)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "session": session })))
-}
-
-async fn fork_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let message_index = body
-        .get("message_index")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
-    let session = state
-        .desktop
-        .fork_session(&id, message_index)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "session": session })))
-}
-
-/// Update a session's lifecycle status (Todo / InProgress / NeedsReview
-/// / Done / Archived). Body: `{ "status": "needs_review" }`.
-async fn set_session_lifecycle_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let status_str = body.get("status").and_then(|v| v.as_str()).ok_or_else(|| {
-        (
-            axum::http::StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "missing status field".to_string(),
-            }),
-        )
-    })?;
-    let status = match status_str {
-        "todo" => desktop_core::DesktopLifecycleStatus::Todo,
-        "in_progress" => desktop_core::DesktopLifecycleStatus::InProgress,
-        "needs_review" => desktop_core::DesktopLifecycleStatus::NeedsReview,
-        "done" => desktop_core::DesktopLifecycleStatus::Done,
-        "archived" => desktop_core::DesktopLifecycleStatus::Archived,
-        other => {
-            return Err((
-                axum::http::StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: format!("invalid status value: {other}"),
-                }),
-            ));
-        }
-    };
-    let session = state
-        .desktop
-        .set_session_lifecycle_status(&id, status)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "session": session })))
-}
-
-/// Toggle the flagged bit on a session. Body: `{ "flagged": true }`.
-async fn set_session_flag_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let flagged = body
-        .get("flagged")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let session = state
-        .desktop
-        .set_session_flagged(&id, flagged)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "session": session })))
 }
 
 /// List workspace skills discovered under `<project_path>/.claude/skills/`.
@@ -1146,78 +835,6 @@ async fn get_permission_mode_handler(
         .await
         .map_err(into_api_error)?;
     Ok(Json(serde_json::json!({ "mode": mode })))
-}
-
-async fn compact_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let session = state
-        .desktop
-        .compact_session_messages(&id)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(
-        serde_json::json!({ "compacted": true, "session": session }),
-    ))
-}
-
-/// Forward a permission decision (allow/deny) to an in-flight session.
-///
-/// Request body (all fields required):
-/// ```json
-/// { "requestId": "<id>", "decision": "allow" | "deny" }
-/// ```
-///
-/// IM-05: previous version accepted `requestId: ""` and silently coerced
-/// missing `decision` to "deny", which hid client bugs and made test
-/// failures opaque. This handler now fails fast with 400 on missing or
-/// invalid fields.
-async fn forward_permission(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let request_id = body
-        .get("requestId")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "missing or empty requestId".to_string(),
-                }),
-            )
-        })?;
-
-    let decision = body
-        .get("decision")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "missing decision".to_string(),
-                }),
-            )
-        })?;
-
-    if !matches!(decision, "allow" | "deny") {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!("invalid decision: {decision} (expected: allow | deny)"),
-            }),
-        ));
-    }
-
-    state
-        .desktop
-        .forward_permission_decision(&id, request_id, decision)
-        .await
-        .map_err(into_api_error)?;
-    Ok(Json(serde_json::json!({ "forwarded": true })))
 }
 
 // ── Scheduled task extended CRUD handlers ──────────────────────────

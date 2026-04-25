@@ -41,8 +41,10 @@ Current upstream pin:
   `handlers/wiki_reports.rs` for Wiki cleanup/patrol/report/stat endpoints and
   `handlers/wiki_tasks.rs` for absorb/query task endpoints and absorb progress
   SSE, plus `handlers/provider_runtime.rs` for Codex runtime/auth and
-  providers.json CRUD endpoints. Remaining handler bodies still live in
-  `lib.rs` until their domain slices move.
+  providers.json CRUD endpoints, plus `handlers/desktop_sessions.rs` for
+  desktop/ask session lifecycle, source binding, session SSE, compaction, and
+  permission forwarding. Remaining handler bodies still live in `lib.rs` until
+  their domain slices move.
 
 ## Build and verify
 
