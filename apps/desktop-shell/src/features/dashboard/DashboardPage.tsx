@@ -44,6 +44,7 @@ import {
   ArrowRight,
   Sparkles,
 } from "lucide-react";
+import type { PatrolReport } from "@/api/wiki/types";
 import {
   listRawEntries,
   listInboxEntries,
@@ -247,6 +248,14 @@ export function DashboardPage() {
         </section>
 
         {/* 5) Advanced · Patrol Summary collapsed by default */}
+        <PatrolQualityPanel
+          report={patrolQuery.data ?? null}
+          isLoading={patrolQuery.isLoading}
+          isRefreshing={patrolQuery.isFetching}
+          error={patrolQuery.error instanceof Error ? patrolQuery.error : null}
+          onRun={() => triggerPatrol().then(() => patrolQuery.refetch())}
+        />
+
         <details className="group mx-auto mt-8 max-w-[1040px] px-6">
           <summary className="flex cursor-pointer items-center gap-2 rounded-md border border-border/40 px-4 py-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/40">
             <Sparkles className="size-3.5" strokeWidth={1.5} />
@@ -365,6 +374,141 @@ export function DashboardPage() {
 }
 
 /* ─── Activity feed (compact, replaces old RecentEntries block) ── */
+
+function PatrolQualityPanel({
+  report,
+  isLoading,
+  isRefreshing,
+  error,
+  onRun,
+}: {
+  report: PatrolReport | null;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  error: Error | null;
+  onRun: () => Promise<unknown>;
+}) {
+  const summary = report?.summary;
+  const issueTotal = summary
+    ? Object.values(summary).reduce((sum, value) => sum + value, 0)
+    : 0;
+  const checkedAt = report?.checked_at
+    ? report.checked_at.slice(0, 19).replace("T", " ")
+    : "not run yet";
+  const cards = summary
+    ? [
+        {
+          label: "Schema",
+          count: summary.schema_violations,
+          href: "/schema",
+          tone: "danger" as const,
+          hint: "template and required-field drift",
+        },
+        {
+          label: "Orphans",
+          count: summary.orphans,
+          href: "/wiki",
+          tone: "warn" as const,
+          hint: "pages without incoming links",
+        },
+        {
+          label: "Stale",
+          count: summary.stale,
+          href: "/wiki",
+          tone: "muted" as const,
+          hint: "pages past verification window",
+        },
+        {
+          label: "Oversized",
+          count: summary.oversized,
+          href: "/graph",
+          tone: "warn" as const,
+          hint: "split candidates for /breakdown",
+        },
+      ]
+    : [];
+
+  return (
+    <section className="mx-auto mt-8 max-w-[1040px] px-6">
+      <div className="rounded-2xl border border-border/50 bg-card/80 p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground/60">
+              Wiki Patrol
+            </div>
+            <h2 className="mt-1 text-[18px] font-semibold text-foreground">
+              Knowledge quality signal
+            </h2>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              {isLoading
+                ? "Loading the latest quality report..."
+                : error
+                  ? `Patrol report failed: ${error.message}`
+                  : report
+                    ? `${issueTotal} open quality signals. Last checked ${checkedAt}.`
+                    : "No patrol report yet. Run a scan to populate quality cards."}
+            </p>
+          </div>
+          <button
+            onClick={() => void onRun()}
+            disabled={isRefreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-[12px] font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60"
+          >
+            {isRefreshing ? (
+              <Loader2 className="size-3.5 animate-spin" strokeWidth={1.5} />
+            ) : (
+              <Sparkles className="size-3.5" strokeWidth={1.5} />
+            )}
+            Run patrol
+          </button>
+        </div>
+
+        {summary ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {cards.map((card) => (
+              <Link
+                key={card.label}
+                to={card.href}
+                className="group rounded-xl border border-border/50 bg-background/70 p-3 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-medium text-muted-foreground">
+                      {card.label}
+                    </div>
+                    <div
+                      className="mt-1 text-[24px] font-semibold"
+                      style={{ color: patrolToneColor(card.tone) }}
+                    >
+                      {card.count}
+                    </div>
+                  </div>
+                  <ArrowRight
+                    className="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                    strokeWidth={1.5}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] leading-4 text-muted-foreground/70">
+                  {card.hint}
+                </p>
+              </Link>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function patrolToneColor(tone: "danger" | "warn" | "muted") {
+  if (tone === "danger") {
+    return "var(--color-destructive)";
+  }
+  if (tone === "warn") {
+    return "var(--color-warning, #C88B1A)";
+  }
+  return "var(--color-muted-foreground)";
+}
 
 function ActivityFeed({
   isLoading,

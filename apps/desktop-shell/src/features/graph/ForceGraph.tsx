@@ -32,6 +32,7 @@ interface ForceNode {
 interface ForceEdge {
   source: string;
   target: string;
+  kind: "derived-from" | "references";
 }
 
 interface NodePosition {
@@ -186,6 +187,7 @@ export function ForceGraph({
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery ?? "");
   const [selectedGroup, setSelectedGroup] = useState<NodeCategory | null>(null);
+  const [selectedRelation, setSelectedRelation] = useState<ForceEdge["kind"] | null>(null);
   const [, forceRender] = useState(0);
 
   // Build nodes + edges from graph data
@@ -234,10 +236,32 @@ export function ForceGraph({
     const nodeIds = new Set(nodes.map((n) => n.id));
     const edges: ForceEdge[] = graphData.edges
       .filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to) && e.from !== e.to)
-      .map((e) => ({ source: e.from, target: e.to }));
+      .map((e) => ({ source: e.from, target: e.to, kind: e.kind }));
 
     return { nodes, edges };
   }, [graphData, rawEntries]);
+
+  const visibleEdges = useMemo(
+    () => edges.filter((edge) => !selectedRelation || edge.kind === selectedRelation),
+    [edges, selectedRelation]
+  );
+
+  const relationItems = useMemo(() => {
+    const counts = new Map<ForceEdge["kind"], number>();
+    edges.forEach((edge) => counts.set(edge.kind, (counts.get(edge.kind) ?? 0) + 1));
+    return [
+      {
+        kind: "derived-from" as const,
+        label: "Sources",
+        count: counts.get("derived-from") ?? 0,
+      },
+      {
+        kind: "references" as const,
+        label: "Wikilinks",
+        count: counts.get("references") ?? 0,
+      },
+    ].filter((item) => item.count > 0);
+  }, [edges]);
 
   // Group → category mapping & cluster centers
   const nodeGroupMap = useMemo(() => {
@@ -536,12 +560,12 @@ export function ForceGraph({
   const connectedNodes = useMemo(() => {
     if (!activeNodeId) return null;
     const s = new Set([activeNodeId]);
-    edges.forEach((e) => {
+    visibleEdges.forEach((e) => {
       if (e.source === activeNodeId) s.add(e.target);
       if (e.target === activeNodeId) s.add(e.source);
     });
     return s;
-  }, [activeNodeId, edges]);
+  }, [activeNodeId, visibleEdges]);
 
   // Search
   const searchMatchingNodes = useMemo(() => {
@@ -552,12 +576,12 @@ export function ForceGraph({
       if (n.label.toLowerCase().includes(q) || n.id.toLowerCase().includes(q)) direct.add(n.id);
     });
     const withConn = new Set(direct);
-    edges.forEach((e) => {
+    visibleEdges.forEach((e) => {
       if (direct.has(e.source)) withConn.add(e.target);
       if (direct.has(e.target)) withConn.add(e.source);
     });
     return { matches: withConn, directMatches: direct };
-  }, [searchQuery, nodes, edges]);
+  }, [searchQuery, nodes, visibleEdges]);
 
   // Unique colors for glow filters
   const uniqueColors = useMemo(
@@ -606,6 +630,36 @@ export function ForceGraph({
         </div>
       )}
 
+      {relationItems.length > 0 && (
+        <div
+          className="absolute left-3 top-3 z-20 rounded-md border border-border/80 bg-background/90 px-3 py-2 text-xs text-foreground shadow-sm backdrop-blur"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground">
+            Relations
+          </div>
+          <div className="grid gap-1">
+            {relationItems.map((item) => {
+              const isSelected = selectedRelation === item.kind;
+              return (
+                <button
+                  key={item.kind}
+                  onClick={() => setSelectedRelation(isSelected ? null : item.kind)}
+                  className={`flex items-center gap-2 rounded px-1.5 py-1 text-left transition-colors hover:bg-foreground/10 ${
+                    isSelected ? "bg-foreground/15" : ""
+                  }`}
+                >
+                  <span className="inline-flex h-2.5 w-2.5 rounded-full bg-foreground/45" />
+                  <span className="truncate">{item.label}</span>
+                  <span className="ml-auto text-muted-foreground">{item.count}</span>
+                  <X className={`size-3 ${isSelected ? "text-muted-foreground" : "invisible"}`} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* SVG Canvas */}
       <svg
         className="h-full w-full touch-none"
@@ -642,7 +696,7 @@ export function ForceGraph({
 
         <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
           {/* Edges — arc paths */}
-          {edges.map((edge, i) => {
+          {visibleEdges.map((edge, i) => {
             const source = displayPositions.get(edge.source);
             const target = displayPositions.get(edge.target);
             if (!source || !target) return null;

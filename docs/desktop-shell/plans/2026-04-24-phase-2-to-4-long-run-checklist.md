@@ -114,7 +114,7 @@ than an application-code blocker.
 
 ## Phase 3: Patrol And Quality
 
-- [ ] Promote `wiki_patrol` from local checks to a user-visible dashboard
+- [x] Promote `wiki_patrol` from local checks to a user-visible dashboard
   signal.
 - [ ] Add orphan, stale, schema violation, oversized, stub, confidence decay,
   and uncrystallized detectors as explicit patrol categories.
@@ -125,7 +125,9 @@ than an application-code blocker.
 
 ## Phase 4: Power Tools And Viewer
 
-- [ ] Graph View enhancements: richer relation filters, backlinks, and source
+- [x] Graph View enhancements first slice: relation-kind filters for
+  `derived-from` source edges and `references` wikilink edges.
+- [ ] Graph View enhancements follow-up: backlinks and source
   drilldown.
 - [ ] `/cleanup`: patrol-backed cleanup proposal flow.
 - [ ] `/breakdown`: split oversized or mixed-topic pages into maintainable
