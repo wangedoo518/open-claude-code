@@ -173,6 +173,14 @@ than an application-code blocker.
 - [x] Provider fallback tests: `cargo test -p desktop-core provider_config`.
 - [ ] Before commit: `git diff --check` and `git status --short`.
 
+## Phase 5: Regression Automation
+
+- [x] Add one-command smoke for Phase 4 power tools:
+  `npm run smoke:phase5` now creates a temp wiki root, starts the real
+  `desktop-server`, verifies `/cleanup` and `/breakdown` over HTTP, builds the
+  shell against that server, and checks `/viewer`, `/viewer/wiki/:slug`, and
+  `/viewer/graph` in a real browser.
+
 ## Current Next Slice
 
 - [x] Phase 2.5 route config single source of truth.

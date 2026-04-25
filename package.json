@@ -6,6 +6,9 @@
   "description": "Desktop application for Claude.ai",
   "main": ".vite/build/index.pre.js",
   "private": true,
+  "scripts": {
+    "smoke:phase5": "node scripts/phase5-power-tools-smoke.mjs"
+  },
   "engines": {
     "node": ">=22.0.0"
   },

@@ -3,7 +3,7 @@ title: Desktop Shell Operations
 doc_type: operation
 status: active
 owner: desktop-shell
-last_verified: 2026-04-06
+last_verified: 2026-04-25
 source_of_truth: true
 related:
   - docs/desktop-shell/README.md
@@ -25,7 +25,24 @@ This document answers: how to maintain and verify `desktop-shell`.
 
 - `cd apps/desktop-shell && npm run build`
 - `cd apps/desktop-shell/src-tauri && cargo check`
+- `cd rust && cargo check --workspace`
 - `git diff --check`
+
+## Phase 5 Smoke
+
+Run the Phase 5 power-tools regression smoke from the repository root:
+
+```bash
+npm run smoke:phase5
+```
+
+The smoke creates a temporary `CLAWWIKI_HOME`, builds and starts the real
+`desktop-server`, verifies `/api/wiki/cleanup?apply=false` and
+`/api/wiki/breakdown` over HTTP, builds `apps/desktop-shell` with a temporary
+`VITE_DESKTOP_API_BASE`, starts Vite preview, then drives `/viewer`,
+`/viewer/wiki/phase5-source`, and `/viewer/graph` in a real browser through
+`playwright-cli`. It requires `cargo`, `npm`, and `npx`; `playwright-cli` is
+downloaded through `npx --package @playwright/cli` when the smoke runs.
 
 ## State Verification
 
