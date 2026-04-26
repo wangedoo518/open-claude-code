@@ -306,10 +306,7 @@ And some closing words after the code block."#;
         // paragraph boundaries.
         assert!(out.len() >= 2);
         // The code block should be in one chunk (not split across two)
-        let chunks_with_code: Vec<_> = out
-            .iter()
-            .filter(|c| c.contains("println!"))
-            .collect();
+        let chunks_with_code: Vec<_> = out.iter().filter(|c| c.contains("println!")).collect();
         assert_eq!(chunks_with_code.len(), 1);
         assert!(chunks_with_code[0].contains("```"));
     }

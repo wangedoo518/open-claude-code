@@ -1,9 +1,9 @@
 /**
- * Graph · 知识图谱 — Rowboat 风格力导向可视化
+ * Graph · 知识图谱 — warm Obsidian-style force graph.
  *
- * 点阵画布 + 毛玻璃节点 + 语义化配色 + 流光边线。
- * 图例和统计已内置于 ForceGraph 组件的浮动面板中，
- * 不再需要右侧 sidebar。
+ * The page owns data loading and routing; ForceGraph keeps the existing
+ * interaction model while rendering a pure cream canvas with dense solid
+ * nodes and fine warm links.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ForceGraph } from "./ForceGraph";
 import { navigateToWikiPage } from "@/features/wiki/navigate-helpers";
 
-export function GraphPage() {
+export function GraphPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   // G1 sprint — focus mode. When the user lands here via a deep link
   // like `/graph?focus=<slug>` (emitted from the Wiki article page's
@@ -44,17 +44,6 @@ export function GraphPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Hero */}
-      <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <h1 className="text-lg text-foreground">
-          知识图谱
-        </h1>
-        <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-          知识的形状。
-        </p>
-      </div>
-
-      {/* Body: Full-bleed force graph */}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {isLoading ? (
           <div className="flex h-full items-center justify-center gap-2 text-caption text-muted-foreground">
@@ -75,6 +64,7 @@ export function GraphPage() {
             graphData={graphData}
             rawEntries={entries}
             initialSearchQuery={focusSlug}
+            showChromeTabs={!embedded}
             onClickConcept={(slug) => {
               // G1 sprint — route the Graph → Wiki handoff through
               // the shared `navigateToWikiPage` helper so the jump

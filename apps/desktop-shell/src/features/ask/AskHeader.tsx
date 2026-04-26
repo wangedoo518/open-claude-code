@@ -1,16 +1,11 @@
-// S0.3 extraction target: Ask page's top content-header strip.
-//
-// Original: features/session-workbench/ContentHeader.tsx. Verbatim port
-// with one behavior change: the `title` default drops from "Warwolf" to
-// "Ask" because this header is mounted inside the Ask page only.
-// Everything else (streaming indicator, model / environment badges,
-// agent-panel toggle, export dropdown) is unchanged so S3 can swap in
-// the ask_runtime-backed props with no template rework.
+/**
+ * AskHeader - compact conversation header for the Ask workspace.
+ *
+ * Model / environment badges are deliberately omitted here; the composer
+ * owns that control surface so the page does not repeat status metadata.
+ */
 
-import { useState, useRef, useEffect } from "react";
-import { Brain, Download, FileJson, FileText } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { Loader2, Settings, Share2 } from "lucide-react";
 
 interface AskHeaderProps {
   title?: string;
@@ -28,147 +23,58 @@ interface AskHeaderProps {
 export function AskHeader({
   title,
   projectPath,
-  modelLabel = "Codex GPT-5.4",
-  environmentLabel = "内置代理",
   isStreaming = false,
-  agentCount = 0,
-  showAgentPanel = false,
-  onToggleAgentPanel,
-  onExportMarkdown,
-  onExportJson,
 }: AskHeaderProps) {
-  // DS1.5 — no default placeholder title. When the session has a real
-  // title (derived from the first user message, per A5-Polish), render
-  // it. Otherwise leave the title area blank so it reads as empty-
-  // canvas instead of a generic "问问题" label the product neither
-  // promises nor needs.
-  const hasTitle = typeof title === "string" && title.trim().length > 0;
+  const trimmedTitle = title?.trim();
+  const displayTitle = trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : "未命名";
+
   return (
-    <div className="flex items-start justify-between px-4 pb-1.5 pt-2.5">
-      {/* Left: title + project path */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          {hasTitle && (
-            <h1 className="ask-serif text-body text-foreground">{title}</h1>
-          )}
-          {isStreaming && (
-            <span className="flex items-center gap-1 text-caption" style={{ color: "var(--deeptutor-primary, var(--claude-orange))" }}>
-              <span
-                className="inline-block size-1.5 animate-pulse rounded-full"
-                style={{ backgroundColor: "var(--deeptutor-primary, var(--claude-orange))" }}
-              />
-              生成中
-            </span>
-          )}
+    <header className="ask-chat-header">
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="text-[13px] text-[#5F5E5A]">新对话</span>
+          <span className="text-[12px] text-[#888780]">·</span>
+          <span className="min-w-0 truncate text-[12px] text-[#888780]">
+            {displayTitle}
+          </span>
         </div>
         {projectPath && (
-          <p className="mt-0.5 truncate text-label text-muted-foreground">
+          <p className="mt-0.5 max-w-[420px] truncate text-[11px] text-[#888780]">
             {projectPath}
           </p>
         )}
       </div>
 
-      {/* Right: badges + agent toggle */}
-      <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
-        <Badge
-          variant="secondary"
-          className="h-[18px] rounded-md px-1.5 text-caption font-medium"
-        >
-          {modelLabel}
-        </Badge>
-        <Badge
-          variant="outline"
-          className="h-[18px] rounded-md px-1.5 text-caption font-medium"
-        >
-          {environmentLabel}
-        </Badge>
-        {onToggleAgentPanel && (
-          <button
-            className={cn(
-              "relative flex h-[18px] items-center gap-1 rounded-md border px-1.5 text-caption font-medium transition-colors",
-              showAgentPanel
-                ? "border-[color:var(--deeptutor-purple)]/30 bg-[color:var(--deeptutor-purple)]/10 text-[color:var(--deeptutor-purple)]"
-                : "border-border/50 text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
-            onClick={onToggleAgentPanel}
-          >
-            <Brain className="size-3" />
-            {agentCount > 0 && (
-              <span>{agentCount}</span>
-            )}
-          </button>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {isStreaming && (
+          <span className="mr-1 inline-flex items-center gap-1.5 rounded-full bg-[#FAECE7] px-2 py-1 text-[11px] text-[#D85A30]">
+            <Loader2 className="size-3 animate-spin" />
+            正在回答
+          </span>
         )}
-        {(onExportMarkdown || onExportJson) && (
-          <ExportDropdown
-            onExportMarkdown={onExportMarkdown}
-            onExportJson={onExportJson}
-          />
-        )}
+        <button
+          type="button"
+          className="ask-chat-header-button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(window.location.href);
+          }}
+          title="复制当前对话链接"
+          aria-label="复制当前对话链接"
+        >
+          <Share2 className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          className="ask-chat-header-button"
+          onClick={() => {
+            window.location.hash = "#/settings";
+          }}
+          title="打开设置"
+          aria-label="打开设置"
+        >
+          <Settings className="size-3.5" />
+        </button>
       </div>
-    </div>
-  );
-}
-
-/* ─── Export Dropdown ─────────────────────────────────────────── */
-
-function ExportDropdown({
-  onExportMarkdown,
-  onExportJson,
-}: {
-  onExportMarkdown?: () => void;
-  onExportJson?: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        className="flex h-[18px] items-center gap-1 rounded-md border border-border/50 px-1.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        onClick={() => setOpen((v) => !v)}
-        title="导出会话"
-      >
-        <Download className="size-3" />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-[140px] rounded-md border border-border bg-popover py-1 shadow-md">
-          {onExportMarkdown && (
-            <button
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-label text-popover-foreground transition-colors hover:bg-accent"
-              onClick={() => {
-                onExportMarkdown();
-                setOpen(false);
-              }}
-            >
-              <FileText className="size-3" />
-              导出为 Markdown
-            </button>
-          )}
-          {onExportJson && (
-            <button
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-label text-popover-foreground transition-colors hover:bg-accent"
-              onClick={() => {
-                onExportJson();
-                setOpen(false);
-              }}
-            >
-              <FileJson className="size-3" />
-              导出为 JSON
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+    </header>
   );
 }

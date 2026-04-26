@@ -32,9 +32,7 @@ enum CloudflareSignupOutcome {
 }
 
 impl KefuPipeline {
-    pub fn new(
-        cancel: CancellationToken,
-    ) -> (Self, watch::Receiver<PipelineState>) {
+    pub fn new(cancel: CancellationToken) -> (Self, watch::Receiver<PipelineState>) {
         let (state_tx, state_rx) = watch::channel(PipelineState::new());
         (
             Self {
@@ -88,10 +86,7 @@ impl KefuPipeline {
                 api_token: self.existing_cf_token.clone().unwrap_or_default(),
             }
         } else {
-            self.log_phase(
-                PipelinePhase::CfRegister,
-                "开始 Cloudflare 账号注册",
-            );
+            self.log_phase(PipelinePhase::CfRegister, "开始 Cloudflare 账号注册");
             self.update(PipelinePhase::CfRegister, PhaseStatus::Running, None);
             match self.phase1_cf_register().await {
                 Ok(result) => {
@@ -114,7 +109,10 @@ impl KefuPipeline {
         };
 
         // Phase 2: Worker deploy
-        self.log_phase(PipelinePhase::WorkerDeploy, "开始部署 Cloudflare Worker 中继");
+        self.log_phase(
+            PipelinePhase::WorkerDeploy,
+            "开始部署 Cloudflare Worker 中继",
+        );
         self.update(PipelinePhase::WorkerDeploy, PhaseStatus::Running, None);
         let deploy = match self.phase2_deploy_worker(&cf.api_token).await {
             Ok(r) => {
@@ -155,18 +153,22 @@ impl KefuPipeline {
 
         // Phase 4: Callback config
         let secret = if self.skip_callback_config {
-            self.log_phase(PipelinePhase::CallbackConfig, "跳过回调配置，使用现有 Secret");
+            self.log_phase(
+                PipelinePhase::CallbackConfig,
+                "跳过回调配置，使用现有 Secret",
+            );
             self.update(PipelinePhase::CallbackConfig, PhaseStatus::Skipped, None);
             self.existing_secret.clone().unwrap_or_default()
         } else {
             self.log_phase(PipelinePhase::CallbackConfig, "开始配置微信客服回调地址");
             self.update(PipelinePhase::CallbackConfig, PhaseStatus::Running, None);
-            match self.phase4_configure_callback(
-                &deploy.callback_url,
-                &deploy.callback_token,
-                &deploy.encoding_aes_key,
-            )
-            .await
+            match self
+                .phase4_configure_callback(
+                    &deploy.callback_url,
+                    &deploy.callback_token,
+                    &deploy.encoding_aes_key,
+                )
+                .await
             {
                 Ok(s) => {
                     self.log_phase(PipelinePhase::CallbackConfig, "回调配置完成");
@@ -181,7 +183,10 @@ impl KefuPipeline {
         };
 
         // Phase 5: Kefu account creation
-        self.log_phase(PipelinePhase::KefuCreate, "开始创建 ClaudeWiki 助手客服账号");
+        self.log_phase(
+            PipelinePhase::KefuCreate,
+            "开始创建 ClaudeWiki 助手客服账号",
+        );
         self.update(PipelinePhase::KefuCreate, PhaseStatus::Running, None);
         let result = match self.phase5_create_kefu(&wecom.corpid, &secret).await {
             Ok(r) => {
@@ -329,7 +334,8 @@ impl KefuPipeline {
                 );
             }
             CloudflareSignupOutcome::NeedsEmailVerification => {
-                self.verify_cloudflare_email(&email_client, &account.jwt).await?;
+                self.verify_cloudflare_email(&email_client, &account.jwt)
+                    .await?;
             }
         }
 
@@ -344,9 +350,7 @@ impl KefuPipeline {
         })
     }
 
-    async fn detect_logged_in_cloudflare_session(
-        &self,
-    ) -> Result<Option<String>, PipelineError> {
+    async fn detect_logged_in_cloudflare_session(&self) -> Result<Option<String>, PipelineError> {
         self.log_phase(
             PipelinePhase::CfRegister,
             "探测当前浏览器中的 Cloudflare 登录态",
@@ -359,16 +363,17 @@ impl KefuPipeline {
         .await?;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        let state = self.opencli_json_eval(
-            r#"(() => JSON.stringify({
+        let state = self
+            .opencli_json_eval(
+                r#"(() => JSON.stringify({
                 url: window.location.href,
                 title: document.title,
                 hasEmailInput: !!document.querySelector('[name=email]'),
                 hasPasswordInput: !!document.querySelector('[name=password]'),
                 bodyText: (document.body?.innerText ?? '').slice(0, 3000)
             }))()"#,
-        )
-        .await?;
+            )
+            .await?;
 
         let url = state["url"].as_str().unwrap_or("");
         let _title = state["title"].as_str().unwrap_or("");
@@ -387,15 +392,13 @@ impl KefuPipeline {
             return Ok(None);
         }
 
-        let email = regex_lite::Regex::new(
-            r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
-        )
-        .ok()
-        .and_then(|re| {
-            re.captures(body_text)
-                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-        })
-        .unwrap_or_else(|| "current-account".to_string());
+        let email = regex_lite::Regex::new(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+            .ok()
+            .and_then(|re| {
+                re.captures(body_text)
+                    .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+            })
+            .unwrap_or_else(|| "current-account".to_string());
 
         Ok(Some(email))
     }
@@ -463,10 +466,7 @@ impl KefuPipeline {
                     continue;
                 }
                 if let Some(summary) = summarize_mail(mail) {
-                    self.log_phase(
-                        PipelinePhase::CfRegister,
-                        format!("收到新邮件：{summary}"),
-                    );
+                    self.log_phase(PipelinePhase::CfRegister, format!("收到新邮件：{summary}"));
                 }
                 if is_cloudflare_verification_mail(mail) {
                     return Ok(mail.clone());
@@ -501,14 +501,15 @@ impl KefuPipeline {
         let needs_verification = state["needsVerification"].as_bool().unwrap_or(false);
         let email = state["email"].as_str().unwrap_or("");
         if !needs_verification {
-            self.log_phase(
-                PipelinePhase::CfRegister,
-                "Workers 页面未要求额外邮箱验证",
-            );
+            self.log_phase(PipelinePhase::CfRegister, "Workers 页面未要求额外邮箱验证");
             return Ok(());
         }
 
-        let display_email = if email.is_empty() { "当前账号邮箱" } else { email };
+        let display_email = if email.is_empty() {
+            "当前账号邮箱"
+        } else {
+            email
+        };
         self.log_phase(
             PipelinePhase::CfRegister,
             format!("Workers 仍要求验证邮箱（{display_email}），触发重发验证邮件"),
@@ -654,19 +655,18 @@ impl KefuPipeline {
     }
 
     async fn cloudflare_oauth_waiting_for_consent(&self) -> Result<bool, PipelineError> {
-        let state = self.opencli_json_eval(
-            r#"(() => JSON.stringify({
+        let state = self
+            .opencli_json_eval(
+                r#"(() => JSON.stringify({
                 url: window.location.href,
                 bodyText: (document.body?.innerText ?? '').slice(0, 4000)
             }))()"#,
-        )
-        .await?;
+            )
+            .await?;
         let url = state["url"].as_str().unwrap_or("");
         let body = state["bodyText"].as_str().unwrap_or("");
-        Ok(
-            url.contains("/oauth/consent-form")
-                && body.contains("Allow Wrangler access to your Cloudflare account?")
-        )
+        Ok(url.contains("/oauth/consent-form")
+            && body.contains("Allow Wrangler access to your Cloudflare account?"))
     }
 
     async fn run_wrangler_command(&self, args: &[&str]) -> Result<String, PipelineError> {
@@ -696,7 +696,11 @@ impl KefuPipeline {
             )));
         }
 
-        Ok(if stdout.trim().is_empty() { stderr } else { stdout })
+        Ok(if stdout.trim().is_empty() {
+            stderr
+        } else {
+            stdout
+        })
     }
 
     async fn await_cloudflare_signup_outcome(
@@ -756,10 +760,7 @@ impl KefuPipeline {
         email: &str,
         password: &str,
     ) -> Result<(), PipelineError> {
-        self.log_phase(
-            PipelinePhase::CfRegister,
-            "预填 Cloudflare 邮箱和密码",
-        );
+        self.log_phase(PipelinePhase::CfRegister, "预填 Cloudflare 邮箱和密码");
         self.wait_for_cloudflare_signup_inputs().await?;
         let email_script = format!(
             r#"(() => {{
@@ -801,8 +802,7 @@ impl KefuPipeline {
                 password.blur();
                 return JSON.stringify({{ passwordLen: password.value.length }});
             }})()"#,
-            password_json = serde_json::to_string(password)
-                .unwrap_or_else(|_| "\"\"".to_string()),
+            password_json = serde_json::to_string(password).unwrap_or_else(|_| "\"\"".to_string()),
         );
         self.opencli_json_eval(&password_script).await?;
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -822,9 +822,11 @@ impl KefuPipeline {
                 actual_email.len()
             ),
         );
-        self.opencli(&["browser", "type", "[name=email]", email]).await?;
+        self.opencli(&["browser", "type", "[name=email]", email])
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        self.opencli(&["browser", "type", "[name=password]", password]).await?;
+        self.opencli(&["browser", "type", "[name=password]", password])
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
         let retry_result = self.read_cloudflare_signup_state().await?;
@@ -916,7 +918,10 @@ impl KefuPipeline {
                 self.log_phase(PipelinePhase::CfRegister, "检测到真人验证已完成，继续执行");
             }
 
-            self.log_phase(PipelinePhase::CfRegister, "同步 Turnstile token 到表单并提交");
+            self.log_phase(
+                PipelinePhase::CfRegister,
+                "同步 Turnstile token 到表单并提交",
+            );
             self.opencli(&[
                 "browser",
                 "eval",
@@ -1028,9 +1033,7 @@ impl KefuPipeline {
     }
 
     #[allow(dead_code)]
-    async fn programmatically_resolve_cloudflare_turnstile(
-        &self,
-    ) -> Result<bool, PipelineError> {
+    async fn programmatically_resolve_cloudflare_turnstile(&self) -> Result<bool, PipelineError> {
         self.log_phase(
             PipelinePhase::CfRegister,
             "尝试通过页面脚本补全 Turnstile token",
@@ -1117,11 +1120,7 @@ impl KefuPipeline {
         Ok(false)
     }
 
-    async fn opencli_wait_text(
-        &self,
-        text: &str,
-        timeout_ms: u64,
-    ) -> Result<(), PipelineError> {
+    async fn opencli_wait_text(&self, text: &str, timeout_ms: u64) -> Result<(), PipelineError> {
         self.opencli(&[
             "browser",
             "wait",
@@ -1134,10 +1133,7 @@ impl KefuPipeline {
         .map(|_| ())
     }
 
-    async fn click_exact_button_by_text(
-        &self,
-        label: &str,
-    ) -> Result<(), PipelineError> {
+    async fn click_exact_button_by_text(&self, label: &str) -> Result<(), PipelineError> {
         let script = format!(
             r#"(() => {{
                 const needle = {label_json}.trim().toLowerCase();
@@ -1181,10 +1177,7 @@ impl KefuPipeline {
         )))
     }
 
-    async fn phase2_deploy_worker(
-        &self,
-        cf_token: &str,
-    ) -> Result<DeployResult, PipelineError> {
+    async fn phase2_deploy_worker(&self, cf_token: &str) -> Result<DeployResult, PipelineError> {
         if cf_token.trim().is_empty() {
             self.log_phase(
                 PipelinePhase::WorkerDeploy,
@@ -1259,7 +1252,10 @@ impl KefuPipeline {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
         // Fill callback URL
-        self.log_phase(PipelinePhase::CallbackConfig, "填入回调 URL / Token / EncodingAESKey");
+        self.log_phase(
+            PipelinePhase::CallbackConfig,
+            "填入回调 URL / Token / EncodingAESKey",
+        );
         self.opencli(&["browser", "type", "input:nth(0)", callback_url])
             .await?;
         // Fill Token
@@ -1278,8 +1274,12 @@ impl KefuPipeline {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
         // Try to extract Secret from the config page
-        self.opencli(&["browser", "open", "https://kf.weixin.qq.com/kf/frame#/config"])
-            .await?;
+        self.opencli(&[
+            "browser",
+            "open",
+            "https://kf.weixin.qq.com/kf/frame#/config",
+        ])
+        .await?;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         let page_text = self
@@ -1333,7 +1333,8 @@ impl KefuPipeline {
 
         let (program, prefix_args) = self.resolve_opencli_command().ok_or_else(|| {
             PipelineError::Prerequisite(
-                "OpenCLI unavailable. Install it globally or allow `npx --yes @jackwener/opencli`.".into(),
+                "OpenCLI unavailable. Install it globally or allow `npx --yes @jackwener/opencli`."
+                    .into(),
             )
         })?;
 
@@ -1362,10 +1363,7 @@ impl KefuPipeline {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    async fn opencli_json_eval(
-        &self,
-        script: &str,
-    ) -> Result<serde_json::Value, PipelineError> {
+    async fn opencli_json_eval(&self, script: &str) -> Result<serde_json::Value, PipelineError> {
         let output = self.opencli(&["browser", "eval", script]).await?;
         serde_json::from_str(output.trim()).map_err(|e| {
             PipelineError::OpenCli(format!(
@@ -1388,12 +1386,10 @@ impl KefuPipeline {
             return Some(("opencli", vec![]));
         }
 
-        let npx_ok = super::deployer::run_node_tool(
-            "npx",
-            &["--yes", "@jackwener/opencli", "--version"],
-        )
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+        let npx_ok =
+            super::deployer::run_node_tool("npx", &["--yes", "@jackwener/opencli", "--version"])
+                .map(|o| o.status.success())
+                .unwrap_or(false);
         if npx_ok {
             return Some(("npx", vec!["--yes", "@jackwener/opencli"]));
         }
@@ -1463,8 +1459,12 @@ impl KefuPipeline {
             callback_url: Some(deploy.callback_url.clone()),
             callback_token_generated: Some(deploy.callback_token.clone()),
         };
-        super::account::save_config(&config)
-            .map_err(|e| PipelineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        super::account::save_config(&config).map_err(|e| {
+            PipelineError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
         Ok(())
     }
 }
@@ -1487,24 +1487,22 @@ fn now_iso8601() -> String {
 }
 
 fn now_hms() -> String {
-    let now = time::OffsetDateTime::now_local()
-        .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-    let format = time::format_description::parse("[hour]:[minute]:[second]")
-        .expect("valid hms format");
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let format =
+        time::format_description::parse("[hour]:[minute]:[second]").expect("valid hms format");
     now.format(&format)
         .unwrap_or_else(|_| "??:??:??".to_string())
 }
 
 fn generate_cloudflare_password(len: usize) -> String {
-    use rand::Rng;
     use rand::seq::SliceRandom;
+    use rand::Rng;
 
     const UPPER: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     const DIGITS: &[u8] = b"0123456789";
     const SPECIAL: &[u8] = b"!$%&*#@";
-    const ALL: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!$%&*#@";
+    const ALL: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!$%&*#@";
 
     let target_len = len.max(12);
     let mut rng = rand::thread_rng();
@@ -1563,8 +1561,16 @@ fn summarize_mail(mail: &serde_json::Value) -> Option<String> {
         Some(format!(
             "{}{}{}",
             if from.is_empty() { "" } else { from },
-            if from.is_empty() || subject.is_empty() { "" } else { " · " },
-            if subject.is_empty() { fallback } else { subject },
+            if from.is_empty() || subject.is_empty() {
+                ""
+            } else {
+                " · "
+            },
+            if subject.is_empty() {
+                fallback
+            } else {
+                subject
+            },
         ))
     } else if !fallback.is_empty() {
         Some(fallback.chars().take(120).collect())

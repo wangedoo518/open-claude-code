@@ -2,15 +2,26 @@
  * SkillProgressCard - floating progress card for absorb operations.
  */
 
+import { useEffect } from "react";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useSkillStore } from "@/state/skill-store";
 
-export function SkillProgressCard() {
+export function SkillProgressCard({
+  placement = "default",
+}: {
+  placement?: "default" | "bottom-toast";
+}) {
   const running = useSkillStore((s) => s.absorbRunning);
   const progress = useSkillStore((s) => s.absorbProgress);
   const result = useSkillStore((s) => s.absorbResult);
   const error = useSkillStore((s) => s.absorbError);
   const reset = useSkillStore((s) => s.resetAbsorb);
+
+  useEffect(() => {
+    if (placement !== "bottom-toast" || running || !error) return;
+    const timer = window.setTimeout(reset, 6_000);
+    return () => window.clearTimeout(timer);
+  }, [error, placement, reset, running]);
 
   if (!running && !result && !error) return null;
 
@@ -22,7 +33,10 @@ export function SkillProgressCard() {
 
   return (
     <div
-      className="mx-4 mt-3 rounded-xl border border-[var(--color-border)] p-3 shadow-sm"
+      role="status"
+      className={`ds-skill-progress-popover ${
+        placement === "bottom-toast" ? "ds-skill-progress-popover--bottom" : ""
+      } rounded-xl border border-[var(--color-border)] p-3 shadow-sm`}
       style={{
         background: "color-mix(in srgb, var(--color-background) 90%, transparent)",
         backdropFilter: "blur(12px) saturate(1.4)",

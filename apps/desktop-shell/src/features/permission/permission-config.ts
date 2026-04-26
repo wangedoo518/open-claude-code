@@ -45,7 +45,7 @@ export const PERMISSION_MODES: readonly PermissionModeConfig[] = [
   {
     value: "bypassPermissions",
     label: "跳过权限",
-    desc: "跳过所有权限检查",
+    desc: "跳过所有权限检查 · 仅在受信任环境使用",
     icon: ShieldOff,
     color: "var(--color-error)",
   },

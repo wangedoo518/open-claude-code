@@ -55,9 +55,7 @@ impl WeChatIngestConfig {
             return true;
         }
         match group_id {
-            Some(id) if !id.is_empty() => {
-                self.enabled_group_ids.iter().any(|g| g == id)
-            }
+            Some(id) if !id.is_empty() => self.enabled_group_ids.iter().any(|g| g == id),
             _ => false,
         }
     }
@@ -74,12 +72,9 @@ pub fn default_config_path() -> PathBuf {
 /// single path resolver.
 pub fn load_from(path: &Path) -> std::io::Result<WeChatIngestConfig> {
     match fs::read_to_string(path) {
-        Ok(body) => serde_json::from_str(&body).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        }),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            Ok(WeChatIngestConfig::default())
-        }
+        Ok(body) => serde_json::from_str(&body)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(WeChatIngestConfig::default()),
         Err(err) => Err(err),
     }
 }
@@ -91,9 +86,8 @@ pub fn save_to(path: &Path, config: &WeChatIngestConfig) -> std::io::Result<()> 
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("json.tmp");
-    let body = serde_json::to_vec_pretty(config).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-    })?;
+    let body = serde_json::to_vec_pretty(config)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     fs::write(&tmp, body)?;
     fs::rename(&tmp, path)?;
     Ok(())
@@ -106,9 +100,7 @@ static GLOBAL: OnceLock<Mutex<WeChatIngestConfig>> = OnceLock::new();
 fn cell() -> &'static Mutex<WeChatIngestConfig> {
     GLOBAL.get_or_init(|| {
         let loaded = load_from(&default_config_path()).unwrap_or_else(|err| {
-            eprintln!(
-                "[wechat ingest_config] load failed: {err}; using defaults"
-            );
+            eprintln!("[wechat ingest_config] load failed: {err}; using defaults");
             WeChatIngestConfig::default()
         });
         Mutex::new(loaded)

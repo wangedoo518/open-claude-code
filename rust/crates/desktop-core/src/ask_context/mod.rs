@@ -37,8 +37,8 @@
 pub mod binding;
 
 pub use binding::{
-    format_bound_source, grounding_instruction_block, parse_binding_key,
-    token_budget_for_source, truncate_source_body, SessionSourceBinding, SourceRef,
+    format_bound_source, grounding_instruction_block, parse_binding_key, token_budget_for_source,
+    truncate_source_body, SessionSourceBinding, SourceRef,
 };
 
 use runtime::ConversationMessage;
@@ -319,10 +319,7 @@ pub fn package_history(
 /// every message except the trailing user turn (which is the brand-
 /// new question, not history). Used to populate `ContextBasis`.
 #[must_use]
-pub fn history_turns_after_packaging(
-    mode: ContextMode,
-    messages: &[ConversationMessage],
-) -> usize {
+pub fn history_turns_after_packaging(mode: ContextMode, messages: &[ConversationMessage]) -> usize {
     let packaged = package_history(mode, messages);
     // The current user message is always the last entry; subtract 1
     // so the frontend chip reads "N 轮历史" not "N+1 including self".
@@ -401,8 +398,7 @@ mod tests {
     /// before the source body.
     #[test]
     fn test_source_first_adds_task_boundary() {
-        let marker =
-            boundary_marker_for(ContextMode::SourceFirst).expect("SourceFirst has marker");
+        let marker = boundary_marker_for(ContextMode::SourceFirst).expect("SourceFirst has marker");
         assert!(
             marker.contains("新任务开始"),
             "SourceFirst marker must include '新任务开始': got {marker:?}"
@@ -496,34 +492,19 @@ mod tests {
     /// Extra: enrich prefix formatting routes by mode.
     #[test]
     fn test_format_enriched_source_routes_by_mode() {
-        let follow = format_enriched_source(
-            ContextMode::FollowUp,
-            "T",
-            "body-bytes",
-            "orig",
-        );
+        let follow = format_enriched_source(ContextMode::FollowUp, "T", "body-bytes", "orig");
         assert!(
             follow.starts_with("请基于以下文章内容回答我的问题。"),
             "FollowUp must keep legacy prefix"
         );
 
-        let sf = format_enriched_source(
-            ContextMode::SourceFirst,
-            "T",
-            "body-bytes",
-            "orig",
-        );
+        let sf = format_enriched_source(ContextMode::SourceFirst, "T", "body-bytes", "orig");
         assert!(
             sf.starts_with("新素材：以下是用户刚提供的来源"),
             "SourceFirst must use 新素材 prefix"
         );
 
-        let cb = format_enriched_source(
-            ContextMode::Combine,
-            "T",
-            "body-bytes",
-            "orig",
-        );
+        let cb = format_enriched_source(ContextMode::Combine, "T", "body-bytes", "orig");
         assert!(
             cb.starts_with("新素材：以下是用户刚提供的来源"),
             "Combine must also use 新素材 prefix"
@@ -658,8 +639,7 @@ mod tests {
         );
 
         // Explicitly setting `with_auto_bound(false)` is also omitted.
-        let off = ContextBasis::new(ContextMode::SourceFirst, 1, Some(400))
-            .with_auto_bound(false);
+        let off = ContextBasis::new(ContextMode::SourceFirst, 1, Some(400)).with_auto_bound(false);
         let off_json = serde_json::to_string(&off).expect("serialize");
         assert!(
             !off_json.contains("auto_bound"),
@@ -713,8 +693,8 @@ mod tests {
 
         // Explicit false must also be skipped — guards against a
         // future refactor that drops skip_serializing_if.
-        let off = ContextBasis::new(ContextMode::SourceFirst, 1, Some(400))
-            .with_grounding_applied(false);
+        let off =
+            ContextBasis::new(ContextMode::SourceFirst, 1, Some(400)).with_grounding_applied(false);
         let off_json = serde_json::to_string(&off).expect("serialize");
         assert!(
             !off_json.contains("grounding_applied"),
@@ -737,8 +717,7 @@ mod tests {
             "source_token_hint": 100,
             "boundary_marker": true
         }"#;
-        let decoded: ContextBasis =
-            serde_json::from_str(legacy).expect("legacy JSON deserialises");
+        let decoded: ContextBasis = serde_json::from_str(legacy).expect("legacy JSON deserialises");
         assert!(
             !decoded.grounding_applied,
             "legacy grounding_applied defaults to false"
@@ -796,8 +775,7 @@ mod tests {
             "source_token_hint": 100,
             "boundary_marker": true
         }"#;
-        let decoded: ContextBasis =
-            serde_json::from_str(legacy).expect("legacy JSON deserialises");
+        let decoded: ContextBasis = serde_json::from_str(legacy).expect("legacy JSON deserialises");
         assert_eq!(decoded.mode, ContextMode::SourceFirst);
         assert!(decoded.boundary_marker);
         assert!(

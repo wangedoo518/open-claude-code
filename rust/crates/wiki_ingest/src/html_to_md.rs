@@ -202,7 +202,13 @@ fn render_element(elem: ElementRef<'_>, out: &mut String, list_depth: usize, dep
 /// Render an `<ul>` or `<ol>`. Each direct-child `<li>` becomes one
 /// list item; non-`<li>` children are walked normally (wechat some-
 /// times nests `<div>` inside `<ul>`).
-fn render_list(ul_or_ol: ElementRef<'_>, out: &mut String, ordered: bool, list_depth: usize, depth: usize) {
+fn render_list(
+    ul_or_ol: ElementRef<'_>,
+    out: &mut String,
+    ordered: bool,
+    list_depth: usize,
+    depth: usize,
+) {
     out.push_str("\n\n");
     let mut index = 1usize;
     let indent: String = "  ".repeat(list_depth);
@@ -221,7 +227,13 @@ fn render_list(ul_or_ol: ElementRef<'_>, out: &mut String, ordered: bool, list_d
                     let name = grand_elem.value().name();
                     if name == "ul" || name == "ol" {
                         let mut nested = String::new();
-                        render_list(grand_elem, &mut nested, name == "ol", list_depth + 1, depth + 1);
+                        render_list(
+                            grand_elem,
+                            &mut nested,
+                            name == "ol",
+                            list_depth + 1,
+                            depth + 1,
+                        );
                         li_buf.push('\n');
                         li_buf.push_str(&nested);
                     } else {
@@ -383,9 +395,7 @@ mod tests {
 
     #[test]
     fn render_empty_anchor_is_dropped() {
-        let md = render_body(
-            "<html><body><p>Before <a href=\"x\"></a> after.</p></body></html>",
-        );
+        let md = render_body("<html><body><p>Before <a href=\"x\"></a> after.</p></body></html>");
         // No `[]()` artifact; "before after" remains.
         assert!(!md.contains("[]"));
         assert!(md.contains("Before") && md.contains("after"));
@@ -411,9 +421,7 @@ mod tests {
 
     #[test]
     fn render_ol_numbers_sequentially() {
-        let md = render_body(
-            "<html><body><ol><li>first</li><li>second</li></ol></body></html>",
-        );
+        let md = render_body("<html><body><ol><li>first</li><li>second</li></ol></body></html>");
         assert!(md.contains("1. first"));
         assert!(md.contains("2. second"));
     }
@@ -452,9 +460,7 @@ mod tests {
 
     #[test]
     fn render_hr_becomes_divider() {
-        let md = render_body(
-            "<html><body><p>Before</p><hr><p>After</p></body></html>",
-        );
+        let md = render_body("<html><body><p>Before</p><hr><p>After</p></body></html>");
         assert!(md.contains("Before"));
         assert!(md.contains("After"));
         assert!(md.contains("---"));

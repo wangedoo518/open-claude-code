@@ -37,9 +37,7 @@ pub enum PendingLoginState {
         account_id: String,
     },
     /// The login flow failed. `error` is a human-readable message.
-    Failed {
-        error: String,
-    },
+    Failed { error: String },
     /// The user or the frontend explicitly cancelled the flow.
     Cancelled,
     /// 5-minute TTL elapsed without a confirmation.

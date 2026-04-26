@@ -71,6 +71,9 @@ export const useSkillStore = create<SkillStore>()((set) => ({
 
   updateAbsorbProgress: (progress) =>
     set((state) => {
+      if (state.absorbResult?.task_id === progress.task_id) {
+        return state;
+      }
       if (state.absorbTaskId && state.absorbTaskId !== progress.task_id) {
         return state;
       }
@@ -92,6 +95,7 @@ export const useSkillStore = create<SkillStore>()((set) => ({
         absorbTaskId: null,
         absorbProgress: null,
         absorbResult: result,
+        absorbError: null,
       };
     }),
 

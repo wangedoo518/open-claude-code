@@ -219,8 +219,7 @@ pub fn find_claude_md_with_source(start: &Path) -> Option<ClaudeMdDiscovery> {
         let candidate = current.join("CLAUDE.md");
         if candidate.is_file() {
             if let Ok(content) = std::fs::read_to_string(&candidate) {
-                let is_ancestor = !first_iteration
-                    && !path_equals(&current, &start_canonical);
+                let is_ancestor = !first_iteration && !path_equals(&current, &start_canonical);
                 eprintln!(
                     "[CLAUDE.md] loaded from {} (ancestor={})",
                     candidate.display(),
@@ -237,8 +236,7 @@ pub fn find_claude_md_with_source(start: &Path) -> Option<ClaudeMdDiscovery> {
         let nested = current.join(".claude").join("CLAUDE.md");
         if nested.is_file() {
             if let Ok(content) = std::fs::read_to_string(&nested) {
-                let is_ancestor = !first_iteration
-                    && !path_equals(&current, &start_canonical);
+                let is_ancestor = !first_iteration && !path_equals(&current, &start_canonical);
                 eprintln!(
                     "[CLAUDE.md] loaded from {} (ancestor={})",
                     nested.display(),
@@ -445,11 +443,8 @@ mod tests {
 
     #[test]
     fn build_system_prompt_includes_claude_md() {
-        let prompt = build_system_prompt(
-            Path::new("/tmp/test"),
-            &[],
-            Some("Always use TypeScript."),
-        );
+        let prompt =
+            build_system_prompt(Path::new("/tmp/test"), &[], Some("Always use TypeScript."));
         assert!(prompt.contains("Always use TypeScript."));
         assert!(prompt.contains("CLAUDE.md"));
     }
@@ -490,7 +485,10 @@ mod tests {
 
         // Sorted alphabetically.
         assert_eq!(skills[0].name, "code-review");
-        assert_eq!(skills[0].description, "Reviews code for bugs and style issues.");
+        assert_eq!(
+            skills[0].description,
+            "Reviews code for bugs and style issues."
+        );
 
         assert_eq!(skills[1].name, "doc-writing");
         assert_eq!(skills[1].description, "Writes clear documentation.");
@@ -512,12 +510,7 @@ mod tests {
                 source: PathBuf::from("/tmp/doc-writing.md"),
             },
         ];
-        let prompt = build_system_prompt_full(
-            Path::new("/tmp/project"),
-            &[],
-            None,
-            &skills,
-        );
+        let prompt = build_system_prompt_full(Path::new("/tmp/project"), &[], None, &skills);
         assert!(prompt.contains("# Workspace skills"));
         assert!(prompt.contains("**code-review**"));
         assert!(prompt.contains("Reviews code quality."));

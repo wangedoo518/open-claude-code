@@ -85,8 +85,7 @@ struct Config {
 
 async fn run(mut args: Vec<String>) -> Result<(), CliError> {
     // Pull out global flags first.
-    let mut base_url = std::env::var("OCL_SERVER")
-        .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+    let mut base_url = std::env::var("OCL_SERVER").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
     let mut json = false;
 
     let mut i = 0;
@@ -205,10 +204,7 @@ pub(crate) fn redact_sensitive_fields(value: &mut Value) {
         Value::Object(map) => {
             for (key, child) in map.iter_mut() {
                 let lower = key.to_ascii_lowercase();
-                if SENSITIVE_KEYS
-                    .iter()
-                    .any(|sensitive| lower == *sensitive)
-                {
+                if SENSITIVE_KEYS.iter().any(|sensitive| lower == *sensitive) {
                     *child = Value::String("***redacted***".to_string());
                 } else {
                     redact_sensitive_fields(child);
@@ -339,9 +335,9 @@ async fn cmd_sessions(config: &Config, args: &[String]) -> Result<(), CliError> 
             print_output(config, &value);
         }
         "show" => {
-            let id = args.get(1).ok_or_else(|| {
-                CliError::UsageError("sessions show: missing session id".into())
-            })?;
+            let id = args
+                .get(1)
+                .ok_or_else(|| CliError::UsageError("sessions show: missing session id".into()))?;
             let value = http_get(config, &format!("/api/desktop/sessions/{id}")).await?;
             print_output(config, &value);
         }
@@ -373,12 +369,12 @@ async fn cmd_sessions(config: &Config, args: &[String]) -> Result<(), CliError> 
             print_output(config, &value);
         }
         "send" => {
-            let id = args.get(1).ok_or_else(|| {
-                CliError::UsageError("sessions send: missing session id".into())
-            })?;
-            let message = args.get(2).ok_or_else(|| {
-                CliError::UsageError("sessions send: missing message".into())
-            })?;
+            let id = args
+                .get(1)
+                .ok_or_else(|| CliError::UsageError("sessions send: missing session id".into()))?;
+            let message = args
+                .get(2)
+                .ok_or_else(|| CliError::UsageError("sessions send: missing message".into()))?;
             let value = http_post(
                 config,
                 &format!("/api/desktop/sessions/{id}/messages"),
@@ -430,9 +426,9 @@ async fn cmd_sessions(config: &Config, args: &[String]) -> Result<(), CliError> 
             print_output(config, &value);
         }
         "flag" => {
-            let id = args.get(1).ok_or_else(|| {
-                CliError::UsageError("sessions flag: missing session id".into())
-            })?;
+            let id = args
+                .get(1)
+                .ok_or_else(|| CliError::UsageError("sessions flag: missing session id".into()))?;
             let flagged = args
                 .get(2)
                 .and_then(|s| s.parse::<bool>().ok())
@@ -469,9 +465,9 @@ async fn cmd_mcp(config: &Config, args: &[String]) -> Result<(), CliError> {
     }
     match args[0].as_str() {
         "probe" => {
-            let project_path = args.get(1).ok_or_else(|| {
-                CliError::UsageError("mcp probe: missing project_path".into())
-            })?;
+            let project_path = args
+                .get(1)
+                .ok_or_else(|| CliError::UsageError("mcp probe: missing project_path".into()))?;
             let value = http_post(
                 config,
                 "/api/desktop/debug/mcp/probe",
@@ -481,9 +477,9 @@ async fn cmd_mcp(config: &Config, args: &[String]) -> Result<(), CliError> {
             print_output(config, &value);
         }
         "call" => {
-            let qualified_name = args.get(1).ok_or_else(|| {
-                CliError::UsageError("mcp call: missing qualified_name".into())
-            })?;
+            let qualified_name = args
+                .get(1)
+                .ok_or_else(|| CliError::UsageError("mcp call: missing qualified_name".into()))?;
             let args_json = args.get(2).map(String::as_str).unwrap_or("{}");
             let arguments: Value = serde_json::from_str(args_json).map_err(|e| {
                 CliError::UsageError(format!("mcp call: invalid JSON arguments: {e}"))
@@ -521,9 +517,9 @@ fn extract_project_path(args: &[String]) -> Result<(String, Vec<String>), CliErr
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--project-path" || args[i] == "-p" {
-            let value = args.get(i + 1).ok_or_else(|| {
-                CliError::UsageError(format!("{}: missing value", args[i]))
-            })?;
+            let value = args
+                .get(i + 1)
+                .ok_or_else(|| CliError::UsageError(format!("{}: missing value", args[i])))?;
             path = Some(value.clone());
             i += 2;
         } else {
@@ -695,7 +691,10 @@ mod redaction_tests {
         });
         redact_sensitive_fields(&mut value);
         assert_eq!(value["session"]["id"], "sess-1");
-        assert_eq!(value["session"]["metadata"]["access_token"], "***redacted***");
+        assert_eq!(
+            value["session"]["metadata"]["access_token"],
+            "***redacted***"
+        );
         assert_eq!(value["session"]["metadata"]["display_name"], "Test");
     }
 

@@ -47,7 +47,7 @@ mod tests {
     fn whitespace_sensitive_but_edges_trimmed() {
         let a = compute_content_hash("  hello\n").unwrap();
         let b = compute_content_hash("hello").unwrap();
-        assert_eq!(a, b);  // trimmed
+        assert_eq!(a, b); // trimmed
     }
 
     #[test]

@@ -41,8 +41,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::{
-    MessageRequest, MessageResponse, OpenAiCompatClient, OpenAiCompatConfig,
-    ProviderClient,
+    MessageRequest, MessageResponse, OpenAiCompatClient, OpenAiCompatConfig, ProviderClient,
 };
 use serde::{Deserialize, Serialize};
 
@@ -283,8 +282,10 @@ impl CodexBroker {
     /// set, so the frontend calls sync whenever the subscription
     /// changes.
     pub fn sync_cloud_accounts(&self, accounts: Vec<CloudAccountInput>) -> Result<()> {
-        let records: Vec<CloudAccountRecord> =
-            accounts.into_iter().map(CloudAccountRecord::from_input).collect();
+        let records: Vec<CloudAccountRecord> = accounts
+            .into_iter()
+            .map(CloudAccountRecord::from_input)
+            .collect();
         {
             let mut guard = self
                 .pool
@@ -300,7 +301,10 @@ impl CodexBroker {
     /// order (same order as the most recent `sync_cloud_accounts`).
     pub fn list_cloud_accounts(&self) -> Vec<CloudAccountPublic> {
         let now = current_epoch_secs();
-        let guard = self.pool.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .pool
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard
             .iter()
             .map(|rec| CloudAccountPublic {
@@ -318,15 +322,15 @@ impl CodexBroker {
     /// calling clear on an already-empty broker is a no-op.
     pub fn clear_cloud_accounts(&self) -> Result<()> {
         {
-            let mut guard = self.pool.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = self
+                .pool
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.clear();
         }
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path).map_err(|e| {
-                BrokerError::Storage(format!(
-                    "failed to remove {:?}: {e}",
-                    self.storage_path
-                ))
+                BrokerError::Storage(format!("failed to remove {:?}: {e}", self.storage_path))
             })?;
         }
         Ok(())
@@ -336,7 +340,10 @@ impl CodexBroker {
     /// settings panel. NEVER contains tokens.
     pub fn public_status(&self) -> BrokerPublicStatus {
         let now = current_epoch_secs();
-        let guard = self.pool.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .pool
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut fresh_count = 0;
         let mut expiring_count = 0;
@@ -392,10 +399,7 @@ impl CodexBroker {
     ///  * Round-robin counter across multiple fresh accounts. MVP
     ///    picks the first fresh account every time, which is fine for
     ///    a single-user desktop with ≤ 5 accounts.
-    pub async fn chat_completion(
-        &self,
-        request: MessageRequest,
-    ) -> Result<MessageResponse> {
+    pub async fn chat_completion(&self, request: MessageRequest) -> Result<MessageResponse> {
         let access_token = self.pick_account_bearer_token()?;
         let base_url = resolve_codex_base_url();
 
@@ -408,9 +412,10 @@ impl CodexBroker {
         let client = OpenAiCompatClient::new(access_token, OpenAiCompatConfig::openai())
             .with_base_url(base_url);
 
-        let response = client.send_message(&request).await.map_err(|err| {
-            BrokerError::Upstream(format!("{err}"))
-        })?;
+        let response = client
+            .send_message(&request)
+            .await
+            .map_err(|err| BrokerError::Upstream(format!("{err}")))?;
 
         self.requests_today.fetch_add(1, Ordering::Relaxed);
         Ok(response)
@@ -443,7 +448,10 @@ impl CodexBroker {
     /// without booting an HTTP client.
     fn pick_account_bearer_token(&self) -> Result<String> {
         let now = current_epoch_secs();
-        let guard = self.pool.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .pool
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut fresh_count = 0usize;
         let mut fresh_candidate: Option<&CloudAccountRecord> = None;
@@ -477,7 +485,10 @@ impl CodexBroker {
     }
 
     fn persist(&self) -> Result<()> {
-        let guard = self.pool.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .pool
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if guard.is_empty() {
             // Empty pool: remove the file so a subsequent `new()` on
             // a cold boot sees an empty pool instead of an empty JSON
@@ -485,10 +496,7 @@ impl CodexBroker {
             drop(guard);
             if self.storage_path.exists() {
                 std::fs::remove_file(&self.storage_path).map_err(|e| {
-                    BrokerError::Storage(format!(
-                        "failed to remove {:?}: {e}",
-                        self.storage_path
-                    ))
+                    BrokerError::Storage(format!("failed to remove {:?}: {e}", self.storage_path))
                 })?;
             }
             return Ok(());
@@ -497,9 +505,7 @@ impl CodexBroker {
         drop(guard);
         if let Some(parent) = self.storage_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                BrokerError::Storage(format!(
-                    "failed to create storage parent {parent:?}: {e}"
-                ))
+                BrokerError::Storage(format!("failed to create storage parent {parent:?}: {e}"))
             })?;
         }
         secure_storage::write_encrypted(&self.storage_path, &bytes)?;
@@ -775,9 +781,7 @@ mod tests {
         let broker = CodexBroker::new(tmp.path()).unwrap();
 
         broker
-            .sync_cloud_accounts(vec![
-                sample_input("dead", "expired", -100),
-            ])
+            .sync_cloud_accounts(vec![sample_input("dead", "expired", -100)])
             .unwrap();
 
         match broker.pick_account_bearer_token() {
@@ -837,7 +841,10 @@ mod tests {
             cloud_account_id: None,
         };
         // Exactly 5 min away → Fresh (threshold is strictly `<`).
-        assert_eq!(rec.classify(1000 - EXPIRING_THRESHOLD_SECS), AccountStatus::Fresh);
+        assert_eq!(
+            rec.classify(1000 - EXPIRING_THRESHOLD_SECS),
+            AccountStatus::Fresh
+        );
         // Just inside 5 min → Expiring.
         assert_eq!(
             rec.classify(1000 - EXPIRING_THRESHOLD_SECS + 1),

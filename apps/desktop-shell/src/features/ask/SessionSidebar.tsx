@@ -1,20 +1,23 @@
 /**
- * SessionSidebar — 会话历史列表，类似 Claude Code Desktop 左侧面板。
- * 显示今天/昨天/更早的分组，支持新建、切换、删除、重命名。
+ * SessionSidebar - Ask conversation history column.
+ *
+ * The sidebar is intentionally denser than the main workspace: search,
+ * a single primary "new conversation" CTA, grouped history, and a quiet
+ * bottom utility bar. The data contract still comes from listSessions().
  */
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Plus,
-  Trash2,
-  Pencil,
   Check,
-  X,
-  MessageSquare,
   Loader2,
-  Sparkles,
   PanelLeftClose,
+  Pencil,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -30,6 +33,16 @@ import type { DesktopSessionSummary } from "@/lib/tauri";
 
 const sessionListKeys = {
   all: ["clawwiki", "sessions", "list"] as const,
+};
+
+type SessionGroupKey = "today" | "yesterday" | "week" | "month" | "older";
+
+const GROUP_LABELS: Record<SessionGroupKey, string> = {
+  today: "今天",
+  yesterday: "昨天",
+  week: "7 天内",
+  month: "30 天内",
+  older: "更早",
 };
 
 interface SessionSidebarProps {
@@ -49,6 +62,7 @@ export function SessionSidebar({
   onToggleCollapse,
 }: SessionSidebarProps) {
   const queryClient = useQueryClient();
+  const [query, setQuery] = useState("");
 
   const listQuery = useQuery({
     queryKey: sessionListKeys.all,
@@ -58,14 +72,15 @@ export function SessionSidebar({
   });
 
   const sessions = listQuery.data?.sessions ?? [];
+  const filteredSessions = useMemo(
+    () => filterSessions(sessions, query),
+    [sessions, query],
+  );
+  const groupedSessions = useMemo(
+    () => groupSessions(filteredSessions),
+    [filteredSessions],
+  );
 
-  // One-click cleanup for leftover empty "new conversation" sessions.
-  // Preserves the session the user currently has active (if any).
-  //
-  // A5-Polish: replaced `window.alert` feedback with `sonner` toasts
-  // and `window.confirm` with the R1 `ConfirmDialog` primitive so the
-  // interaction matches the rest of the product instead of looking
-  // like a native OS alert.
   const [cleanupConfirmOpen, setCleanupConfirmOpen] = useState(false);
   const cleanupMut = useMutation({
     mutationFn: () => cleanupEmptySessions(activeSessionId),
@@ -108,8 +123,8 @@ export function SessionSidebar({
   }, []);
 
   const selectAllSessions = useCallback(() => {
-    setSelectedIds(new Set(sessions.map((session) => session.id)));
-  }, [sessions]);
+    setSelectedIds(new Set(filteredSessions.map((session) => session.id)));
+  }, [filteredSessions]);
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
@@ -154,7 +169,9 @@ export function SessionSidebar({
           `已删除 ${result.deleted_count} 条，${result.failed_count} 条删除失败`,
         );
       } else {
-        toast.error(`批量删除失败：${result.failed[0]?.error ?? "未知错误"}`);
+        toast.error(
+          `批量删除失败：${result.failed[0]?.error ?? "未知错误"}`,
+        );
       }
     },
     onError: (err) => {
@@ -164,82 +181,62 @@ export function SessionSidebar({
     },
   });
 
-  // Group by bucket
-  const today = sessions.filter((s) => s.bucket === "today");
-  const yesterday = sessions.filter((s) => s.bucket === "yesterday");
-  const older = sessions.filter((s) => s.bucket === "older");
   const selectedCount = selectedIds.size;
-  const allSelected = sessions.length > 0 && selectedCount === sessions.length;
+  const allSelected =
+    filteredSessions.length > 0 && selectedCount === filteredSessions.length;
 
   return (
-    <div className="flex h-full w-full flex-col">
-      {/* Header + collapse + new button */}
-      <div className="flex items-center justify-between border-b border-border/50 px-3 py-2.5">
-        <span className="text-[12px] font-semibold text-sidebar-foreground">
-          对话历史
-        </span>
-        <div className="flex items-center gap-1">
+    <div className="ask-history-sidebar flex h-full w-full flex-col">
+      <div className="ask-history-titlebar flex items-center justify-between">
+        <span className="ask-history-title">对话历史</span>
+        {onToggleCollapse && (
           <button
             type="button"
-            onClick={onNewSession}
-            className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-            title="新建对话"
+            onClick={onToggleCollapse}
+            className="ask-history-icon-button"
+            title="收起对话历史"
+            aria-label="收起对话历史"
           >
+            <PanelLeftClose className="size-3.5" />
+          </button>
+        )}
+      </div>
+
+      <div className="ask-history-search-wrap">
+        <label className="ask-history-search">
+          <Search className="size-3.5 shrink-0" aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索对话…"
+            className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-[#888780]"
+          />
+          <kbd>⌘K</kbd>
+        </label>
+      </div>
+
+      <div className="ask-history-new-wrap">
+        <button type="button" className="ask-history-new" onClick={onNewSession}>
+          <span className="inline-flex items-center gap-1.5">
             <Plus className="size-3.5" />
-          </button>
-          {onToggleCollapse && (
-            <button
-              type="button"
-              onClick={onToggleCollapse}
-              className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-              title="收起对话历史"
-              aria-label="收起对话历史"
-            >
-              <PanelLeftClose className="size-3.5" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={selectionMode ? exitSelectionMode : () => setSelectionMode(true)}
-            disabled={sessions.length === 0 || bulkDeleteMut.isPending}
-            className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent disabled:opacity-40"
-            title={selectionMode ? "退出批量选择" : "批量删除对话"}
-          >
-            {selectionMode ? (
-              <X className="size-3.5" />
-            ) : (
-              <Trash2 className="size-3.5" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setCleanupConfirmOpen(true)}
-            disabled={cleanupMut.isPending}
-            className="rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent disabled:opacity-40"
-            title="清理空会话（保留当前会话）"
-          >
-            {cleanupMut.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="size-3.5" />
-            )}
-          </button>
-          {/* Collapse is now handled by the shell sidebar */}
-        </div>
+            新对话
+          </span>
+          <kbd>⌘N</kbd>
+        </button>
       </div>
 
       {selectionMode && (
-        <div className="border-b border-border/50 px-3 py-2">
+        <div className="ask-history-selection">
           <div className="flex items-center justify-between gap-2">
-            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+            <span className="min-w-0 truncate text-[11px] text-[#5F5E5A]">
               {selectedCount > 0
-                ? `已选择 ${selectedCount} / ${sessions.length} 条`
+                ? `已选择 ${selectedCount} / ${filteredSessions.length} 条`
                 : "选择要删除的对话"}
             </span>
             <button
               type="button"
               onClick={allSelected ? clearSelection : selectAllSessions}
-              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground hover:bg-sidebar-accent"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[10.5px] text-[#5F5E5A] hover:bg-[rgba(44,44,42,0.06)]"
             >
               {allSelected ? "取消全选" : "全选"}
             </button>
@@ -249,8 +246,7 @@ export function SessionSidebar({
               type="button"
               onClick={() => setBulkDeleteConfirmOpen(true)}
               disabled={selectedCount === 0 || bulkDeleteMut.isPending}
-              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ backgroundColor: "var(--color-error)" }}
+              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-[#C44545] px-2 py-1.5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
               {bulkDeleteMut.isPending ? (
                 <Loader2 className="size-3 animate-spin" />
@@ -263,7 +259,7 @@ export function SessionSidebar({
               type="button"
               onClick={exitSelectionMode}
               disabled={bulkDeleteMut.isPending}
-              className="rounded-md border border-border px-2 py-1 text-[11px] text-sidebar-foreground hover:bg-sidebar-accent disabled:opacity-40"
+              className="rounded-md border border-[rgba(44,44,42,0.12)] px-2 py-1.5 text-[11px] text-[#5F5E5A] hover:bg-[rgba(44,44,42,0.04)] disabled:opacity-40"
             >
               退出
             </button>
@@ -274,8 +270,8 @@ export function SessionSidebar({
       <ConfirmDialog
         open={cleanupConfirmOpen}
         onOpenChange={setCleanupConfirmOpen}
-        title="清理空会话"
-        description="清理所有没有发送过消息的空会话。当前正在使用的对话不会被删除。"
+        title="清理空会话？"
+        description="清理所有没有发过消息的空会话。当前正在使用的对话不会被删除。"
         confirmLabel="清理"
         onConfirm={() => {
           cleanupMut.mutate();
@@ -297,23 +293,29 @@ export function SessionSidebar({
         }}
       />
 
-      {/* Session list */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {listQuery.isLoading ? (
-          <div className="flex items-center gap-2 px-3 py-4 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-2 px-2 py-4 text-[11px] text-[#888780]">
             <Loader2 className="size-3 animate-spin" />
             加载中…
           </div>
         ) : sessions.length === 0 ? (
-          <div className="px-3 py-4 text-[11px] text-muted-foreground">
+          <div className="px-2 py-4 text-[11px] text-[#888780]">
             暂无对话记录
           </div>
+        ) : filteredSessions.length === 0 ? (
+          <div className="px-2 py-4 text-[11px] text-[#888780]">
+            没有匹配的对话
+          </div>
         ) : (
-          <>
-            {today.length > 0 && (
+          (Object.keys(GROUP_LABELS) as SessionGroupKey[]).map((key) => {
+            const group = groupedSessions[key];
+            if (group.length === 0) return null;
+            return (
               <SessionGroup
-                label="今天"
-                sessions={today}
+                key={key}
+                label={GROUP_LABELS[key]}
+                sessions={group}
                 activeId={activeSessionId}
                 onSelect={onSelectSession}
                 queryClient={queryClient}
@@ -321,39 +323,48 @@ export function SessionSidebar({
                 selectedIds={selectedIds}
                 onToggleSelected={toggleSessionSelection}
               />
-            )}
-            {yesterday.length > 0 && (
-              <SessionGroup
-                label="昨天"
-                sessions={yesterday}
-                activeId={activeSessionId}
-                onSelect={onSelectSession}
-                queryClient={queryClient}
-                selectionMode={selectionMode}
-                selectedIds={selectedIds}
-                onToggleSelected={toggleSessionSelection}
-              />
-            )}
-            {older.length > 0 && (
-              <SessionGroup
-                label="更早"
-                sessions={older}
-                activeId={activeSessionId}
-                onSelect={onSelectSession}
-                queryClient={queryClient}
-                selectionMode={selectionMode}
-                selectedIds={selectedIds}
-                onToggleSelected={toggleSessionSelection}
-              />
-            )}
-          </>
+            );
+          })
         )}
+      </div>
+
+      <div className="ask-history-footer">
+        <button
+          type="button"
+          className="ask-history-cleanup"
+          onClick={() => setCleanupConfirmOpen(true)}
+          disabled={cleanupMut.isPending}
+        >
+          {cleanupMut.isPending ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <Sparkles className="size-3" />
+          )}
+          AI 整理对话
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "ask-history-icon-button",
+            selectionMode && "bg-[rgba(216,90,48,0.08)] text-[#D85A30]",
+          )}
+          onClick={() => {
+            if (selectionMode && selectedCount > 0) {
+              setBulkDeleteConfirmOpen(true);
+            } else {
+              setSelectionMode((value) => !value);
+            }
+          }}
+          disabled={sessions.length === 0 || bulkDeleteMut.isPending}
+          title={selectionMode ? "删除所选对话" : "批量删除对话"}
+          aria-label={selectionMode ? "删除所选对话" : "批量删除对话"}
+        >
+          <Trash2 className="size-3.5" />
+        </button>
       </div>
     </div>
   );
 }
-
-/* ─── Session group ────────────────────────────────────────────── */
 
 function SessionGroup({
   label,
@@ -375,27 +386,28 @@ function SessionGroup({
   onToggleSelected: (id: string) => void;
 }) {
   return (
-    <div className="py-1">
-      <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-        {label}
+    <section className="ask-history-group">
+      <div className="ask-history-group-label">
+        <span>{label}</span>
+        <span className="ask-history-group-count">{sessions.length}</span>
       </div>
-      {sessions.map((s) => (
-        <SessionItem
-          key={s.id}
-          session={s}
-          isActive={s.id === activeId}
-          isSelected={selectedIds.has(s.id)}
-          onSelect={() => onSelect(s.id)}
-          onToggleSelected={() => onToggleSelected(s.id)}
-          queryClient={queryClient}
-          selectionMode={selectionMode}
-        />
-      ))}
-    </div>
+      <div className="space-y-px">
+        {sessions.map((session) => (
+          <SessionItem
+            key={session.id}
+            session={session}
+            isActive={session.id === activeId}
+            isSelected={selectedIds.has(session.id)}
+            onSelect={() => onSelect(session.id)}
+            onToggleSelected={() => onToggleSelected(session.id)}
+            queryClient={queryClient}
+            selectionMode={selectionMode}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
-
-/* ─── Single session item ──────────────────────────────────────── */
 
 function SessionItem({
   session,
@@ -416,12 +428,9 @@ function SessionItem({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.title);
-  const [showActions, setShowActions] = useState(false);
-  // A5-Polish — single-click delete on a hover-revealed icon is a
-  // footgun. Gate it behind the R1 ConfirmDialog so an accidental
-  // hover-click on the trash doesn't silently wipe a session.
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const model = getSessionModel(session);
 
   const renameMut = useMutation({
     mutationFn: (title: string) => renameSession(session.id, title),
@@ -454,6 +463,10 @@ function SessionItem({
   }, [editValue, session.title, renameMut]);
 
   useEffect(() => {
+    setEditValue(session.title);
+  }, [session.title]);
+
+  useEffect(() => {
     if (isEditing && inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
@@ -462,21 +475,29 @@ function SessionItem({
 
   if (isEditing) {
     return (
-      <div className="flex items-center gap-1 px-2 py-1">
+      <div className="ask-history-edit">
         <input
           ref={inputRef}
           value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleRename();
-            if (e.key === "Escape") setIsEditing(false);
+          onChange={(event) => setEditValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") handleRename();
+            if (event.key === "Escape") setIsEditing(false);
           }}
-          className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground outline-none focus:border-ring"
+          className="min-w-0 flex-1 rounded-md border border-[rgba(44,44,42,0.15)] bg-white px-2 py-1 text-[12px] text-[#2C2C2A] outline-none focus:border-[#D85A30]"
         />
-        <button onClick={handleRename} className="p-0.5 text-muted-foreground hover:text-foreground">
+        <button
+          onClick={handleRename}
+          className="rounded p-1 text-[#888780] hover:bg-[rgba(44,44,42,0.05)] hover:text-[#2C2C2A]"
+          aria-label="保存名称"
+        >
           <Check className="size-3" />
         </button>
-        <button onClick={() => setIsEditing(false)} className="p-0.5 text-muted-foreground hover:text-foreground">
+        <button
+          onClick={() => setIsEditing(false)}
+          className="rounded p-1 text-[#888780] hover:bg-[rgba(44,44,42,0.05)] hover:text-[#2C2C2A]"
+          aria-label="取消重命名"
+        >
           <X className="size-3" />
         </button>
       </div>
@@ -486,60 +507,84 @@ function SessionItem({
   return (
     <div
       className={cn(
-        // Left 2px border kept always-present (transparent when inactive)
-        // so active/inactive transitions don't shift the row horizontally.
-        // Matches the DS terracotta-left-bar pattern used by InboxRow +
-        // RawEntryCard; using 2px instead of 3px here because the session
-        // sidebar is narrower and the 3px stripe competes with rounded-md.
-        "group flex cursor-pointer items-center gap-2 rounded-md border-l-[2px] px-3 py-1.5 text-[11px] transition-colors",
-        isActive
-          ? "border-primary bg-sidebar-accent text-sidebar-accent-foreground"
-          : "border-l-transparent text-sidebar-foreground hover:bg-sidebar-accent/50",
-        selectionMode && isSelected && !isActive && "bg-sidebar-accent/70"
+        "ask-history-item group",
+        isActive && "ask-history-item--active",
+        selectionMode && isSelected && "ask-history-item--selected",
       )}
+      data-active={isActive || undefined}
+      data-selected={isSelected || undefined}
       onClick={selectionMode ? onToggleSelected : onSelect}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
+      onDoubleClick={(event) => {
+        if (selectionMode) return;
+        event.stopPropagation();
+        setIsEditing(true);
+      }}
     >
-      {selectionMode ? (
+      {selectionMode && (
         <input
           type="checkbox"
           checked={isSelected}
-          onChange={(e) => {
-            e.stopPropagation();
+          onChange={(event) => {
+            event.stopPropagation();
             onToggleSelected();
           }}
-          onClick={(e) => e.stopPropagation()}
-          className="size-3 shrink-0 accent-primary"
+          onClick={(event) => event.stopPropagation()}
+          className="mt-0.5 size-3 shrink-0 accent-[#D85A30]"
           aria-label={`选择对话 ${session.title || "新对话"}`}
         />
-      ) : (
-        <MessageSquare className="size-3 shrink-0 opacity-40" />
       )}
-      <span className="min-w-0 flex-1 truncate">{session.title || "新对话"}</span>
 
-      {!selectionMode && showActions && (
-        <div className="flex shrink-0 items-center gap-0.5">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span
+            className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[#2C2C2A]"
+            title={session.title || "新对话"}
+          >
+            {session.title || "新对话"}
+          </span>
+          <span className="ask-history-turn-badge">
+            {getTurnLabel(session)}
+          </span>
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10.5px] text-[#888780]">
+          <span
+            className="size-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: model.isOnline ? "#1D9E75" : "#B7B2A8" }}
+            aria-hidden="true"
+          />
+          <span className="min-w-0 truncate">
+            {model.label} · {formatSessionTime(session.updated_at)}
+          </span>
+          {session.turn_state === "running" && (
+            <span className="shrink-0 text-[#D85A30]">生成中</span>
+          )}
+        </div>
+      </div>
+
+      {!selectionMode && (
+        <div className="ask-history-row-actions">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={(event) => {
+              event.stopPropagation();
               setEditValue(session.title);
               setIsEditing(true);
             }}
-            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+            className="ask-history-row-action"
             title="重命名"
+            aria-label="重命名"
           >
-            <Pencil className="size-2.5" />
+            <Pencil className="size-3" />
           </button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={(event) => {
+              event.stopPropagation();
               setConfirmDeleteOpen(true);
             }}
-            className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+            className="ask-history-row-action hover:text-[#C44545]"
             title="删除"
+            aria-label="删除"
           >
-            <Trash2 className="size-2.5" />
+            <Trash2 className="size-3" />
           </button>
         </div>
       )}
@@ -548,7 +593,7 @@ function SessionItem({
         open={confirmDeleteOpen}
         onOpenChange={setConfirmDeleteOpen}
         title="删除这条对话？"
-        description={`删除后无法恢复。会话标题：「${session.title || "新对话"}」`}
+        description={`删除后无法恢复。会话标题：${session.title || "新对话"}`}
         confirmLabel="删除"
         variant="destructive"
         onConfirm={() => {
@@ -558,4 +603,119 @@ function SessionItem({
       />
     </div>
   );
+}
+
+function filterSessions(
+  sessions: DesktopSessionSummary[],
+  query: string,
+): DesktopSessionSummary[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return sessions;
+
+  return sessions.filter((session) => {
+    const haystack = [
+      session.title,
+      session.preview,
+      session.model_label,
+      session.environment_label,
+      session.project_name,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(normalized);
+  });
+}
+
+function groupSessions(
+  sessions: DesktopSessionSummary[],
+): Record<SessionGroupKey, DesktopSessionSummary[]> {
+  const now = new Date();
+  const todayStart = startOfDay(now).getTime();
+  const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+  const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000;
+  const monthStart = todayStart - 30 * 24 * 60 * 60 * 1000;
+
+  const groups: Record<SessionGroupKey, DesktopSessionSummary[]> = {
+    today: [],
+    yesterday: [],
+    week: [],
+    month: [],
+    older: [],
+  };
+
+  for (const session of sessions) {
+    const updatedAt = normalizeTimestamp(session.updated_at);
+    if (updatedAt >= todayStart) {
+      groups.today.push(session);
+    } else if (updatedAt >= yesterdayStart) {
+      groups.yesterday.push(session);
+    } else if (updatedAt >= weekStart) {
+      groups.week.push(session);
+    } else if (updatedAt >= monthStart) {
+      groups.month.push(session);
+    } else {
+      groups.older.push(session);
+    }
+  }
+
+  return groups;
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function normalizeTimestamp(value: number): number {
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function formatSessionTime(value: number): string {
+  const ms = normalizeTimestamp(value);
+  const date = new Date(ms);
+  const now = new Date();
+  const todayStart = startOfDay(now).getTime();
+  const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+  const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000;
+
+  const clock = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+
+  if (ms >= todayStart) return clock;
+  if (ms >= yesterdayStart) return `昨天 ${clock}`;
+  if (ms >= weekStart) {
+    return new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(date);
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+  }).format(date);
+}
+
+function getSessionModel(session: DesktopSessionSummary): {
+  label: string;
+  isOnline: boolean;
+} {
+  const raw = session.model_label || session.environment_label || "Local";
+  if (/deepseek/i.test(raw)) return { label: "DeepSeek", isOnline: true };
+  if (/local|本地/i.test(raw)) return { label: "Local", isOnline: false };
+  return { label: raw.replace(/\s+chat$/i, ""), isOnline: true };
+}
+
+function getTurnLabel(session: DesktopSessionSummary): string {
+  const extended = session as DesktopSessionSummary & {
+    turn_count?: number;
+    message_count?: number;
+    messages_count?: number;
+  };
+  const count =
+    extended.turn_count ?? extended.message_count ?? extended.messages_count;
+  if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+    return `${Math.max(1, Math.ceil(count / 2))} 轮`;
+  }
+  if (session.turn_state === "running") return "进行中";
+  return "1 轮";
 }

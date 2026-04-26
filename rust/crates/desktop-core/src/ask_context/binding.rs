@@ -95,9 +95,7 @@ impl SourceRef {
     #[must_use]
     pub fn title(&self) -> &str {
         match self {
-            Self::Raw { title, .. }
-            | Self::Wiki { title, .. }
-            | Self::Inbox { title, .. } => title,
+            Self::Raw { title, .. } | Self::Wiki { title, .. } | Self::Inbox { title, .. } => title,
         }
     }
 }
@@ -174,10 +172,7 @@ pub fn parse_binding_key(key: &str) -> Option<(&str, &str)> {
             // Slugs are free-form kebab-case; reject obviously bogus
             // inputs (whitespace, control chars) so we don't crash
             // the filesystem lookup downstream.
-            if rest
-                .chars()
-                .any(|c| c.is_whitespace() || c.is_control())
-            {
+            if rest.chars().any(|c| c.is_whitespace() || c.is_control()) {
                 return None;
             }
             Some((kind, rest))
@@ -428,8 +423,8 @@ mod tests {
         // resulting body must still be valid UTF-8.
         let utf8 = "中".repeat(1_000); // each char is 3 bytes
         let out = truncate_source_body(&utf8, 100); // budget = 400 bytes
-        // `contains` forces a UTF-8 scan; if the slice is broken this
-        // panics in the stdlib.
+                                                    // `contains` forces a UTF-8 scan; if the slice is broken this
+                                                    // panics in the stdlib.
         assert!(out.contains("中"));
     }
 
@@ -536,10 +531,7 @@ mod tests {
         );
 
         // Rule 1: grounding.
-        assert!(
-            out.contains("仅基于上方"),
-            "missing grounding rule: {out}"
-        );
+        assert!(out.contains("仅基于上方"), "missing grounding rule: {out}");
         // Rule 2: quote anchoring — the word "blockquote" is the
         // most stable handle here (the Chinese text around it can
         // be reworded, but the `> blockquote` markdown idiom is

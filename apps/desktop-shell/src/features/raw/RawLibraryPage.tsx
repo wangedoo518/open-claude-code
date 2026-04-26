@@ -22,14 +22,16 @@ import {
   X,
   Maximize2,
   Target,
+  CheckSquare2,
+  ChevronDown,
+  Sparkles,
 } from "lucide-react";
-import { listRawEntries, getRawEntry } from "@/api/wiki/repository";
+import { listRawEntries, getRawEntry, triggerAbsorb, listInboxEntries } from "@/api/wiki/repository";
 import { ingestText } from "@/features/ingest/adapters/text";
 import { ingestUrl, type IngestUrlResult } from "@/features/ingest/adapters/url";
 import { fetchJson } from "@/lib/desktop/transport";
 import type { RawEntry } from "@/api/wiki/types";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { parsePositiveInt, useDeepLinkState } from "@/lib/deep-link";
 import {
@@ -42,7 +44,6 @@ import {
   SourceIcon,
   sourceBadgeStyle,
   translateSource,
-  formatSize,
 } from "@/components/ds/row-primitives";
 
 const rawKeys = {
@@ -50,9 +51,89 @@ const rawKeys = {
   detail: (id: number) => ["wiki", "raw", "detail", id] as const,
 };
 
+function rawEntrySortTime(entry: RawEntry): number {
+  const ingested = Date.parse(entry.ingested_at);
+  if (!Number.isNaN(ingested)) return ingested;
+
+  const dated = Date.parse(entry.date);
+  if (!Number.isNaN(dated)) return dated;
+
+  return 0;
+}
+
+type RawFilterMode = "all" | "wechat-article" | "wechat-message" | "link" | "pending";
+type RawSortMode = "recent" | "oldest" | "words";
+type AddMode = "text" | "url" | "file";
+
+const RAW_FILTERS: Array<{ value: RawFilterMode; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "wechat-article", label: "微信文章" },
+  { value: "wechat-message", label: "微信消息" },
+  { value: "link", label: "链接" },
+  { value: "pending", label: "待整理" },
+];
+
+function isWechatArticle(entry: RawEntry): boolean {
+  return entry.source === "wechat-article";
+}
+
+function isWechatMessage(entry: RawEntry): boolean {
+  return entry.source.startsWith("wechat") && entry.source !== "wechat-article" && entry.source !== "wechat-url";
+}
+
+function isLinkEntry(entry: RawEntry): boolean {
+  return Boolean(entry.source_url || entry.canonical_url || entry.original_url) || entry.source.includes("url") || entry.source === "url";
+}
+
+function isPendingEntry(entry: RawEntry): boolean {
+  const decision = entry.last_ingest_decision;
+  if (decision && typeof decision === "object" && "kind" in decision) {
+    return String((decision as { kind?: unknown }).kind).includes("pending");
+  }
+  return false;
+}
+
+function searchHaystack(entry: RawEntry): string {
+  return [
+    entry.slug,
+    entry.filename,
+    entry.source,
+    entry.source_url,
+    entry.canonical_url,
+    entry.original_url,
+    translateSource(entry.source),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatRawFriendlyTime(raw: string): string {
+  const time = Date.parse(raw);
+  if (Number.isNaN(time)) return raw;
+  const date = new Date(time);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const thatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const diff = Math.floor((today - thatDay) / (24 * 60 * 60 * 1000));
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  if (diff <= 0) return `今天 ${hh}:${mm}`;
+  if (diff === 1) return `昨天 ${hh}:${mm}`;
+  if (diff < 7) return `${diff} 天前`;
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
+function formatRawAmount(bytes: number): string {
+  const words = Math.max(1, Math.round((bytes || 0) / 2));
+  if (words >= 1000) return `约 ${Math.round(words / 100) / 10} 千字`;
+  return `约 ${words} 字`;
+}
+
 /* ─── Main page ──────────────────────────────────────────────────── */
 
-export function RawLibraryPage() {
+export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}) {
+  const navigate = useNavigate();
   // URL is the source of truth for the focused entry. The hook handles
   // lazy init from ?entry=N, reverse-sync on external URL changes
   // (paste, link click, back button), and URL writes via replace. We
@@ -62,13 +143,23 @@ export function RawLibraryPage() {
     parsePositiveInt,
   );
   const [showAddPanel, setShowAddPanel] = useState(false);
+  const [addMode, setAddMode] = useState<AddMode>("url");
+  const [showImportMenu, setShowImportMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterMode, setFilterMode] = useState<RawFilterMode>("all");
+  const [sortMode, setSortMode] = useState<RawSortMode>("recent");
+  const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const queryClient = useQueryClient();
 
   const listQuery = useQuery({
     queryKey: rawKeys.list(),
     queryFn: () => listRawEntries(),
+    staleTime: 30_000,
+  });
+  const inboxQuery = useQuery({
+    queryKey: ["wiki", "inbox", "list", "raw-library-filter"],
+    queryFn: () => listInboxEntries(),
     staleTime: 30_000,
   });
 
@@ -103,47 +194,53 @@ export function RawLibraryPage() {
     },
   });
 
-  const batchCleanupMutation = useMutation({
-    mutationFn: async () => {
-      const small = (listQuery.data?.entries ?? []).filter(
-        (e) => e.byte_size < 100,
-      );
-      await Promise.all(
-        small.map((e) =>
-          fetchJson(`/api/wiki/raw/${e.id}`, { method: "DELETE" }),
-        ),
-      );
-      return small.length;
-    },
-    onSuccess: (count) => {
+  const organizeMutation = useMutation({
+    mutationFn: async (ids: number[]) => triggerAbsorb(ids),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
-      if (
-        expandedId !== null &&
-        (listQuery.data?.entries ?? []).some(
-          (e) => e.id === expandedId && e.byte_size < 100,
-        )
-      ) {
-        setExpandedId(null);
-      }
-      setSelectedIds(new Set());
-      void count;
     },
   });
 
   const allEntries = listQuery.data?.entries ?? [];
-  const smallCount = allEntries.filter((e) => e.byte_size < 100).length;
+  const pendingRawIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const entry of inboxQuery.data?.entries ?? []) {
+      if (entry.status === "pending" && typeof entry.source_raw_id === "number") {
+        ids.add(entry.source_raw_id);
+      }
+    }
+    return ids;
+  }, [inboxQuery.data]);
 
-  // Filter entries by search query
+  // Filter entries by search query, then sort newest-first. The backend
+  // historically returns raw ids in ascending order, which makes old
+  // material appear first on the product surface.
   const filteredEntries = useMemo(() => {
-    if (!searchQuery.trim()) return allEntries;
-    const q = searchQuery.toLowerCase();
-    return allEntries.filter(
-      (e) =>
-        e.slug.toLowerCase().includes(q) ||
-        translateSource(e.source).includes(q) ||
-        e.date.includes(q),
-    );
-  }, [allEntries, searchQuery]);
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = allEntries.filter((entry) => {
+      if (filterMode === "wechat-article" && !isWechatArticle(entry)) return false;
+      if (filterMode === "wechat-message" && !isWechatMessage(entry)) return false;
+      if (filterMode === "link" && !isLinkEntry(entry)) return false;
+      if (filterMode === "pending" && !pendingRawIds.has(entry.id) && !isPendingEntry(entry)) return false;
+      if (!q) return true;
+      return searchHaystack(entry).includes(q);
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sortMode === "oldest") {
+        const byTime = rawEntrySortTime(a) - rawEntrySortTime(b);
+        if (byTime !== 0) return byTime;
+        return a.id - b.id;
+      }
+      if (sortMode === "words") {
+        const bySize = b.byte_size - a.byte_size;
+        if (bySize !== 0) return bySize;
+      }
+      const byTime = rawEntrySortTime(b) - rawEntrySortTime(a);
+      if (byTime !== 0) return byTime;
+      return b.id - a.id;
+    });
+  }, [allEntries, filterMode, pendingRawIds, searchQuery, sortMode]);
 
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => {
@@ -206,90 +303,154 @@ export function RawLibraryPage() {
   }
   const expandedIdLabel =
     expandedId !== null ? `#${String(expandedId).padStart(5, "0")}` : "";
+  const selectedIdList = useMemo(() => [...selectedIds], [selectedIds]);
+  const organizingIds = useMemo(
+    () => new Set(organizeMutation.isPending ? organizeMutation.variables ?? [] : []),
+    [organizeMutation.isPending, organizeMutation.variables],
+  );
+  const openAddPanel = (mode: AddMode) => {
+    setAddMode(mode);
+    setShowAddPanel(true);
+    setShowImportMenu(false);
+  };
+  const selectAllVisible = () => {
+    setSelectedIds(new Set(filteredEntries.map((entry) => entry.id)));
+    setBatchMode(true);
+  };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div
+      className="raw-library-page flex h-full flex-col overflow-hidden"
+      data-embedded={embedded || undefined}
+    >
       {/* ── Header ──────────────────────────────────────────────── */}
-      <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-lg text-foreground">
-              素材库
-            </h1>
-            <p className="mt-0.5 text-muted-foreground/60" style={{ fontSize: 11 }}>
-              所有原始素材按时间排列 · 微信文章、网页链接、文件、手动粘贴内容都会落在这里
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Batch cleanup */}
-            {smallCount > 0 && (
-              <button
-                type="button"
-                onClick={() => batchCleanupMutation.mutate()}
-                disabled={batchCleanupMutation.isPending}
-                className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-                style={{ fontSize: 11 }}
-              >
-                {batchCleanupMutation.isPending ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Trash2 className="size-3" />
-                )}
-                批量清理 ({smallCount})
-              </button>
-            )}
-            {/* Batch delete selected */}
-            {selectedIds.size > 0 && (
-              <button
-                type="button"
-                onClick={() => batchDeleteMutation.mutate([...selectedIds])}
-                disabled={batchDeleteMutation.isPending}
-                className="flex items-center gap-1 rounded-md border border-destructive/50 bg-destructive/10 px-2 py-1 text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-50"
-                style={{ fontSize: 11 }}
-              >
-                {batchDeleteMutation.isPending ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Trash2 className="size-3" />
-                )}
-                删除选中 ({selectedIds.size})
-              </button>
-            )}
-            {/* Entry count */}
-            <span className="text-muted-foreground/40" style={{ fontSize: 11 }}>
-              {allEntries.length} 条
-            </span>
-            {/* Add button */}
-            <Button
-              variant={showAddPanel ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowAddPanel(!showAddPanel)}
-            >
-              {showAddPanel ? <X className="size-3.5" /> : <Plus className="size-3.5" />}
-              添加
-            </Button>
-          </div>
+      <div className="raw-library-header raw-library-header-v2 shrink-0">
+        <div className="raw-library-title-block">
+          <h1>素材库</h1>
+          <p>原料区 · 微信转发、网页链接、文件和手动粘贴都会先落在这里</p>
         </div>
 
-        {/* Search bar */}
-        <div className="relative mt-3">
-          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/40" />
-          <Input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索素材标题、来源..."
-            className="pl-8 pr-8"
-          />
-          {searchQuery && (
+        {selectedIds.size > 0 ? (
+          <div className="raw-library-batchbar" aria-label="素材批量操作">
+            <span className="raw-library-selected-count">已选 {selectedIds.size} 条</span>
+            <button type="button" onClick={selectAllVisible}>全选</button>
             <button
               type="button"
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground/40 hover:text-muted-foreground"
+              className="raw-library-danger-action"
+              onClick={() => batchDeleteMutation.mutate(selectedIdList)}
+              disabled={batchDeleteMutation.isPending}
             >
-              <X className="size-3" />
+              {batchDeleteMutation.isPending ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+              批量删除
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => organizeMutation.mutate(selectedIdList)}
+              disabled={organizeMutation.isPending}
+            >
+              {organizeMutation.isPending ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+              批量重新整理
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedIds(new Set());
+                setBatchMode(false);
+              }}
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <div className="raw-library-toolbar" aria-label="素材库工具栏">
+            <label className="raw-library-search">
+              <Search className="size-3.5" strokeWidth={1.5} />
+              <Input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索素材标题、来源..."
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="清空搜索"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </label>
+
+            <div className="raw-library-filter" role="group" aria-label="素材筛选">
+              {RAW_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  data-active={filterMode === filter.value}
+                  onClick={() => setFilterMode(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              className="raw-library-batch-edit"
+              onClick={() => setBatchMode(true)}
+            >
+              <CheckSquare2 className="size-3.5" />
+              批量编辑
+            </button>
+
+            <select
+              className="raw-library-sort"
+              value={sortMode}
+              onChange={(event) => setSortMode(event.target.value as RawSortMode)}
+              aria-label="排序"
+            >
+              <option value="recent">最近入库</option>
+              <option value="oldest">最早入库</option>
+              <option value="words">内容最多</option>
+            </select>
+
+            <div className="raw-library-import">
+              <button
+                type="button"
+                className="raw-library-import-trigger"
+                onClick={() => setShowImportMenu((current) => !current)}
+              >
+                <Plus className="size-3.5" />
+                导入
+                <ChevronDown className="size-3" />
+              </button>
+              {showImportMenu && (
+                <div className="raw-library-import-menu">
+                  <button type="button" onClick={() => openAddPanel("url")}>粘贴链接</button>
+                  <button type="button" onClick={() => openAddPanel("file")}>上传文件（PDF/Word/MD）</button>
+                  <button type="button" onClick={() => openAddPanel("text")}>直接输入文本</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImportMenu(false);
+                      navigate("/connect-wechat");
+                    }}
+                  >
+                    从微信转发
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="raw-library-flow-hint" aria-label="知识库流转">
+          <span><b>{allEntries.length}</b> 条原料</span>
+          <span>→</span>
+          <span>进入页面整理</span>
+          <span>→</span>
+          <span>形成关系图</span>
         </div>
       </div>
 
@@ -297,6 +458,8 @@ export function RawLibraryPage() {
       {showAddPanel && (
         <div className="shrink-0 border-b border-border/50 bg-accent/20">
           <AddPanel
+            mode={addMode}
+            onModeChange={setAddMode}
             onIngested={handleIngested}
             onClose={() => setShowAddPanel(false)}
           />
@@ -356,6 +519,10 @@ export function RawLibraryPage() {
           deletingId={deleteMutation.isPending ? (deleteMutation.variables ?? null) : null}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
+          batchMode={batchMode}
+          onSelectAll={selectAllVisible}
+          onOrganize={(ids) => organizeMutation.mutate(ids)}
+          organizingIds={organizingIds}
         />
       </div>
     </div>
@@ -365,6 +532,8 @@ export function RawLibraryPage() {
 /* ─── Add panel (collapsed by default) ────────────────────────────── */
 
 interface AddPanelProps {
+  mode: AddMode;
+  onModeChange: (mode: AddMode) => void;
   onIngested: (entry: RawEntry) => void;
   onClose: () => void;
 }
@@ -378,8 +547,7 @@ interface MarkItDownResponse {
   raw_id: number;
 }
 
-function AddPanel({ onIngested }: AddPanelProps) {
-  const [mode, setMode] = useState<"text" | "url" | "file">("text");
+function AddPanel({ mode, onModeChange, onIngested }: AddPanelProps) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [url, setUrl] = useState("");
@@ -547,15 +715,15 @@ function AddPanel({ onIngested }: AddPanelProps) {
     <div className="px-6 py-3">
       {/* Tabs */}
       <div className="mb-2 flex items-center gap-1" style={{ fontSize: 12 }}>
-        <button type="button" className={tabCls(mode === "text")} onClick={() => { setMode("text"); setSuccessMessage(null); }}>
+        <button type="button" className={tabCls(mode === "text")} onClick={() => { onModeChange("text"); setSuccessMessage(null); }}>
           <FileText className="mr-1 inline size-3" />
           文本
         </button>
-        <button type="button" className={tabCls(mode === "url")} onClick={() => { setMode("url"); setSuccessMessage(null); }}>
+        <button type="button" className={tabCls(mode === "url")} onClick={() => { onModeChange("url"); setSuccessMessage(null); }}>
           <Link2 className="mr-1 inline size-3" />
           链接
         </button>
-        <button type="button" className={tabCls(mode === "file")} onClick={() => { setMode("file"); setSuccessMessage(null); }}>
+        <button type="button" className={tabCls(mode === "file")} onClick={() => { onModeChange("file"); setSuccessMessage(null); }}>
           <Upload className="mr-1 inline size-3" />
           文件
         </button>
@@ -710,6 +878,10 @@ interface CardListProps {
   deletingId: number | null;
   selectedIds: Set<number>;
   onToggleSelect: (id: number) => void;
+  batchMode: boolean;
+  onSelectAll: () => void;
+  onOrganize: (ids: number[]) => void;
+  organizingIds: Set<number>;
 }
 
 function CardList({
@@ -723,8 +895,13 @@ function CardList({
   deletingId,
   selectedIds,
   onToggleSelect,
+  batchMode,
+  onSelectAll,
+  onOrganize,
+  organizingIds,
 }: CardListProps) {
   const navigate = useNavigate();
+  const [isDragSelecting, setIsDragSelecting] = useState(false);
 
   // DS2.x-A — Ask handler lifted from the inline EntryCard so
   // `<RawEntryCard>` only receives a parameterless `onAsk` thunk. The
@@ -786,7 +963,17 @@ function CardList({
   }
 
   return (
-    <div className="flex flex-col gap-3 px-6 py-3">
+    <div
+      className="raw-library-list-v2"
+      onMouseUp={() => setIsDragSelecting(false)}
+      onMouseLeave={() => setIsDragSelecting(false)}
+    >
+      {batchMode && entries.length > 0 && (
+        <div className="raw-library-inline-batch">
+          <span>批量编辑已开启</span>
+          <button type="button" onClick={onSelectAll}>选择当前 {entries.length} 条</button>
+        </div>
+      )}
       {entries.map((entry) => {
         const isExpanded = entry.id === expandedId;
         return (
@@ -796,11 +983,25 @@ function CardList({
             isSelected={selectedIds.has(entry.id)}
             isExpanded={isExpanded}
             isDeleting={deletingId === entry.id}
+            batchMode={batchMode}
+            isOrganizing={organizingIds.has(entry.id)}
             onToggleSelect={() => onToggleSelect(entry.id)}
             onToggleExpand={() => onToggleExpand(entry.id)}
             onClearExpand={onClearExpand}
             onDelete={() => onDelete(entry.id)}
             onAsk={() => handleAsk(entry)}
+            onOrganize={() => onOrganize([entry.id])}
+            onBeginDragSelect={() => {
+              if (!selectedIds.has(entry.id)) {
+                onToggleSelect(entry.id);
+              }
+              setIsDragSelecting(true);
+            }}
+            onDragSelect={() => {
+              if (isDragSelecting && !selectedIds.has(entry.id)) {
+                onToggleSelect(entry.id);
+              }
+            }}
             expandedContent={
               isExpanded ? (
                 <ExpandedDetail id={entry.id} entry={entry} />
@@ -866,8 +1067,8 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
           <div className="flex items-center gap-3 text-muted-foreground/40" style={{ fontSize: 11 }}>
             <span className="font-mono">#{String(entry.id).padStart(5, "0")}</span>
             <span>{entry.filename}</span>
-            <span>{entry.ingested_at}</span>
-            <span>{formatSize(entry.byte_size)}</span>
+            <span>{formatRawFriendlyTime(entry.ingested_at)}</span>
+            <span>{formatRawAmount(entry.byte_size)}</span>
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -996,8 +1197,8 @@ function FullScreenReader({
           {entry.filename && (
             <span className="text-muted-foreground/60">{entry.filename}</span>
           )}
-          <span className="text-muted-foreground/50">{entry.date}</span>
-          <span className="text-muted-foreground/40">{formatSize(entry.byte_size)}</span>
+          <span className="text-muted-foreground/50">{formatRawFriendlyTime(entry.ingested_at || entry.date)}</span>
+          <span className="text-muted-foreground/40">{formatRawAmount(entry.byte_size)}</span>
           {entry.source_url && (
             <a
               href={entry.source_url}

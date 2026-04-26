@@ -85,23 +85,14 @@ impl WranglerDeployer {
         let npm = run_node_tool("npm", &["--version"]).ok();
 
         PrereqStatus {
-            node_ok: node
-                .as_ref()
-                .map(|o| o.status.success())
-                .unwrap_or(false),
+            node_ok: node.as_ref().map(|o| o.status.success()).unwrap_or(false),
             // On some Windows desktop launches `npx` is not directly
             // discoverable even though the same Node install can still
             // execute packages via `npm exec`. Treat either path as a
             // valid package runner so the doctor panel reflects the
             // user's real capability instead of a PATH quirk.
-            npx_ok: npx
-                .as_ref()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-                || npm
-                    .as_ref()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false),
+            npx_ok: npx.as_ref().map(|o| o.status.success()).unwrap_or(false)
+                || npm.as_ref().map(|o| o.status.success()).unwrap_or(false),
             node_version: node
                 .and_then(|o| String::from_utf8(o.stdout).ok())
                 .map(|s| s.trim().to_string()),
@@ -200,11 +191,8 @@ impl WranglerDeployer {
 
     /// Re-deploy after Worker template update.
     pub fn upgrade(&self) -> Result<(), PipelineError> {
-        std::fs::write(
-            self.project_dir.join("src/index.js"),
-            WORKER_JS,
-        )
-        .map_err(|e| PipelineError::Deploy(format!("write index.js: {e}")))?;
+        std::fs::write(self.project_dir.join("src/index.js"), WORKER_JS)
+            .map_err(|e| PipelineError::Deploy(format!("write index.js: {e}")))?;
 
         let out = self
             .wrangler_command(["deploy"])
@@ -213,9 +201,9 @@ impl WranglerDeployer {
             .map_err(|e| PipelineError::Deploy(format!("upgrade: {e}")))?;
 
         if !out.status.success() {
-            return Err(PipelineError::Deploy(
-                strip_ansi(&String::from_utf8_lossy(&out.stderr)),
-            ));
+            return Err(PipelineError::Deploy(strip_ansi(&String::from_utf8_lossy(
+                &out.stderr,
+            ))));
         }
         Ok(())
     }
@@ -272,9 +260,7 @@ fn parse_worker_url(stdout: &str) -> Result<String, PipelineError> {
         }
     }
     // Fallback: regex
-    if let Ok(re) =
-        regex_lite::Regex::new(r"(https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev)")
-    {
+    if let Ok(re) = regex_lite::Regex::new(r"(https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev)") {
         if let Some(caps) = re.captures(stdout) {
             return Ok(caps.get(1).unwrap().as_str().to_string());
         }
@@ -287,7 +273,9 @@ fn parse_worker_url(stdout: &str) -> Result<String, PipelineError> {
 fn generate_random_hex(len: usize) -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..len).map(|_| format!("{:x}", rng.gen::<u8>() & 0xf)).collect()
+    (0..len)
+        .map(|_| format!("{:x}", rng.gen::<u8>() & 0xf))
+        .collect()
 }
 
 pub fn generate_random_alphanum(len: usize) -> String {

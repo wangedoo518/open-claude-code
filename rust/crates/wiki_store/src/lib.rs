@@ -446,7 +446,13 @@ pub fn init_wiki(root: &Path) -> Result<()> {
 
     // mkdir -p the four subdirectories. `create_dir_all` is idempotent
     // and creates intermediate components, so even a fresh root works.
-    for dir in [&paths.root, &paths.raw, &paths.wiki, &paths.schema, &paths.meta] {
+    for dir in [
+        &paths.root,
+        &paths.raw,
+        &paths.wiki,
+        &paths.schema,
+        &paths.meta,
+    ] {
         fs::create_dir_all(dir).map_err(|e| WikiStoreError::io(dir.clone(), e))?;
     }
     // feat(W): create all 4 wiki category subdirectories so the
@@ -473,8 +479,7 @@ pub fn init_wiki(root: &Path) -> Result<()> {
 
     // Seed schema/templates/ directory with page templates.
     let templates_dir = paths.schema.join("templates");
-    fs::create_dir_all(&templates_dir)
-        .map_err(|e| WikiStoreError::io(templates_dir.clone(), e))?;
+    fs::create_dir_all(&templates_dir).map_err(|e| WikiStoreError::io(templates_dir.clone(), e))?;
     for (name, content) in [
         ("concept.md", TEMPLATE_CONCEPT),
         ("people.md", TEMPLATE_PEOPLE),
@@ -489,8 +494,7 @@ pub fn init_wiki(root: &Path) -> Result<()> {
 
     // Seed schema/policies/ directory with governance rules.
     let policies_dir = paths.schema.join("policies");
-    fs::create_dir_all(&policies_dir)
-        .map_err(|e| WikiStoreError::io(policies_dir.clone(), e))?;
+    fs::create_dir_all(&policies_dir).map_err(|e| WikiStoreError::io(policies_dir.clone(), e))?;
     for (name, content) in [
         ("maintenance.md", POLICY_MAINTENANCE),
         ("conflict.md", POLICY_CONFLICT),
@@ -590,8 +594,7 @@ pub fn overwrite_schema_claude_md(paths: &WikiPaths, content: &str) -> Result<()
             "schema content must not be empty".to_string(),
         ));
     }
-    fs::create_dir_all(&paths.schema)
-        .map_err(|e| WikiStoreError::io(paths.schema.clone(), e))?;
+    fs::create_dir_all(&paths.schema).map_err(|e| WikiStoreError::io(paths.schema.clone(), e))?;
     let target = paths.schema_claude_md.clone();
     let tmp = target.with_extension("md.tmp");
     fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
@@ -826,9 +829,7 @@ pub fn next_raw_id(paths: &WikiPaths) -> Result<u32> {
 pub fn slugify(input: &str) -> String {
     let mut out = String::new();
     let mut last_dash = true;
-    let has_unicode_alnum = input
-        .chars()
-        .any(|c| !c.is_ascii() && c.is_alphanumeric());
+    let has_unicode_alnum = input.chars().any(|c| !c.is_ascii() && c.is_alphanumeric());
 
     for c in input.chars() {
         if c.is_ascii_alphanumeric() {
@@ -889,10 +890,10 @@ fn stable_slug_hash(input: &str) -> String {
 /// (fetched URLs, WeChat articles, PDFs, etc.) runs through
 /// [`validate_raw_content`] before touching disk.
 const RAW_CONTENT_VALIDATION_EXEMPT: &[&str] = &[
-    "paste",        // user pasted text manually via UI
-    "wechat-text",  // inbound plain WeChat message (may be a one-liner)
-    "voice",        // transcript is whatever the user said
-    "query",        // Q&A crystallization — short answers are fine
+    "paste",       // user pasted text manually via UI
+    "wechat-text", // inbound plain WeChat message (may be a one-liner)
+    "voice",       // transcript is whatever the user said
+    "query",       // Q&A crystallization — short answers are fine
 ];
 
 /// Reject pages that look like anti-bot / captcha placeholders before
@@ -935,9 +936,7 @@ fn validate_raw_content(body: &str) -> std::result::Result<(), String> {
 
     let meaningful = trimmed
         .chars()
-        .filter(|c| {
-            c.is_ascii_alphanumeric() || ('\u{4E00}'..='\u{9FFF}').contains(c)
-        })
+        .filter(|c| c.is_ascii_alphanumeric() || ('\u{4E00}'..='\u{9FFF}').contains(c))
         .count();
     if meaningful < 30 {
         return Err(format!("实际文字过少 ({meaningful} 字符)"));
@@ -1193,10 +1192,7 @@ pub fn find_recent_raw_by_source_url(
 /// "content identity" secondary dedupe path — when the canonical URL
 /// doesn't match any existing raw, a content-hash match reuses the
 /// prior landing anyway (same article reached via a different URL).
-pub fn find_raw_by_content_hash(
-    paths: &WikiPaths,
-    target_hash: &str,
-) -> Result<Option<RawEntry>> {
+pub fn find_raw_by_content_hash(paths: &WikiPaths, target_hash: &str) -> Result<Option<RawEntry>> {
     if target_hash.is_empty() {
         return Ok(None);
     }
@@ -1220,10 +1216,7 @@ pub fn find_raw_by_content_hash(
 /// Used by: `desktop-core::url_ingest::dedupe::decide` to classify
 /// an existing raw's inbox state (Pending / Approved / Rejected /
 /// absent) when deciding whether to reuse or re-fetch.
-pub fn find_inbox_by_source_raw_id(
-    paths: &WikiPaths,
-    raw_id: u32,
-) -> Result<Option<InboxEntry>> {
+pub fn find_inbox_by_source_raw_id(paths: &WikiPaths, raw_id: u32) -> Result<Option<InboxEntry>> {
     let entries = load_inbox_file(paths)?;
     Ok(entries
         .into_iter()
@@ -1260,8 +1253,9 @@ fn parse_raw_file(path: &Path) -> Result<RawEntry> {
         .and_then(|n| n.to_str())
         .ok_or_else(|| WikiStoreError::Invalid("filename is not utf-8".to_string()))?
         .to_string();
-    let id = parse_id_prefix(&filename)
-        .ok_or_else(|| WikiStoreError::Invalid(format!("filename missing id prefix: {filename}")))?;
+    let id = parse_id_prefix(&filename).ok_or_else(|| {
+        WikiStoreError::Invalid(format!("filename missing id prefix: {filename}"))
+    })?;
 
     // Strip the `NNNNN_` prefix and `.md` suffix, then split on `_` to
     // recover source / slug / date. The slug itself may contain `-` but
@@ -1279,7 +1273,8 @@ fn parse_raw_file(path: &Path) -> Result<RawEntry> {
     let source = sas.next().unwrap_or("").to_string();
     let slug = sas.next().unwrap_or("").to_string();
 
-    let content = fs::read_to_string(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
     let fields = parse_frontmatter_fields(&content);
     let metadata = fs::metadata(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
 
@@ -1408,7 +1403,9 @@ pub struct WikiFrontmatter {
     pub confidence: f32,
 }
 
-fn is_zero_f32(v: &f32) -> bool { *v == 0.0 }
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
+}
 
 impl WikiFrontmatter {
     /// Build a frontmatter for a freshly-approved maintainer proposal.
@@ -1520,7 +1517,10 @@ fn validate_wiki_slug(slug: &str) -> Result<()> {
 /// validate the slug (callers that hit disk must validate first).
 #[must_use]
 pub fn wiki_concept_path(paths: &WikiPaths, slug: &str) -> PathBuf {
-    paths.wiki.join(WIKI_CONCEPTS_SUBDIR).join(format!("{slug}.md"))
+    paths
+        .wiki
+        .join(WIKI_CONCEPTS_SUBDIR)
+        .join(format!("{slug}.md"))
 }
 
 /// Write a concept wiki page to `wiki/concepts/{slug}.md`.
@@ -1688,9 +1688,7 @@ pub struct PageSummaryForResolver {
 /// Safe to call from any HTTP handler; same "no cache, re-parse
 /// frontmatter on each call" philosophy as the underlying
 /// `list_all_wiki_pages`.
-pub fn list_page_summaries_for_resolver(
-    paths: &WikiPaths,
-) -> Result<Vec<PageSummaryForResolver>> {
+pub fn list_page_summaries_for_resolver(paths: &WikiPaths) -> Result<Vec<PageSummaryForResolver>> {
     let pages = list_all_wiki_pages(paths)?;
     Ok(pages
         .into_iter()
@@ -1791,8 +1789,7 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
 
     let raw_count = raws.len();
     let concept_count = concepts.len();
-    let mut nodes: Vec<WikiGraphNode> =
-        Vec::with_capacity(raw_count + concept_count);
+    let mut nodes: Vec<WikiGraphNode> = Vec::with_capacity(raw_count + concept_count);
     let mut edges: Vec<WikiGraphEdge> = Vec::new();
 
     // Raw nodes — id is `raw-{id}`, label is slug (with source as
@@ -1845,8 +1842,7 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
             .find(|(name, _)| *name == concept.category)
             .map(|(_, dir)| *dir)
             .unwrap_or(WIKI_CONCEPTS_SUBDIR);
-        let concept_file =
-            paths.wiki.join(subdir).join(format!("{}.md", concept.slug));
+        let concept_file = paths.wiki.join(subdir).join(format!("{}.md", concept.slug));
         if let Ok(content) = fs::read_to_string(&concept_file) {
             let body = strip_frontmatter(&content);
             for target_slug in extract_internal_links(body) {
@@ -1986,7 +1982,8 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
             let (title, summary, source_raw_id, created_at, last_verified) =
                 parse_wiki_frontmatter_fields(&content);
             // Parse confidence from frontmatter if present.
-            let confidence = content.lines()
+            let confidence = content
+                .lines()
                 .find(|l| l.trim_start().starts_with("confidence:"))
                 .and_then(|l| l.split(':').nth(1)?.trim().parse::<f32>().ok())
                 .unwrap_or(0.0);
@@ -2111,10 +2108,7 @@ pub struct PageGraph {
 /// category (enforced by the write path — `write_wiki_page_in_category`
 /// rejects duplicates via the filesystem), so order only matters for
 /// the "not found" early-exit cost.
-fn locate_wiki_page_file(
-    paths: &WikiPaths,
-    slug: &str,
-) -> Option<(PathBuf, &'static str)> {
+fn locate_wiki_page_file(paths: &WikiPaths, slug: &str) -> Option<(PathBuf, &'static str)> {
     for (cat_name, subdir) in WIKI_CATEGORIES {
         let path = paths.wiki.join(subdir).join(format!("{slug}.md"));
         if path.is_file() {
@@ -2158,10 +2152,7 @@ fn locate_wiki_page_file(
 /// — see that function's rationale for why we haven't added a
 /// persistent index yet (the concept count stays in the hundreds
 /// for typical MVP users).
-pub fn compute_related_pages(
-    paths: &WikiPaths,
-    target_slug: &str,
-) -> Result<Vec<RelatedPageHit>> {
+pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec<RelatedPageHit>> {
     validate_wiki_slug(target_slug)?;
 
     // Find the target page's own on-disk file so we can read its
@@ -2169,12 +2160,10 @@ pub fn compute_related_pages(
     // Searching across all categories mirrors how the page-graph UI
     // treats people/topic/compare pages as first-class citizens too.
     let (target_path, _target_category) = locate_wiki_page_file(paths, target_slug)
-        .ok_or_else(|| {
-            WikiStoreError::Invalid(format!("wiki page not found: {target_slug}"))
-        })?;
+        .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {target_slug}")))?;
 
-    let target_content = fs::read_to_string(&target_path)
-        .map_err(|e| WikiStoreError::io(target_path.clone(), e))?;
+    let target_content =
+        fs::read_to_string(&target_path).map_err(|e| WikiStoreError::io(target_path.clone(), e))?;
     let target_body = strip_frontmatter(&target_content);
     let (_t_title, _t_summary, target_source_raw, _t_created, _t_last_verified) =
         parse_wiki_frontmatter_fields(&target_content);
@@ -2300,20 +2289,15 @@ pub fn compute_related_pages(
 ///   * I/O errors (rare — `compute_related_pages` and `list_backlinks`
 ///     read many files, so a mid-flight filesystem hiccup is the
 ///     most likely cause).
-pub fn get_page_graph(
-    paths: &WikiPaths,
-    target_slug: &str,
-) -> Result<PageGraph> {
+pub fn get_page_graph(paths: &WikiPaths, target_slug: &str) -> Result<PageGraph> {
     validate_wiki_slug(target_slug)?;
 
     // Resolve the target's on-disk path across all categories.
     let (target_path, target_category) = locate_wiki_page_file(paths, target_slug)
-        .ok_or_else(|| {
-            WikiStoreError::Invalid(format!("wiki page not found: {target_slug}"))
-        })?;
+        .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {target_slug}")))?;
 
-    let content = fs::read_to_string(&target_path)
-        .map_err(|e| WikiStoreError::io(target_path.clone(), e))?;
+    let content =
+        fs::read_to_string(&target_path).map_err(|e| WikiStoreError::io(target_path.clone(), e))?;
     let body = strip_frontmatter(&content);
     let (title, summary, _source_raw, _created_at, _last_verified) =
         parse_wiki_frontmatter_fields(&content);
@@ -2339,11 +2323,13 @@ pub fn get_page_graph(
         .into_iter()
         .filter(|s| *s != target_slug_lower) // strip self-references
         .filter_map(|s| {
-            page_meta.get(&s).map(|(title, category)| PageGraphNeighbor {
-                slug: s.clone(),
-                title: title.clone(),
-                category: category.clone(),
-            })
+            page_meta
+                .get(&s)
+                .map(|(title, category)| PageGraphNeighbor {
+                    slug: s.clone(),
+                    title: title.clone(),
+                    category: category.clone(),
+                })
         })
         .collect();
 
@@ -2716,11 +2702,7 @@ pub fn wiki_log_path(paths: &WikiPaths) -> PathBuf {
 ///   * Thread-safe via [`WIKI_WRITE_GUARD`].
 ///
 /// Returns the resolved path so callers can echo it.
-pub fn append_wiki_log(
-    paths: &WikiPaths,
-    verb: &str,
-    title: &str,
-) -> Result<PathBuf> {
+pub fn append_wiki_log(paths: &WikiPaths, verb: &str, title: &str) -> Result<PathBuf> {
     let _guard = lock_wiki_writes();
     fs::create_dir_all(&paths.wiki).map_err(|e| WikiStoreError::io(paths.wiki.clone(), e))?;
     let path = wiki_log_path(paths);
@@ -2929,17 +2911,12 @@ pub fn changelog_path_for_date(paths: &WikiPaths, date: &str) -> PathBuf {
 ///     `append_wiki_log` and `rebuild_wiki_index`.
 ///
 /// Returns the resolved path so callers can echo it.
-pub fn append_changelog_entry(
-    paths: &WikiPaths,
-    verb: &str,
-    title: &str,
-) -> Result<PathBuf> {
+pub fn append_changelog_entry(paths: &WikiPaths, verb: &str, title: &str) -> Result<PathBuf> {
     let _guard = lock_wiki_writes();
     let (date, hhmm) = current_date_and_hhmm();
 
     let changelog_dir = paths.wiki.join(WIKI_CHANGELOG_SUBDIR);
-    fs::create_dir_all(&changelog_dir)
-        .map_err(|e| WikiStoreError::io(changelog_dir.clone(), e))?;
+    fs::create_dir_all(&changelog_dir).map_err(|e| WikiStoreError::io(changelog_dir.clone(), e))?;
     let path = changelog_path_for_date(paths, &date);
 
     let existing = if path.is_file() {
@@ -3077,7 +3054,6 @@ pub struct InboxEntry {
     // older `inbox.json` files (pre-W1) deserialize cleanly with
     // `None` in each slot and `skip_serializing_if` keeps the
     // written-back JSON byte-identical for untouched entries.
-
     /// Kebab slug the server "proposed" from the raw (pre-commit).
     /// Populated when the propose pass runs, independently of whether
     /// the user later picks `create_new` or `update_existing`.
@@ -3120,7 +3096,6 @@ pub struct InboxEntry {
     // inbox.json files deserialize cleanly with `None` everywhere,
     // and `skip_serializing_if = "Option::is_none"` keeps the
     // on-disk JSON byte-identical for untouched entries.
-
     /// Proposal lifecycle marker:
     ///   * `None` — no proposal has ever been generated for this entry.
     ///   * `Some("pending")` — `propose_update` has run, user has not
@@ -3253,10 +3228,7 @@ fn append_inbox_pending_locked(
 ///
 /// This lets `/api/wiki/patrol` turn quality reports into actionable
 /// review work without spamming the Inbox on every patrol run.
-pub fn append_patrol_issue_inbox_tasks(
-    paths: &WikiPaths,
-    issues: &[PatrolIssue],
-) -> Result<usize> {
+pub fn append_patrol_issue_inbox_tasks(paths: &WikiPaths, issues: &[PatrolIssue]) -> Result<usize> {
     let _guard = lock_inbox_writes();
     let mut entries = load_inbox_file(paths)?;
     let mut created = 0usize;
@@ -3365,14 +3337,9 @@ pub fn list_inbox_entries(paths: &WikiPaths) -> Result<Vec<InboxEntry>> {
 ///
 /// Thread-safe: shares [`INBOX_WRITE_GUARD`] with `append_inbox_pending`
 /// so a resolve can't lose to an append that races the read.
-pub fn resolve_inbox_entry(
-    paths: &WikiPaths,
-    id: u32,
-    action: &str,
-) -> Result<InboxEntry> {
-    let new_status = InboxStatus::from_action(action).ok_or_else(|| {
-        WikiStoreError::Invalid(format!("unknown inbox action: {action}"))
-    })?;
+pub fn resolve_inbox_entry(paths: &WikiPaths, id: u32, action: &str) -> Result<InboxEntry> {
+    let new_status = InboxStatus::from_action(action)
+        .ok_or_else(|| WikiStoreError::Invalid(format!("unknown inbox action: {action}")))?;
     let _guard = lock_inbox_writes();
     let mut entries = load_inbox_file(paths)?;
     let found = entries
@@ -3566,14 +3533,15 @@ fn strip_markdown_noise(line: &str) -> String {
     let trimmed = line.trim();
     // Strip leading heading hashes + bullet markers.
     let after_marker = trimmed
-        .trim_start_matches(|c: char| c == '#' || c == '-' || c == '*' || c == '+' || c == '>' )
+        .trim_start_matches(|c: char| c == '#' || c == '-' || c == '*' || c == '+' || c == '>')
         .trim_start();
     // Strip `_..._` italics wrapping metadata lines (e.g. `_Author: x_`).
-    let body = if after_marker.starts_with('_') && after_marker.ends_with('_') && after_marker.len() > 1 {
-        &after_marker[1..after_marker.len() - 1]
-    } else {
-        after_marker
-    };
+    let body =
+        if after_marker.starts_with('_') && after_marker.ends_with('_') && after_marker.len() > 1 {
+            &after_marker[1..after_marker.len() - 1]
+        } else {
+            after_marker
+        };
 
     // UTF-8-safe scanner: copy non-marker bytes through verbatim and
     // only special-case ASCII brackets / parens (all 1 byte). The
@@ -3670,7 +3638,11 @@ fn extract_readable_title(body: &str, max_chars: usize) -> String {
     if let Some(f) = fallback {
         return f.chars().take(max_chars).collect();
     }
-    body.chars().take(max_chars).collect::<String>().trim().to_string()
+    body.chars()
+        .take(max_chars)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 #[inline]
@@ -3678,7 +3650,10 @@ fn find_byte_from(haystack: &[u8], needle: u8, from: usize) -> Option<usize> {
     if from >= haystack.len() {
         return None;
     }
-    haystack[from..].iter().position(|&b| b == needle).map(|p| p + from)
+    haystack[from..]
+        .iter()
+        .position(|&b| b == needle)
+        .map(|p| p + from)
 }
 
 /// Convenience wrapper for the two callers that currently append a
@@ -3776,9 +3751,7 @@ pub fn append_new_raw_task(
             event_type: provenance::LineageEventType::InboxAppended,
             timestamp_ms: provenance::now_unix_ms(),
             upstream: vec![provenance::LineageRef::Raw { id: entry.id }],
-            downstream: vec![provenance::LineageRef::Inbox {
-                id: inbox_entry.id,
-            }],
+            downstream: vec![provenance::LineageRef::Inbox { id: inbox_entry.id }],
             display_title: provenance::display_title_inbox_appended(&inbox_entry.title),
             metadata: serde_json::json!({
                 "origin": origin,
@@ -3852,11 +3825,7 @@ pub fn mark_conflict(
 ///
 /// Returns the number of affected pages found (0 is normal for the
 /// first page in a fresh wiki).
-pub fn notify_affected_pages(
-    paths: &WikiPaths,
-    new_slug: &str,
-    new_title: &str,
-) -> Result<usize> {
+pub fn notify_affected_pages(paths: &WikiPaths, new_slug: &str, new_title: &str) -> Result<usize> {
     let new_slug_lc = new_slug.to_lowercase();
     let new_title_lc = new_title.to_lowercase();
     if new_slug_lc.is_empty() && new_title_lc.is_empty() {
@@ -3906,9 +3875,7 @@ pub fn notify_affected_pages(
             if let Err(e) =
                 append_inbox_pending(paths, InboxKind::Stale, &title, &description, None)
             {
-                eprintln!(
-                    "[warn] notify_affected_pages: inbox append for `{slug}` failed: {e}"
-                );
+                eprintln!("[warn] notify_affected_pages: inbox append for `{slug}` failed: {e}");
             } else {
                 count += 1;
             }
@@ -3972,9 +3939,7 @@ fn format_iso8601(epoch_secs: u64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if m <= 2 { y + 1 } else { y };
 
-    format!(
-        "{year:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
-    )
+    format!("{year:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -4025,10 +3990,7 @@ fn save_absorb_log_file(paths: &WikiPaths, entries: &[AbsorbLogEntry]) -> Result
 /// Append one absorb log entry to `{meta}/_absorb_log.json`.
 /// Atomic write: load → append → tmp + rename.
 /// Thread-safe: serialized through [`ABSORB_LOG_GUARD`].
-pub fn append_absorb_log(
-    paths: &WikiPaths,
-    entry: AbsorbLogEntry,
-) -> Result<()> {
+pub fn append_absorb_log(paths: &WikiPaths, entry: AbsorbLogEntry) -> Result<()> {
     let _guard = lock_absorb_log_writes();
     let mut entries = load_absorb_log_file(paths)?;
     entries.push(entry);
@@ -4109,10 +4071,7 @@ pub fn build_backlinks_index(paths: &WikiPaths) -> Result<BacklinksIndex> {
 
 /// Persist the backlinks index to `{meta}/_backlinks.json`.
 /// Atomic write: tmp + rename.
-pub fn save_backlinks_index(
-    paths: &WikiPaths,
-    index: &BacklinksIndex,
-) -> Result<()> {
+pub fn save_backlinks_index(paths: &WikiPaths, index: &BacklinksIndex) -> Result<()> {
     fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
     let bytes = serde_json::to_vec_pretty(index)
         .map_err(|e| WikiStoreError::BacklinksCorrupted(format!("serialize: {e}")))?;
@@ -4186,10 +4145,7 @@ pub struct ValidationError {
 
 /// Validate wiki page frontmatter against a [`SchemaTemplate`].
 /// Returns all violations; an empty list means fully compliant.
-pub fn validate_frontmatter(
-    content: &str,
-    template: &SchemaTemplate,
-) -> Vec<ValidationError> {
+pub fn validate_frontmatter(content: &str, template: &SchemaTemplate) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
     // Extract YAML frontmatter block between first pair of `---` lines.
@@ -4207,13 +4163,14 @@ pub fn validate_frontmatter(
     };
 
     // Parse YAML as a loose key-value map.
-    let fm_map: HashMap<String, serde_json::Value> = match serde_json::from_str(&yaml_to_json_loose(&fm_text)) {
-        Ok(map) => map,
-        Err(_) => {
-            // Fallback: try to parse line-by-line as "key: value" pairs.
-            parse_frontmatter_loose(&fm_text)
-        }
-    };
+    let fm_map: HashMap<String, serde_json::Value> =
+        match serde_json::from_str(&yaml_to_json_loose(&fm_text)) {
+            Ok(map) => map,
+            Err(_) => {
+                // Fallback: try to parse line-by-line as "key: value" pairs.
+                parse_frontmatter_loose(&fm_text)
+            }
+        };
 
     // Check required fields.
     for required in &template.required_fields {
@@ -4236,9 +4193,10 @@ pub fn validate_frontmatter(
                 FieldType::Number => value.is_number(),
                 FieldType::Boolean => value.is_boolean(),
                 FieldType::StringList => value.is_array(),
-                FieldType::Enum(allowed) => {
-                    value.as_str().map(|s| allowed.contains(&s.to_string())).unwrap_or(false)
-                }
+                FieldType::Enum(allowed) => value
+                    .as_str()
+                    .map(|s| allowed.contains(&s.to_string()))
+                    .unwrap_or(false),
             };
             if !type_ok {
                 errors.push(ValidationError {
@@ -4335,7 +4293,7 @@ fn parse_frontmatter_loose(yaml: &str) -> HashMap<String, serde_json::Value> {
             let key = key.trim().to_string();
             let val = val.trim();
             let json_val = if val.starts_with('"') && val.ends_with('"') {
-                serde_json::Value::String(val[1..val.len()-1].to_string())
+                serde_json::Value::String(val[1..val.len() - 1].to_string())
             } else if val == "true" {
                 serde_json::Value::Bool(true)
             } else if val == "false" {
@@ -4411,8 +4369,8 @@ pub fn load_schema_template_infos(paths: &WikiPaths) -> Result<Vec<SchemaTemplat
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    let dir = fs::read_dir(&templates_dir)
-        .map_err(|e| WikiStoreError::io(templates_dir.clone(), e))?;
+    let dir =
+        fs::read_dir(&templates_dir).map_err(|e| WikiStoreError::io(templates_dir.clone(), e))?;
     for entry in dir.flatten() {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("md") {
@@ -4422,8 +4380,7 @@ pub fn load_schema_template_infos(paths: &WikiPaths) -> Result<Vec<SchemaTemplat
             Some(s) => s.to_string(),
             None => continue,
         };
-        let content = fs::read_to_string(&path)
-            .map_err(|e| WikiStoreError::io(path.clone(), e))?;
+        let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
         let fields = parse_template_field_infos(&content);
         let body_hint = extract_template_body_hint(&content);
         out.push(SchemaTemplateInfo {
@@ -4746,7 +4703,10 @@ pub fn wiki_stats(paths: &WikiPaths) -> Result<WikiStats> {
     // so /api/wiki/stats.orphan_count == /api/wiki/patrol.summary.orphans.
     let orphan_count = compute_orphan_count(paths);
 
-    let inbox_pending = inbox.iter().filter(|e| e.status == InboxStatus::Pending).count();
+    let inbox_pending = inbox
+        .iter()
+        .filter(|e| e.status == InboxStatus::Pending)
+        .count();
     let inbox_resolved = inbox
         .iter()
         .filter(|e| e.status == InboxStatus::Approved || e.status == InboxStatus::Rejected)
@@ -4859,7 +4819,10 @@ mod tests {
         assert_eq!(paths.wiki, root.join("wiki"));
         assert_eq!(paths.schema, root.join("schema"));
         assert_eq!(paths.meta, root.join(".clawwiki"));
-        assert_eq!(paths.schema_claude_md, root.join("schema").join("CLAUDE.md"));
+        assert_eq!(
+            paths.schema_claude_md,
+            root.join("schema").join("CLAUDE.md")
+        );
     }
 
     // ── Windows UAC fallback tests (v2 Phase 4 bugfix) ──────────
@@ -4905,7 +4868,10 @@ mod tests {
     fn default_root_from_is_pure_no_fallback() {
         // Even with a "denied" looking path, pure function just joins.
         let result = default_root_from(None, Some(Path::new("/nonexistent/nowhere")));
-        assert_eq!(result, Path::new("/nonexistent/nowhere").join(DEFAULT_DIRNAME));
+        assert_eq!(
+            result,
+            Path::new("/nonexistent/nowhere").join(DEFAULT_DIRNAME)
+        );
     }
 
     /// On non-Windows, `local_appdata_fallback` returns None.
@@ -4923,7 +4889,10 @@ mod tests {
             assert!(fallback.ends_with("clawwiki"));
             // Should not be empty and should point under LOCALAPPDATA.
             let expected_prefix = std::env::var_os("LOCALAPPDATA");
-            assert!(expected_prefix.is_some(), "LOCALAPPDATA should be set on Windows");
+            assert!(
+                expected_prefix.is_some(),
+                "LOCALAPPDATA should be set on Windows"
+            );
         }
     }
 
@@ -4952,7 +4921,10 @@ mod tests {
             content.starts_with("# CLAUDE.md · wiki-maintainer agent rules"),
             "header missing or changed"
         );
-        assert!(content.contains("## Layer contract"), "Layer contract section missing");
+        assert!(
+            content.contains("## Layer contract"),
+            "Layer contract section missing"
+        );
         assert!(content.contains("## Triggers"), "Triggers section missing");
         assert!(
             content.contains("## Frontmatter (schema v1, required)"),
@@ -4981,7 +4953,11 @@ mod tests {
         // Third call must not error.
         init_wiki(tmp.path()).unwrap();
         assert!(tmp.path().join(RAW_DIR).is_dir());
-        assert!(tmp.path().join(SCHEMA_DIR).join(CLAUDE_MD_FILENAME).is_file());
+        assert!(tmp
+            .path()
+            .join(SCHEMA_DIR)
+            .join(CLAUDE_MD_FILENAME)
+            .is_file());
     }
 
     #[test]
@@ -5064,11 +5040,9 @@ mod tests {
         assert_ne!(chinese_slug, "untitled");
         assert_eq!(chinese_slug, slugify("中文标题"));
         assert_ne!(chinese_slug, slugify("另一个标题"));
-        assert!(
-            chinese_slug
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        );
+        assert!(chinese_slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
         // Mixed ASCII + CJK keeps the readable prefix but adds a hash
         // suffix so different Chinese tails do not collide.
         let mixed_slug = slugify("Hello 中文");
@@ -5204,10 +5178,11 @@ mod tests {
         // but the actual text is the anti-bot block. This is what the
         // mp.weixin.qq.com production incident looked like.
         let skeleton = "<div class='wrap'></div>\n".repeat(800);
-        let body = format!(
-            "{skeleton}\n\n## 环境异常\n\n完成验证后即可继续访问。"
+        let body = format!("{skeleton}\n\n## 环境异常\n\n完成验证后即可继续访问。");
+        assert!(
+            body.len() > 10_000,
+            "body must be long enough to bypass old length gate"
         );
-        assert!(body.len() > 10_000, "body must be long enough to bypass old length gate");
         let fm = RawFrontmatter::for_paste("url", Some("https://example.com/".to_string()));
         let err = write_raw_entry(&paths, "url", "example", &body, &fm).unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
@@ -5373,9 +5348,7 @@ mod tests {
         let yaml = fm.to_yaml_block();
         assert!(yaml.contains("source_url: https://example.com/canonical\n"));
         assert!(yaml.contains(&format!("content_hash: {}\n", "a".repeat(64))));
-        assert!(yaml.contains(
-            "original_url: https://example.com/canonical?utm_source=x\n"
-        ));
+        assert!(yaml.contains("original_url: https://example.com/canonical?utm_source=x\n"));
     }
 
     #[test]
@@ -5456,11 +5429,20 @@ mod tests {
         // anything (the field stays None after a round-trip through
         // list_raw_entries).
         let fm = RawFrontmatter::for_paste("paste", None);
-        write_raw_entry(&paths, "paste", "no-hash", "some body content here with enough text", &fm)
-            .unwrap();
+        write_raw_entry(
+            &paths,
+            "paste",
+            "no-hash",
+            "some body content here with enough text",
+            &fm,
+        )
+        .unwrap();
 
         let found = find_raw_by_content_hash(&paths, &"d".repeat(64)).unwrap();
-        assert!(found.is_none(), "hash lookup against absent hash should miss");
+        assert!(
+            found.is_none(),
+            "hash lookup against absent hash should miss"
+        );
     }
 
     #[test]
@@ -5535,14 +5517,7 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         let fm = RawFrontmatter::for_paste("paste", None);
-        write_raw_entry(
-            &paths,
-            "paste",
-            "test",
-            "Line one.\nLine two.\n",
-            &fm,
-        )
-        .unwrap();
+        write_raw_entry(&paths, "paste", "test", "Line one.\nLine two.\n", &fm).unwrap();
 
         let (_entry, body) = read_raw_entry(&paths, 1).unwrap();
         assert_eq!(body, "Line one.\nLine two.\n");
@@ -5583,8 +5558,10 @@ mod tests {
 
         // Directory got created and the file lives at the expected path.
         assert!(concepts_dir.is_dir(), "concepts/ not created by write");
-        assert!(written.ends_with("wiki/concepts/llm-wiki.md")
-            || written.ends_with("wiki\\concepts\\llm-wiki.md"));
+        assert!(
+            written.ends_with("wiki/concepts/llm-wiki.md")
+                || written.ends_with("wiki\\concepts\\llm-wiki.md")
+        );
         assert!(written.is_file());
 
         // File content has the canonical schema v1 shape: type: concept
@@ -5597,9 +5574,7 @@ mod tests {
         assert!(content.contains("owner: maintainer\n"));
         assert!(content.contains("schema: v1\n"));
         assert!(content.contains("title: LLM Wiki\n"));
-        assert!(content.contains(
-            "summary: Karpathy three-layer cognitive asset architecture.\n"
-        ));
+        assert!(content.contains("summary: Karpathy three-layer cognitive asset architecture.\n"));
         assert!(content.contains("source_raw_id: 42\n"));
         assert!(content.contains("# LLM Wiki"));
         assert!(content.contains("Three layers: raw/ wiki/ schema/."));
@@ -5740,8 +5715,7 @@ mod tests {
         assert!(matches!(err, WikiStoreError::Invalid(_)));
 
         // Path traversal
-        let err =
-            write_wiki_page(&paths, "../escape", "T", "s", "b", None).unwrap_err();
+        let err = write_wiki_page(&paths, "../escape", "T", "s", "b", None).unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
 
         // > 64 chars
@@ -5750,8 +5724,7 @@ mod tests {
         assert!(matches!(err, WikiStoreError::Invalid(_)));
 
         // Non-ASCII
-        let err =
-            write_wiki_page(&paths, "中文", "T", "s", "b", None).unwrap_err();
+        let err = write_wiki_page(&paths, "中文", "T", "s", "b", None).unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
     }
 
@@ -5760,11 +5733,7 @@ mod tests {
         // Pin the YAML shape so a future refactor can't silently
         // swap `type:` back to `kind:`. Canonical §"Frontmatter"
         // requires `type:`.
-        let fm = WikiFrontmatter::for_concept(
-            "LLM Wiki",
-            "three layers",
-            Some(3),
-        );
+        let fm = WikiFrontmatter::for_concept("LLM Wiki", "three layers", Some(3));
         let yaml = fm.to_yaml_block();
         assert!(yaml.starts_with("---\n"));
         assert!(yaml.ends_with("---\n"));
@@ -5827,8 +5796,7 @@ mod tests {
         assert_eq!(header_count, 1, "header must only be seeded once");
 
         // All three entries present, in insertion order.
-        let entries: Vec<&str> =
-            content.lines().filter(|l| l.starts_with("## [")).collect();
+        let entries: Vec<&str> = content.lines().filter(|l| l.starts_with("## [")).collect();
         assert_eq!(entries.len(), 3);
         assert!(entries[0].contains("write-concept | Topic A"));
         assert!(entries[1].contains("write-concept | Topic B"));
@@ -5852,12 +5820,8 @@ mod tests {
         for i in 0..20u32 {
             let paths = Arc::clone(&paths);
             handles.push(thread::spawn(move || {
-                append_wiki_log(
-                    &paths,
-                    "write-concept",
-                    &format!("concurrent-{i}"),
-                )
-                .expect("append must succeed under contention")
+                append_wiki_log(&paths, "write-concept", &format!("concurrent-{i}"))
+                    .expect("append must succeed under contention")
             }));
         }
 
@@ -5866,8 +5830,7 @@ mod tests {
         }
 
         let content = fs::read_to_string(wiki_log_path(&paths)).unwrap();
-        let entries: Vec<&str> =
-            content.lines().filter(|l| l.starts_with("## [")).collect();
+        let entries: Vec<&str> = content.lines().filter(|l| l.starts_with("## [")).collect();
         assert_eq!(
             entries.len(),
             20,
@@ -6061,7 +6024,11 @@ mod tests {
     fn init_wiki_creates_all_four_category_dirs() {
         let tmp = tempdir().unwrap();
         init_wiki(tmp.path()).unwrap();
-        assert!(tmp.path().join(WIKI_DIR).join(WIKI_CONCEPTS_SUBDIR).is_dir());
+        assert!(tmp
+            .path()
+            .join(WIKI_DIR)
+            .join(WIKI_CONCEPTS_SUBDIR)
+            .is_dir());
         assert!(tmp.path().join(WIKI_DIR).join(WIKI_PEOPLE_SUBDIR).is_dir());
         assert!(tmp.path().join(WIKI_DIR).join(WIKI_TOPICS_SUBDIR).is_dir());
         assert!(tmp.path().join(WIKI_DIR).join(WIKI_COMPARE_SUBDIR).is_dir());
@@ -6122,8 +6089,7 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         write_wiki_page(&paths, "llm-wiki", "LLM Wiki", "s", "b", None).unwrap();
-        write_wiki_page_in_category(&paths, "people", "karpathy", "K", "s", "b", None)
-            .unwrap();
+        write_wiki_page_in_category(&paths, "people", "karpathy", "K", "s", "b", None).unwrap();
         write_wiki_page_in_category(&paths, "topic", "ai-memory", "AI Memory", "s", "b", None)
             .unwrap();
 
@@ -6141,10 +6107,8 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         write_wiki_page(&paths, "alpha", "Alpha", "s", "b", None).unwrap();
-        write_wiki_page_in_category(&paths, "people", "bob", "Bob", "s", "b", None)
-            .unwrap();
-        write_wiki_page_in_category(&paths, "compare", "a-vs-b", "A vs B", "s", "b", None)
-            .unwrap();
+        write_wiki_page_in_category(&paths, "people", "bob", "Bob", "s", "b", None).unwrap();
+        write_wiki_page_in_category(&paths, "compare", "a-vs-b", "A vs B", "s", "b", None).unwrap();
 
         rebuild_wiki_index(&paths).unwrap();
         let content = fs::read_to_string(wiki_index_path(&paths)).unwrap();
@@ -6299,15 +6263,7 @@ mod tests {
             Some(1),
         )
         .unwrap();
-        write_wiki_page(
-            &paths,
-            "bravo",
-            "Bravo",
-            "Summary",
-            "Standalone.",
-            Some(2),
-        )
-        .unwrap();
+        write_wiki_page(&paths, "bravo", "Bravo", "Summary", "Standalone.", Some(2)).unwrap();
 
         let backlinks = list_backlinks(&paths, "bravo").unwrap();
         assert_eq!(backlinks.len(), 1);
@@ -6395,8 +6351,7 @@ mod tests {
             Some(1),
         )
         .unwrap();
-        write_wiki_page(&paths, "page-b", "Page B", "summary", "No links.", Some(2))
-            .unwrap();
+        write_wiki_page(&paths, "page-b", "Page B", "summary", "No links.", Some(2)).unwrap();
 
         // Need at least 1 raw entry for the derived-from edges
         write_raw_entry(
@@ -6458,7 +6413,9 @@ mod tests {
         assert_eq!(entry.source_raw_id, Some(42));
         assert!(entry.description.contains("agentic-loop"));
         assert!(entry.description.contains("rag-vs-llm-wiki"));
-        assert!(entry.description.contains("v2 changes the loop termination"));
+        assert!(entry
+            .description
+            .contains("v2 changes the loop termination"));
     }
 
     #[test]
@@ -6495,8 +6452,14 @@ mod tests {
         )
         .unwrap();
         append_new_raw_task(&paths, &raw, "paste").unwrap();
-        mark_conflict(&paths, "Conflict A", &["alpha".to_string()], Some(raw.id), "x")
-            .unwrap();
+        mark_conflict(
+            &paths,
+            "Conflict A",
+            &["alpha".to_string()],
+            Some(raw.id),
+            "x",
+        )
+        .unwrap();
 
         let all = list_inbox_entries(&paths).unwrap();
         assert_eq!(all.len(), 2);
@@ -6552,11 +6515,7 @@ mod tests {
         assert_eq!(g.nodes.len(), 2);
 
         // Find raw node
-        let raw_node = g
-            .nodes
-            .iter()
-            .find(|n| n.kind == "raw")
-            .expect("raw node");
+        let raw_node = g.nodes.iter().find(|n| n.kind == "raw").expect("raw node");
         assert_eq!(raw_node.id, format!("raw-{}", raw.id));
         // Label is "{source}: {slug}". Slug is slugified,
         // lowercased — "karpathy-llm-wiki" or similar.
@@ -6595,10 +6554,8 @@ mod tests {
             &RawFrontmatter::for_paste("paste", None),
         )
         .unwrap();
-        write_wiki_page(&paths, "alpha", "Alpha", "summary", "body", Some(raw1.id))
-            .unwrap();
-        write_wiki_page(&paths, "bravo", "Bravo", "summary", "body", Some(raw2.id))
-            .unwrap();
+        write_wiki_page(&paths, "alpha", "Alpha", "summary", "body", Some(raw1.id)).unwrap();
+        write_wiki_page(&paths, "bravo", "Bravo", "summary", "body", Some(raw2.id)).unwrap();
         // One concept WITHOUT source_raw_id — should still get a node
         // but no derived-from edge.
         write_wiki_page(&paths, "orphan", "Orphan", "summary", "body", None).unwrap();
@@ -6610,15 +6567,11 @@ mod tests {
 
         // Edge for alpha → raw1
         assert!(g.edges.iter().any(|e| {
-            e.from == "wiki-alpha"
-                && e.to == format!("raw-{}", raw1.id)
-                && e.kind == "derived-from"
+            e.from == "wiki-alpha" && e.to == format!("raw-{}", raw1.id) && e.kind == "derived-from"
         }));
         // Edge for bravo → raw2
         assert!(g.edges.iter().any(|e| {
-            e.from == "wiki-bravo"
-                && e.to == format!("raw-{}", raw2.id)
-                && e.kind == "derived-from"
+            e.from == "wiki-bravo" && e.to == format!("raw-{}", raw2.id) && e.kind == "derived-from"
         }));
         // No edge for orphan
         assert!(!g.edges.iter().any(|e| e.from == "wiki-orphan"));
@@ -6637,15 +6590,7 @@ mod tests {
 
         // All four pages exist so `extract_internal_links` targets
         // resolve and dangling-filter doesn't drop them.
-        write_wiki_page(
-            &paths,
-            "xray",
-            "X-Ray",
-            "A shared target.",
-            "Body.",
-            None,
-        )
-        .unwrap();
+        write_wiki_page(&paths, "xray", "X-Ray", "A shared target.", "Body.", None).unwrap();
         write_wiki_page(
             &paths,
             "yankee",
@@ -6691,7 +6636,10 @@ mod tests {
             related.iter().map(|r| &r.slug).collect::<Vec<_>>()
         );
         assert_eq!(related[0].slug, "bravo");
-        assert!(related[0].score >= 2, "score should include +2 for shared link");
+        assert!(
+            related[0].score >= 2,
+            "score should include +2 for shared link"
+        );
         assert!(
             related[0]
                 .reasons
@@ -6726,13 +6674,18 @@ mod tests {
         )
         .unwrap();
 
-        write_wiki_page(&paths, "delta", "Delta", "summary d", "Body d.", Some(42))
-            .unwrap();
-        write_wiki_page(&paths, "echo", "Echo", "summary e", "Body e.", Some(42))
-            .unwrap();
+        write_wiki_page(&paths, "delta", "Delta", "summary d", "Body d.", Some(42)).unwrap();
+        write_wiki_page(&paths, "echo", "Echo", "summary e", "Body e.", Some(42)).unwrap();
         // Sanity: a third page with a different source should NOT show up.
-        write_wiki_page(&paths, "foxtrot", "Foxtrot", "summary f", "Body f.", Some(99))
-            .unwrap();
+        write_wiki_page(
+            &paths,
+            "foxtrot",
+            "Foxtrot",
+            "summary f",
+            "Body f.",
+            Some(99),
+        )
+        .unwrap();
 
         let related = compute_related_pages(&paths, "delta").unwrap();
         assert!(
@@ -6740,7 +6693,10 @@ mod tests {
             "expected echo as related via shared source_raw_id"
         );
         let echo_hit = related.iter().find(|r| r.slug == "echo").unwrap();
-        assert!(echo_hit.score >= 3, "score should include +3 for shared raw");
+        assert!(
+            echo_hit.score >= 3,
+            "score should include +3 for shared raw"
+        );
         assert!(
             echo_hit
                 .reasons
@@ -6895,8 +6851,7 @@ mod tests {
         assert_eq!(graph.summary.as_deref(), Some("hub summary"));
 
         // Outgoing — both existing spokes, no dangling.
-        let outgoing_slugs: Vec<&str> =
-            graph.outgoing.iter().map(|n| n.slug.as_str()).collect();
+        let outgoing_slugs: Vec<&str> = graph.outgoing.iter().map(|n| n.slug.as_str()).collect();
         assert!(outgoing_slugs.contains(&"spoke-a"));
         assert!(outgoing_slugs.contains(&"spoke-b"));
         assert_eq!(graph.outgoing.len(), 2);
@@ -6908,15 +6863,18 @@ mod tests {
         // Related — should contain back-ref (shared outgoing spoke-a)
         // and side (shared source_raw_id 55). Order: side has +3,
         // back-ref has +2, so side comes first.
-        let related_slugs: Vec<&str> =
-            graph.related.iter().map(|r| r.slug.as_str()).collect();
+        let related_slugs: Vec<&str> = graph.related.iter().map(|r| r.slug.as_str()).collect();
         assert!(related_slugs.contains(&"back-ref"));
         assert!(related_slugs.contains(&"side"));
         // Self never appears.
         assert!(!related_slugs.contains(&"hub"));
         // Each related hit has reasons.
         for hit in &graph.related {
-            assert!(!hit.reasons.is_empty(), "hit {} has empty reasons", hit.slug);
+            assert!(
+                !hit.reasons.is_empty(),
+                "hit {} has empty reasons",
+                hit.slug
+            );
         }
     }
 
@@ -7002,11 +6960,13 @@ mod tests {
         // All three entries should land in the same file (today's
         // date). Read whatever file exists in changelog/.
         let dir = tmp.path().join(WIKI_DIR).join(WIKI_CHANGELOG_SUBDIR);
-        let files: Vec<_> = fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
-        assert_eq!(files.len(), 1, "expected single day file, got {}", files.len());
+        let files: Vec<_> = fs::read_dir(&dir).unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "expected single day file, got {}",
+            files.len()
+        );
 
         let content = fs::read_to_string(files[0].path()).unwrap();
         // Header only seeded once.
@@ -7031,8 +6991,7 @@ mod tests {
         let entry_line = content.lines().find(|l| l.starts_with("## [")).unwrap();
         // Format: "## [HH:MM] verb | title"
         // Slice between [ and ] should be exactly 5 chars (HH:MM).
-        let between = &entry_line[entry_line.find('[').unwrap() + 1
-            ..entry_line.find(']').unwrap()];
+        let between = &entry_line[entry_line.find('[').unwrap() + 1..entry_line.find(']').unwrap()];
         assert_eq!(between.len(), 5);
         assert_eq!(between.chars().nth(2), Some(':'));
     }
@@ -7066,10 +7025,7 @@ mod tests {
         let entries: Vec<&str> = content.lines().filter(|l| l.starts_with("## [")).collect();
         assert_eq!(entries.len(), 15);
         for i in 0..15u32 {
-            assert!(
-                content.contains(&format!("entry-{i}")),
-                "lost entry-{i}"
-            );
+            assert!(content.contains(&format!("entry-{i}")), "lost entry-{i}");
         }
     }
 
@@ -7356,15 +7312,10 @@ mod tests {
         // created. If not, it won't. Both are acceptable — the
         // function must not crash either way.
         let git_dir = tmp.path().join(".git");
-        let git_probe = std::process::Command::new("git")
-            .arg("--version")
-            .output();
+        let git_probe = std::process::Command::new("git").arg("--version").output();
         let git_available = matches!(git_probe, Ok(o) if o.status.success());
         if git_available {
-            assert!(
-                git_dir.is_dir(),
-                "git is on PATH but .git/ was not created"
-            );
+            assert!(git_dir.is_dir(), "git is on PATH but .git/ was not created");
         }
     }
 
@@ -7385,12 +7336,10 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
 
-        let e1 =
-            append_inbox_pending(&paths, InboxKind::NewRaw, "first", "desc", Some(1)).unwrap();
+        let e1 = append_inbox_pending(&paths, InboxKind::NewRaw, "first", "desc", Some(1)).unwrap();
         let e2 =
             append_inbox_pending(&paths, InboxKind::NewRaw, "second", "desc", Some(2)).unwrap();
-        let e3 =
-            append_inbox_pending(&paths, InboxKind::NewRaw, "third", "desc", None).unwrap();
+        let e3 = append_inbox_pending(&paths, InboxKind::NewRaw, "third", "desc", None).unwrap();
 
         assert_eq!(e1.id, 1);
         assert_eq!(e2.id, 2);
@@ -7437,10 +7386,7 @@ mod tests {
             .description
             .contains("Suggested action: Add a backlink or deprecate the page."));
         assert_eq!(entries[1].kind, InboxKind::Stale);
-        assert_eq!(
-            entries[1].title,
-            "Patrol: Schema violation - schema-page"
-        );
+        assert_eq!(entries[1].title, "Patrol: Schema violation - schema-page");
     }
 
     #[test]
@@ -7570,10 +7516,7 @@ mod tests {
         // And every source_raw_id must survive — this catches the bug
         // where two threads write distinct entries to the same id slot
         // and only one persists.
-        let mut raw_ids: Vec<u32> = listed
-            .iter()
-            .filter_map(|e| e.source_raw_id)
-            .collect();
+        let mut raw_ids: Vec<u32> = listed.iter().filter_map(|e| e.source_raw_id).collect();
         raw_ids.sort_unstable();
         assert_eq!(raw_ids, (0..20).collect::<Vec<_>>());
     }
@@ -7671,14 +7614,18 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         for i in 1..=3 {
-            append_absorb_log(&paths, AbsorbLogEntry {
-                entry_id: i,
-                timestamp: format!("2026-04-14T10:0{i}:00Z"),
-                action: "create".to_string(),
-                page_slug: Some(format!("page-{i}")),
-                page_title: None,
-                page_category: None,
-            }).unwrap();
+            append_absorb_log(
+                &paths,
+                AbsorbLogEntry {
+                    entry_id: i,
+                    timestamp: format!("2026-04-14T10:0{i}:00Z"),
+                    action: "create".to_string(),
+                    page_slug: Some(format!("page-{i}")),
+                    page_title: None,
+                    page_category: None,
+                },
+            )
+            .unwrap();
         }
 
         let log = list_absorb_log(&paths).unwrap();
@@ -7694,14 +7641,18 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
 
-        append_absorb_log(&paths, AbsorbLogEntry {
-            entry_id: 42,
-            timestamp: now_iso8601(),
-            action: "create".to_string(),
-            page_slug: Some("x".to_string()),
-            page_title: None,
-            page_category: None,
-        }).unwrap();
+        append_absorb_log(
+            &paths,
+            AbsorbLogEntry {
+                entry_id: 42,
+                timestamp: now_iso8601(),
+                action: "create".to_string(),
+                page_slug: Some("x".to_string()),
+                page_title: None,
+                page_category: None,
+            },
+        )
+        .unwrap();
 
         assert!(is_entry_absorbed(&paths, 42));
     }
@@ -7712,16 +7663,23 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
 
-        append_absorb_log(&paths, AbsorbLogEntry {
-            entry_id: 7,
-            timestamp: now_iso8601(),
-            action: "skip".to_string(),
-            page_slug: None,
-            page_title: None,
-            page_category: None,
-        }).unwrap();
+        append_absorb_log(
+            &paths,
+            AbsorbLogEntry {
+                entry_id: 7,
+                timestamp: now_iso8601(),
+                action: "skip".to_string(),
+                page_slug: None,
+                page_title: None,
+                page_category: None,
+            },
+        )
+        .unwrap();
 
-        assert!(!is_entry_absorbed(&paths, 7), "skip should not count as absorbed");
+        assert!(
+            !is_entry_absorbed(&paths, 7),
+            "skip should not count as absorbed"
+        );
     }
 
     #[test]
@@ -7741,12 +7699,18 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         let mut index = BacklinksIndex::new();
-        index.insert("target".to_string(), vec!["source-a".to_string(), "source-b".to_string()]);
+        index.insert(
+            "target".to_string(),
+            vec!["source-a".to_string(), "source-b".to_string()],
+        );
 
         save_backlinks_index(&paths, &index).unwrap();
         let loaded = load_backlinks_index(&paths).unwrap();
         assert_eq!(loaded.get("target").unwrap().len(), 2);
-        assert!(loaded.get("target").unwrap().contains(&"source-a".to_string()));
+        assert!(loaded
+            .get("target")
+            .unwrap()
+            .contains(&"source-a".to_string()));
     }
 
     #[test]
@@ -7766,13 +7730,25 @@ mod tests {
 
         // Create two pages where page-a links to page-b.
         write_wiki_page_in_category(
-            &paths, "concept", "page-a", "Page A", "Summary A",
-            "# Page A\n\nSee [Page B](concepts/page-b.md) for details.", Some(1),
-        ).unwrap();
+            &paths,
+            "concept",
+            "page-a",
+            "Page A",
+            "Summary A",
+            "# Page A\n\nSee [Page B](concepts/page-b.md) for details.",
+            Some(1),
+        )
+        .unwrap();
         write_wiki_page_in_category(
-            &paths, "concept", "page-b", "Page B", "Summary B",
-            "# Page B\n\nStandalone page.", Some(2),
-        ).unwrap();
+            &paths,
+            "concept",
+            "page-b",
+            "Page B",
+            "Summary B",
+            "# Page B\n\nStandalone page.",
+            Some(2),
+        )
+        .unwrap();
 
         let index = build_backlinks_index(&paths).unwrap();
         // page-b should have page-a as a backlink.
@@ -8014,7 +7990,10 @@ mod tests {
             required_fields: vec!["type".to_string(), "title".to_string()],
         };
         let errors = validate_frontmatter(content, &template);
-        assert!(errors.is_empty(), "compliant page should have no errors: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "compliant page should have no errors: {errors:?}"
+        );
     }
 
     #[test]
@@ -8072,7 +8051,10 @@ mod tests {
         assert!(concept_field_names.iter().all(|n| !n.is_empty()));
 
         // body_hint contains body content (non-empty for seeded templates)
-        assert!(!concept.body_hint.is_empty(), "concept body_hint should be non-empty");
+        assert!(
+            !concept.body_hint.is_empty(),
+            "concept body_hint should be non-empty"
+        );
 
         // file_path points to an existing .md file
         assert!(concept.file_path.ends_with("concept.md"));
@@ -8119,9 +8101,15 @@ mod tests {
         write_raw_entry(&paths, "paste", "test", "body content", &fm).unwrap();
 
         write_wiki_page_in_category(
-            &paths, "concept", "test-concept", "Test Concept", "Summary",
-            "This is a test concept page with some words.", Some(1),
-        ).unwrap();
+            &paths,
+            "concept",
+            "test-concept",
+            "Test Concept",
+            "Summary",
+            "This is a test concept page with some words.",
+            Some(1),
+        )
+        .unwrap();
 
         let stats = wiki_stats(&paths).unwrap();
         assert_eq!(stats.raw_count, 1);
@@ -8159,14 +8147,22 @@ mod tests {
         assert!(entry.proposed_wiki_slug.is_none());
         assert!(entry.rejection_reason.is_none());
         // W2 fields — None (the point of this test)
-        assert!(entry.proposal_status.is_none(),
-            "proposal_status must default to None for legacy JSON");
-        assert!(entry.proposed_after_markdown.is_none(),
-            "proposed_after_markdown must default to None for legacy JSON");
-        assert!(entry.before_markdown_snapshot.is_none(),
-            "before_markdown_snapshot must default to None for legacy JSON");
-        assert!(entry.proposal_summary.is_none(),
-            "proposal_summary must default to None for legacy JSON");
+        assert!(
+            entry.proposal_status.is_none(),
+            "proposal_status must default to None for legacy JSON"
+        );
+        assert!(
+            entry.proposed_after_markdown.is_none(),
+            "proposed_after_markdown must default to None for legacy JSON"
+        );
+        assert!(
+            entry.before_markdown_snapshot.is_none(),
+            "before_markdown_snapshot must default to None for legacy JSON"
+        );
+        assert!(
+            entry.proposal_summary.is_none(),
+            "proposal_summary must default to None for legacy JSON"
+        );
     }
 
     /// Round-trip of a W2 entry with all four proposal fields set

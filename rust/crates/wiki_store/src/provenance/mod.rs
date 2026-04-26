@@ -128,10 +128,7 @@ pub fn scan_all(paths: &WikiPaths) -> Vec<LineageEvent> {
     let file = match std::fs::File::open(&path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "[provenance] scan_all: open {} failed: {e}",
-                path.display()
-            );
+            eprintln!("[provenance] scan_all: open {} failed: {e}", path.display());
             return Vec::new();
         }
     };
@@ -141,10 +138,7 @@ pub fn scan_all(paths: &WikiPaths) -> Vec<LineageEvent> {
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
-                eprintln!(
-                    "[provenance] scan_all: line {} read error: {e}",
-                    idx + 1
-                );
+                eprintln!("[provenance] scan_all: line {} read error: {e}", idx + 1);
                 continue;
             }
         };
@@ -154,10 +148,7 @@ pub fn scan_all(paths: &WikiPaths) -> Vec<LineageEvent> {
         match serde_json::from_str::<LineageEvent>(&line) {
             Ok(event) => out.push(event),
             Err(e) => {
-                eprintln!(
-                    "[provenance] scan_all: line {} parse error: {e}",
-                    idx + 1
-                );
+                eprintln!("[provenance] scan_all: line {} parse error: {e}", idx + 1);
             }
         }
     }

@@ -216,7 +216,10 @@ export const MessageList = memo(function MessageList({
         return (
           <div
             key={item.key}
+            className="ask-message-row"
             data-index={virtualItem.index}
+            data-kind={item.kind}
+            data-tail={virtualItem.index === items.length - 1 ? "true" : "false"}
             ref={virtualizer.measureElement}
             style={{
               position: "absolute",

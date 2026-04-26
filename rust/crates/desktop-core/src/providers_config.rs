@@ -173,12 +173,10 @@ impl ProviderEntry {
     /// `OpenAiCompat` the user MUST supply one (validated at save time).
     #[must_use]
     pub fn effective_base_url(&self) -> String {
-        self.base_url
-            .clone()
-            .unwrap_or_else(|| match self.kind {
-                ProviderKind::Anthropic => "https://api.anthropic.com".to_string(),
-                ProviderKind::OpenAiCompat => String::new(),
-            })
+        self.base_url.clone().unwrap_or_else(|| match self.kind {
+            ProviderKind::Anthropic => "https://api.anthropic.com".to_string(),
+            ProviderKind::OpenAiCompat => String::new(),
+        })
     }
 }
 
@@ -254,11 +252,7 @@ impl ProvidersConfig {
 
     /// Insert or replace a provider entry. Validates the id and entry
     /// first; on validation failure the config is left unchanged.
-    pub fn upsert(
-        &mut self,
-        id: &str,
-        entry: ProviderEntry,
-    ) -> Result<(), ProvidersConfigError> {
+    pub fn upsert(&mut self, id: &str, entry: ProviderEntry) -> Result<(), ProvidersConfigError> {
         validate_id(id)?;
         validate_entry(&entry)?;
         self.providers.insert(id.to_string(), entry);
@@ -338,9 +332,7 @@ fn validate_entry(entry: &ProviderEntry) -> Result<(), ProvidersConfigError> {
         ));
     }
     if entry.model.trim().is_empty() {
-        return Err(ProvidersConfigError::Invalid(
-            "model is empty".to_string(),
-        ));
+        return Err(ProvidersConfigError::Invalid("model is empty".to_string()));
     }
     // base_url rules:
     //   - OpenAiCompat: REQUIRED, must be http/https (no universal default).
@@ -351,8 +343,7 @@ fn validate_entry(entry: &ProviderEntry) -> Result<(), ProvidersConfigError> {
             Some(s) if !s.is_empty() => validate_http_url(s)?,
             _ => {
                 return Err(ProvidersConfigError::Invalid(
-                    "openai_compat providers require an explicit base_url"
-                        .to_string(),
+                    "openai_compat providers require an explicit base_url".to_string(),
                 ));
             }
         },
@@ -465,10 +456,7 @@ pub fn load(project_root: &Path) -> Result<ProvidersConfig, ProvidersConfigError
 /// Persist the providers config to disk. Creates `.claw/` if it
 /// doesn't exist. Best-effort `chmod 0o600` on Unix so API keys
 /// aren't world-readable.
-pub fn save(
-    project_root: &Path,
-    config: &ProvidersConfig,
-) -> Result<(), ProvidersConfigError> {
+pub fn save(project_root: &Path, config: &ProvidersConfig) -> Result<(), ProvidersConfigError> {
     let path = config_path(project_root);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -697,7 +685,9 @@ mod tests {
         // Auto-activated because it's the only entry.
         assert_eq!(cfg.active, "good-id");
 
-        assert!(cfg.upsert("bad id with space", sample_openai_compat()).is_err());
+        assert!(cfg
+            .upsert("bad id with space", sample_openai_compat())
+            .is_err());
     }
 
     #[test]

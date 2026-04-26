@@ -54,11 +54,36 @@ impl PipelineState {
     pub fn new() -> Self {
         Self {
             phases: vec![
-                PhaseState { phase: PipelinePhase::CfRegister, status: PhaseStatus::Pending, message: None, error: None },
-                PhaseState { phase: PipelinePhase::WorkerDeploy, status: PhaseStatus::Pending, message: None, error: None },
-                PhaseState { phase: PipelinePhase::WecomAuth, status: PhaseStatus::Pending, message: None, error: None },
-                PhaseState { phase: PipelinePhase::CallbackConfig, status: PhaseStatus::Pending, message: None, error: None },
-                PhaseState { phase: PipelinePhase::KefuCreate, status: PhaseStatus::Pending, message: None, error: None },
+                PhaseState {
+                    phase: PipelinePhase::CfRegister,
+                    status: PhaseStatus::Pending,
+                    message: None,
+                    error: None,
+                },
+                PhaseState {
+                    phase: PipelinePhase::WorkerDeploy,
+                    status: PhaseStatus::Pending,
+                    message: None,
+                    error: None,
+                },
+                PhaseState {
+                    phase: PipelinePhase::WecomAuth,
+                    status: PhaseStatus::Pending,
+                    message: None,
+                    error: None,
+                },
+                PhaseState {
+                    phase: PipelinePhase::CallbackConfig,
+                    status: PhaseStatus::Pending,
+                    message: None,
+                    error: None,
+                },
+                PhaseState {
+                    phase: PipelinePhase::KefuCreate,
+                    status: PhaseStatus::Pending,
+                    message: None,
+                    error: None,
+                },
             ],
             logs: Vec::new(),
             current_phase: None,
@@ -69,12 +94,7 @@ impl PipelineState {
         }
     }
 
-    pub fn update_phase(
-        &mut self,
-        phase: PipelinePhase,
-        status: PhaseStatus,
-        msg: Option<String>,
-    ) {
+    pub fn update_phase(&mut self, phase: PipelinePhase, status: PhaseStatus, msg: Option<String>) {
         if let Some(p) = self.phases.iter_mut().find(|p| p.phase == phase) {
             p.status = status;
             if let Some(m) = msg {
@@ -97,12 +117,10 @@ impl PipelineState {
 
     pub fn is_active(&self) -> bool {
         self.finished_at.is_none()
-            && self.phases.iter().any(|p| {
-                matches!(
-                    p.status,
-                    PhaseStatus::Running | PhaseStatus::WaitingScan
-                )
-            })
+            && self
+                .phases
+                .iter()
+                .any(|p| matches!(p.status, PhaseStatus::Running | PhaseStatus::WaitingScan))
     }
 }
 

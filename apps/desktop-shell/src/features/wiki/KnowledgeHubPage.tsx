@@ -8,8 +8,8 @@
  *   3. Tab bodies:
  *        - pages  → KnowledgePagesList (new DS list — no Markdown index,
  *                  no inner Wiki/Graph tab bar, no engineering copy)
- *        - graph  → a small DS intro strip + GraphPage (unchanged)
- *        - raw    → a small DS intro strip + RawLibraryPage (unchanged)
+ *        - graph  → embedded GraphPage, no duplicate page hero
+ *        - raw    → embedded RawLibraryPage, compact toolbar/search row
  *   4. When the URL is `/wiki/<slug>` (slug non-empty), render
  *      `KnowledgeArticleView` (breadcrumb + WikiArticle) in place of
  *      the tabs. This covers wiki-internal links from articles /
@@ -20,9 +20,8 @@
  *     "ClawWiki index · Auto-generated catalog …" Markdown with an
  *     inner Wiki/Graph tab bar. That was the main "looks like dev
  *     docs" complaint. KnowledgePagesList replaces it.
- *   - Pre-DS1.2 GraphPage / RawLibraryPage were mounted bare. DS1.2
- *     wraps each with a small serif intro strip so the hub reads as
- *     one continuous surface instead of three unrelated pages.
+ *   - DS2.4 compacted the hub chrome: the tab bar carries the current
+ *     surface label, so nested Graph/Raw headings are suppressed here.
  *
  * Zero new backend endpoints. All data comes from existing queries.
  */
@@ -105,51 +104,33 @@ export function KnowledgeHubPage() {
 
   return (
     <div className="ds-canvas flex h-full min-h-0 flex-col overflow-hidden">
-      {/* DS1.2 header — serif title + caption above the pill-tabs.
-          Per the design-system v2 KnowledgeBase.jsx pattern: the hub's
-          main title is editorial (serif, 22px), the caption answers
-          "what lives here" in plain Chinese, then the pill tabs route
-          the user to each surface. */}
-      <header className="shrink-0 border-b border-border/40 px-6 py-4">
-        <div className="mx-auto w-full max-w-[1040px]">
-          <h1
-            className="text-foreground"
-            style={{
-              fontFamily: "var(--font-serif, \"Lora\", Georgia, serif)",
-              fontWeight: 500,
-              fontSize: 22,
-              letterSpacing: "-0.2px",
-              lineHeight: 1.25,
-            }}
-          >
-            知识库
-          </h1>
-          {/* DS1.5 — subtitle dropped. The pill tabs below already
-              label 页面 / 关系图 / 素材库; a capability-matrix
-              subtitle that just re-lists them is noise. */}
-
-          <div className="mt-3 flex items-center gap-3">
-            <PillTabs
-              tabs={HUB_TABS}
-              active={view}
-              onChange={(id) => setView(id as HubView)}
-              ariaLabel="知识库视图"
-              idPrefix="knowledge-hub"
-            />
-            <span className="hidden text-[11.5px] text-muted-foreground/70 md:inline">
+      <header className="ds-knowledge-hub-bar shrink-0">
+        <div className="ds-knowledge-hub-inner">
+          <div className="ds-knowledge-hub-title">
+            <span className="ds-knowledge-hub-kicker">知识库</span>
+            <span className="ds-knowledge-hub-hint">
               {HUB_TABS.find((t) => t.id === view)?.hint}
             </span>
-            {/* Phase 1 MVP · §9.5 criterion 1 — surface /absorb trigger
-                at the hub level. Pre-wiring it lived only inside
-                WikiFileTree (compact variant) which the default
-                /wiki route never mounts. See backlog item 9. */}
-            <div className="ml-auto">
+          </div>
+          <PillTabs
+            tabs={HUB_TABS}
+            active={view}
+            onChange={(id) => setView(id as HubView)}
+            ariaLabel="知识库视图"
+            idPrefix="knowledge-hub"
+          />
+          {/* Phase 1 MVP · §9.5 criterion 1 — surface /absorb trigger
+              at the hub level. Pre-wiring it lived only inside
+              WikiFileTree (compact variant) which the default
+              /wiki route never mounts. See backlog item 9. */}
+          {view !== "graph" && (
+            <div className="ds-knowledge-hub-action">
               <AbsorbTriggerButton />
             </div>
-          </div>
+          )}
         </div>
       </header>
-      <SkillProgressCard />
+      <SkillProgressCard placement={view === "graph" ? "bottom-toast" : "default"} />
 
       {/* Body — one mounted tab at a time. */}
       <div
@@ -159,24 +140,8 @@ export function KnowledgeHubPage() {
         className="min-h-0 flex-1 overflow-y-auto"
       >
         {view === "pages" && <KnowledgePagesList />}
-        {view === "graph" && (
-          <>
-            <div className="ds-tab-intro">
-              <h2>关系图</h2>
-              <p>看看页面、素材和概念之间是怎么连接的。拖拽节点可以探索不同分支。</p>
-            </div>
-            <GraphPage />
-          </>
-        )}
-        {view === "raw" && (
-          <>
-            <div className="ds-tab-intro">
-              <h2>素材库</h2>
-              <p>所有原始素材按时间排列。微信文章、网页链接、文件、手动粘贴内容都会落在这里。</p>
-            </div>
-            <RawLibraryPage />
-          </>
-        )}
+        {view === "graph" && <GraphPage embedded />}
+        {view === "raw" && <RawLibraryPage embedded />}
       </div>
     </div>
   );

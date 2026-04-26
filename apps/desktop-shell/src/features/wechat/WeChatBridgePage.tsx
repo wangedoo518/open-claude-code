@@ -14,15 +14,18 @@
  * iLink account binding flow.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowRight,
+  Check,
   Loader2,
   Link2,
   Plus,
   QrCode,
   RefreshCw,
   Settings,
+  ChevronDown,
   Trash2,
   Wifi,
   WifiOff,
@@ -226,15 +229,40 @@ export function WeChatBridgePage() {
     !isTerminalLoginStatus(loginStatus.status);
 
   const bridgeHealth = bridgeHealthQuery.data;
+  const primaryAccount = accounts[0] ?? null;
 
   return (
-    <div className="ds-canvas flex h-full flex-col overflow-hidden">
+    <div className="wechat-connect-page ds-canvas">
       {/* DS1.1 Hero — editorial onboarding layout.
-          Follows `ClawWiki Design System/ui_kits/desktop-shell-v2/Connect.jsx`:
+          Follows the desktop-shell design kit's Connect.jsx:
           a small `section-label` overline, a serif h1 in Chinese, then
           a plain-Chinese explanation of what happens. No iLink / long
           polling / raw path / pipeline wording at the default layer. */}
-      <div className="mx-auto w-full max-w-[760px] shrink-0 px-6 pt-10 pb-4">
+      <section className="wechat-connect-shell">
+        <div className="wechat-connect-hero">
+          <div className="wechat-connect-kicker">CONNECT · 连接</div>
+          <h1 className="wechat-connect-title">
+            让微信里的内容<span>自动流进来</span>
+          </h1>
+          <p className="wechat-connect-subtitle">
+            用一个专属小号当作外脑入口。看到值得收藏的文章、语音、图片，
+            转发给这个小号——外脑会自动接收、整理并归档到知识库。
+          </p>
+        </div>
+
+        <ConnectionProgressCard
+          connected={accounts.length > 0}
+          onOpenDiagnostics={() => {
+            const diagnostics = document.getElementById(
+              "wechat-connect-diagnostics",
+            ) as HTMLDetailsElement | null;
+            if (!diagnostics) return;
+            diagnostics.open = true;
+            diagnostics.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
+        />
+
+      <div className="hidden">
         <div
           className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70"
         >
@@ -247,7 +275,7 @@ export function WeChatBridgePage() {
           让微信里的内容自动流进来
         </h1>
         <p className="mt-3 text-[14px] leading-[1.7] text-muted-foreground">
-          用一个专属小号当作"外脑入口"。看到值得收藏的文章、语音、图片，转发给这个小号，ClawWiki 会自动接收、整理并归档。
+          用一个专属小号当作"外脑入口"。看到值得收藏的文章、语音、图片，转发给这个小号，外脑会自动接收、整理并归档。
         </p>
       </div>
 
@@ -258,9 +286,23 @@ export function WeChatBridgePage() {
           (扫码绑定 / 打开 Inbox) that the detailed sections below
           already own. No new backend logic, no new mutations. */}
       <OnboardingSteps
-        hasConnectedAccount={accounts.length > 0}
+        account={primaryAccount}
         onStartBind={() => startLoginMutation.mutate()}
         bindPending={startLoginMutation.isPending || hasLoginInFlight}
+        onUnbind={(id) => {
+          if (
+            window.confirm(
+              `确认解绑「${primaryAccount?.display_name || id}」？本地保存的机器人令牌和游标会被移除。`,
+            )
+          ) {
+            deleteAccountMutation.mutate(id);
+          }
+        }}
+        unbindPendingId={
+          deleteAccountMutation.isPending
+            ? (deleteAccountMutation.variables ?? null)
+            : null
+        }
       />
 
       {/* 高级信息 — all pre-DS1 technical content lives here.
@@ -268,23 +310,31 @@ export function WeChatBridgePage() {
           and no HMR surprises. Users who need the bridge health, env
           doctor, account list, QR, kefu pipeline, or pipeline flow
           diagram expand one toggle. */}
-      <details className="group min-h-0 flex-1 overflow-hidden border-b border-border/50 [&[open]]:flex [&[open]]:flex-col">
+      <details
+        id="wechat-connect-diagnostics"
+        className="wechat-connect-advanced group"
+      >
         <summary
-          className="flex cursor-pointer items-center gap-2 border-b border-border/30 px-6 py-3 text-[12px] text-muted-foreground transition-colors hover:bg-accent/40"
+          className="wechat-connect-advanced-summary"
         >
           <Settings className="size-3.5" />
-          <span className="font-medium">高级信息</span>
-          <span className="text-muted-foreground/60">
+          <span className="wechat-connect-advanced-title">高级诊断信息</span>
+          <span className="wechat-connect-advanced-desc">
+            · 连接状态、环境诊断、账号管理
+          </span>
+          <ChevronDown className="wechat-connect-advanced-chevron size-3.5" />
+          <span className="hidden">高级信息</span>
+          <span className="hidden">
             · 连接状态、环境诊断、账号管理、客服号 Pipeline
           </span>
-          <span className="ml-auto text-[11px] text-muted-foreground/60 group-open:hidden">
+          <span className="hidden">
             展开
           </span>
-          <span className="ml-auto hidden text-[11px] text-muted-foreground/60 group-open:inline">
+          <span className="hidden">
             收起
           </span>
         </summary>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="wechat-connect-advanced-body">
         <div className="flex justify-end px-6 py-3">
           <button
             type="button"
@@ -456,6 +506,7 @@ export function WeChatBridgePage() {
 
         </div>
       </details>
+      </section>
 
       {/* M5 — group scope modal. Lives inside the page root so the dialog
           portal lifts it above every surrounding section. Stays OUTSIDE
@@ -493,7 +544,249 @@ export function WeChatBridgePage() {
  * the existing `startLoginMutation.mutate()` via the `onStartBind`
  * callback so this component stays dumb and adds no new backend path.
  */
+function ConnectionProgressCard({
+  connected,
+  onOpenDiagnostics,
+}: {
+  connected: boolean;
+  onOpenDiagnostics: () => void;
+}) {
+  const completed = connected ? 2 : 1;
+
+  return (
+    <section className="wechat-connect-progress-card">
+      <div className="wechat-connect-progress-top">
+        <div className="wechat-connect-progress-status">
+          <span className="wechat-connect-live-dot" />
+          <span className="wechat-connect-progress-ok">
+            {connected ? "已连接" : "待连接"}
+          </span>
+          <span className="wechat-connect-progress-count">
+            · {completed} / 3 完成
+          </span>
+        </div>
+        <button
+          type="button"
+          className="wechat-connect-progress-link"
+          onClick={onOpenDiagnostics}
+        >
+          查看高级诊断
+          <ArrowRight className="size-3" strokeWidth={1.5} />
+        </button>
+      </div>
+      <div className="wechat-connect-progress-track">
+        <span
+          className="wechat-connect-progress-fill"
+          style={{ width: connected ? "66%" : "33%" }}
+        />
+      </div>
+    </section>
+  );
+}
+
 function OnboardingSteps({
+  account,
+  onStartBind,
+  bindPending,
+  onUnbind,
+  unbindPendingId,
+}: {
+  account: WeChatAccountSummary | null;
+  onStartBind: () => void;
+  bindPending: boolean;
+  onUnbind: (id: string) => void;
+  unbindPendingId: string | null;
+}) {
+  const hasConnectedAccount = Boolean(account);
+
+  return (
+    <section className="wechat-connect-timeline" aria-label="微信连接步骤">
+      <div className="wechat-connect-timeline-line" />
+
+      <TimelineStep
+        n={1}
+        title="扫码绑定微信小号"
+        desc="用你的主号扫一下，就能和外脑小号建立连接"
+        state={hasConnectedAccount ? "done" : "active"}
+      >
+        {account ? (
+          <div className="wechat-connect-bound-card">
+            <span className="wechat-connect-bound-avatar">外</span>
+            <span className="wechat-connect-bound-name">
+              {account.display_name || "外脑收纳助手"}
+            </span>
+            <span className="wechat-connect-bound-meta">· 已绑定 12 小时前</span>
+            <button
+              type="button"
+              className="wechat-connect-unbind"
+              disabled={unbindPendingId === account.id}
+              onClick={() => onUnbind(account.id)}
+            >
+              {unbindPendingId === account.id ? "解绑中" : "解绑"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onStartBind}
+            disabled={bindPending}
+            className="wechat-connect-bind-button"
+          >
+            {bindPending ? (
+              <Loader2 className="size-3.5 animate-spin" strokeWidth={1.5} />
+            ) : (
+              <QrCode className="size-3.5" strokeWidth={1.5} />
+            )}
+            开始扫码绑定
+          </button>
+        )}
+      </TimelineStep>
+
+      <TimelineStep
+        n={2}
+        title="转发一条内容试试"
+        desc="任何一篇公众号文章、一段语音、一张图片都行"
+        state={hasConnectedAccount ? "active" : "pending"}
+      >
+        <div className="wechat-connect-test-grid">
+          <div className="wechat-connect-qr-panel">
+            <PlaceholderQrCode />
+            <p>用主号扫码 添加“外脑收纳助手”</p>
+          </div>
+          <div className="wechat-connect-steps-panel">
+            <div className="wechat-connect-steps-kicker">操作步骤</div>
+            {[
+              "在微信里打开任意公众号文章",
+              "点击右上角「···」→「转发给朋友」",
+              "选择「外脑收纳助手」，发送",
+            ].map((text, index) => (
+              <div className="wechat-connect-mini-step" key={text}>
+                <span>{index + 1}</span>
+                <p>{text}</p>
+              </div>
+            ))}
+            <a href="#/inbox" className="wechat-connect-forward-cta">
+              <Check className="size-3.5" strokeWidth={1.7} />
+              我已转发，下一步
+            </a>
+          </div>
+        </div>
+      </TimelineStep>
+
+      <TimelineStep
+        n={3}
+        title="在「待整理」里查看"
+        desc="通常几秒内到达，可以直接审阅、归档进知识库"
+        state="pending"
+        muted
+      />
+    </section>
+  );
+}
+
+function TimelineStep({
+  n,
+  title,
+  desc,
+  state,
+  muted,
+  children,
+}: {
+  n: number;
+  title: string;
+  desc: string;
+  state: "done" | "active" | "pending";
+  muted?: boolean;
+  children?: ReactNode;
+}) {
+  const pill =
+    state === "done" ? "已完成" : state === "active" ? "进行中" : "等待中";
+
+  return (
+    <div
+      className={`wechat-connect-step ${muted ? "wechat-connect-step--muted" : ""}`}
+      data-state={state}
+    >
+      <div className="wechat-connect-marker">
+        {state === "done" ? <Check className="size-3.5" strokeWidth={2} /> : n}
+      </div>
+      <article className="wechat-connect-step-card">
+        <header className="wechat-connect-step-head">
+          <div>
+            <h2>{title}</h2>
+            <p>{desc}</p>
+          </div>
+          <span className="wechat-connect-step-pill">{pill}</span>
+        </header>
+        {children}
+      </article>
+    </div>
+  );
+}
+
+function PlaceholderQrCode() {
+  const cells = [
+    [0, 0, 6, 6],
+    [9, 0, 2, 2],
+    [13, 0, 6, 6],
+    [0, 8, 2, 2],
+    [4, 8, 1, 1],
+    [7, 8, 3, 1],
+    [12, 8, 1, 2],
+    [16, 8, 3, 1],
+    [2, 11, 2, 1],
+    [6, 11, 1, 3],
+    [9, 11, 4, 1],
+    [15, 11, 2, 2],
+    [0, 14, 6, 6],
+    [8, 14, 2, 2],
+    [12, 14, 1, 4],
+    [15, 14, 4, 1],
+    [9, 18, 1, 2],
+    [14, 18, 2, 1],
+    [18, 18, 1, 2],
+  ];
+
+  return (
+    <svg
+      className="wechat-connect-qr"
+      viewBox="0 0 100 100"
+      role="img"
+      aria-label="外脑收纳助手二维码示意"
+    >
+      <rect width="100" height="100" rx="8" fill="#fff" />
+      {cells.map(([x, y, w, h], index) => (
+        <rect
+          key={`${x}-${y}-${index}`}
+          x={8 + x * 4}
+          y={8 + y * 4}
+          width={w * 4}
+          height={h * 4}
+          rx="1.2"
+          fill="#2C2C2A"
+        />
+      ))}
+      {[0, 1, 2].map((item) => (
+        <g
+          key={item}
+          transform={
+            item === 0
+              ? "translate(8 8)"
+              : item === 1
+                ? "translate(64 8)"
+                : "translate(8 64)"
+          }
+        >
+          <rect width="28" height="28" rx="3" fill="#2C2C2A" />
+          <rect x="6" y="6" width="16" height="16" rx="2" fill="#fff" />
+          <rect x="11" y="11" width="6" height="6" rx="1" fill="#2C2C2A" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function LegacyOnboardingSteps({
   hasConnectedAccount,
   onStartBind,
   bindPending,
@@ -573,6 +866,8 @@ function OnboardingSteps({
 }
 
 /* ─── Account list ─────────────────────────────────────────────── */
+
+void LegacyOnboardingSteps;
 
 function AccountList({
   accounts,
@@ -903,7 +1198,7 @@ function KefuSection() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => createKefuAccount("ClaudeWiki助手"),
+    mutationFn: () => createKefuAccount("外脑收纳助手"),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: kefuKeys.config() });
       void queryClient.invalidateQueries({ queryKey: kefuKeys.status() });
@@ -935,7 +1230,7 @@ function KefuSection() {
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h2 className="text-subhead font-semibold text-foreground">
-            ClaudeWiki助手 · 微信客服
+            外脑收纳助手 · 微信客服
           </h2>
           <span className="rounded-full bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
             Channel B
@@ -972,7 +1267,7 @@ function KefuSection() {
                         className="mr-1 inline size-4"
                         style={{ color: "var(--color-success)" }}
                       />
-                      {config?.account_name ?? "ClaudeWiki助手"}
+                      {config?.account_name ?? "外脑收纳助手"}
                     </>
                   ) : (
                     "未创建客服账号"
@@ -1280,11 +1575,11 @@ function KefuContactQR() {
               <div className="flex items-center gap-2">
                 <QrCode className="size-4" style={{ color: "var(--claude-orange)" }} />
                 <span className="text-body-sm font-semibold text-foreground">
-                  扫码接入 ClaudeWiki助手
+                  扫码接入外脑收纳助手
                 </span>
               </div>
               <p className="mt-1 text-body text-foreground/80">
-                微信扫描二维码开始对话。扫码后可在微信 "转发给朋友 → 客服消息" 中看到 ClaudeWiki助手。
+                微信扫描二维码开始对话。扫码后可在微信 "转发给朋友 → 客服消息" 中看到外脑收纳助手。
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <button

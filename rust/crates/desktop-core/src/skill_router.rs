@@ -118,11 +118,7 @@ impl SkillRouter {
     /// `state.task_manager.register(...)`; flipping the signature to
     /// sync now would cause a breaking API change when step 2 lands.
     #[allow(clippy::unused_async)]
-    pub async fn route(
-        &self,
-        input: &str,
-        _session_id: &str,
-    ) -> Option<SkillResult> {
+    pub async fn route(&self, input: &str, _session_id: &str) -> Option<SkillResult> {
         let trimmed = input.trim();
         if !Self::is_skill_command(trimmed) {
             return None;
@@ -345,8 +341,17 @@ mod tests {
         let parts: Vec<&str> = id.split('-').collect();
         assert_eq!(parts.len(), 3);
         assert_eq!(parts[0], "absorb");
-        assert!(parts[1].parse::<u64>().is_ok(), "ts part must be numeric: {}", parts[1]);
-        assert_eq!(parts[2].len(), 4, "hex suffix must be 4 chars: {}", parts[2]);
+        assert!(
+            parts[1].parse::<u64>().is_ok(),
+            "ts part must be numeric: {}",
+            parts[1]
+        );
+        assert_eq!(
+            parts[2].len(),
+            4,
+            "hex suffix must be 4 chars: {}",
+            parts[2]
+        );
         assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()));
     }
 
@@ -387,7 +392,10 @@ mod tests {
     async fn route_returns_stream_started_for_query() {
         let state = Arc::new(DesktopState::new());
         let router = SkillRouter::new(state);
-        match router.route("/query what is transformer", "session-1").await {
+        match router
+            .route("/query what is transformer", "session-1")
+            .await
+        {
             Some(SkillResult::StreamStarted { task_id }) => {
                 assert!(task_id.starts_with("query-"));
             }

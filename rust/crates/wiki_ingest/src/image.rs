@@ -210,7 +210,11 @@ mod tests {
 
     #[test]
     fn prepare_image_detects_mime_from_extension() {
-        for (ext, expected_mime) in [("jpg", "image/jpeg"), ("png", "image/png"), ("webp", "image/webp")] {
+        for (ext, expected_mime) in [
+            ("jpg", "image/jpeg"),
+            ("png", "image/png"),
+            ("webp", "image/webp"),
+        ] {
             let mut tmp = tempfile::Builder::new()
                 .suffix(&format!(".{ext}"))
                 .tempfile()
@@ -218,7 +222,10 @@ mod tests {
             tmp.write_all(b"fake").unwrap();
             tmp.flush().unwrap();
             let result = prepare_image(tmp.path()).unwrap();
-            assert!(result.body.contains(expected_mime), "ext={ext} should produce {expected_mime}");
+            assert!(
+                result.body.contains(expected_mime),
+                "ext={ext} should produce {expected_mime}"
+            );
         }
     }
 

@@ -40,11 +40,7 @@ impl RelayClient {
     }
 
     /// Main loop: connect → read → dispatch → reconnect on failure.
-    pub async fn run(
-        &self,
-        callback_tx: mpsc::Sender<CallbackEvent>,
-        cancel: CancellationToken,
-    ) {
+    pub async fn run(&self, callback_tx: mpsc::Sender<CallbackEvent>, cancel: CancellationToken) {
         let mut backoff = RECONNECT_BASE;
 
         loop {
@@ -76,10 +72,7 @@ impl RelayClient {
                 break;
             }
 
-            eprintln!(
-                "[relay_client] reconnecting in {}ms",
-                backoff.as_millis()
-            );
+            eprintln!("[relay_client] reconnecting in {}ms", backoff.as_millis());
             tokio::select! {
                 _ = tokio::time::sleep(backoff) => {}
                 _ = cancel.cancelled() => break,
@@ -143,11 +136,7 @@ impl RelayClient {
         }
     }
 
-    async fn handle_relay_message(
-        &self,
-        text: &str,
-        callback_tx: &mpsc::Sender<CallbackEvent>,
-    ) {
+    async fn handle_relay_message(&self, text: &str, callback_tx: &mpsc::Sender<CallbackEvent>) {
         let parsed: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
             Err(e) => {
@@ -164,7 +153,10 @@ impl RelayClient {
 
                 // Parse query params from "?msg_signature=...&timestamp=...&nonce=..."
                 let params = parse_query_string(params_str);
-                let msg_sig = params.get("msg_signature").map(|s| s.as_str()).unwrap_or("");
+                let msg_sig = params
+                    .get("msg_signature")
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 let timestamp = params.get("timestamp").map(|s| s.as_str()).unwrap_or("");
                 let nonce = params.get("nonce").map(|s| s.as_str()).unwrap_or("");
 

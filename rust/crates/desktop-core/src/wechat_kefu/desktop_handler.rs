@@ -41,10 +41,7 @@ pub struct KefuDesktopHandler {
 }
 
 impl KefuDesktopHandler {
-    pub fn new(
-        state: DesktopState,
-        default_project_path: impl Into<String>,
-    ) -> Self {
+    pub fn new(state: DesktopState, default_project_path: impl Into<String>) -> Self {
         let mapping = super::account::load_session_map().unwrap_or_default();
         eprintln!(
             "[kefu handler] loaded {} persisted session mappings",
@@ -64,10 +61,7 @@ impl KefuDesktopHandler {
     }
 
     #[allow(dead_code)]
-    async fn get_or_create_session(
-        &self,
-        external_userid: &str,
-    ) -> Result<String, String> {
+    async fn get_or_create_session(&self, external_userid: &str) -> Result<String, String> {
         let session_key = format!("kefu:{external_userid}");
 
         // Fast path: cache hit
@@ -99,11 +93,7 @@ impl KefuDesktopHandler {
     }
 
     #[allow(dead_code)]
-    async fn run_turn(
-        &self,
-        session_id: &str,
-        user_text: &str,
-    ) -> Result<String, String> {
+    async fn run_turn(&self, session_id: &str, user_text: &str) -> Result<String, String> {
         let (_snapshot, mut rx) = self
             .state
             .subscribe(session_id)
@@ -129,8 +119,7 @@ impl KefuDesktopHandler {
         let mut collected = Vec::new();
 
         loop {
-            let remaining =
-                deadline.saturating_duration_since(tokio::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 break;
             }
@@ -152,14 +141,10 @@ impl KefuDesktopHandler {
                         collected.push(text);
                     }
                 }
-                DesktopSessionEvent::Snapshot { session }
-                    if session.id == session_id =>
-                {
+                DesktopSessionEvent::Snapshot { session } if session.id == session_id => {
                     if session.turn_state == DesktopTurnState::Idle {
                         if collected.is_empty() {
-                            if let Some(text) =
-                                latest_assistant_text(session)
-                            {
+                            if let Some(text) = latest_assistant_text(session) {
                                 return Ok(text);
                             }
                         }
@@ -179,12 +164,7 @@ impl KefuDesktopHandler {
 
 #[async_trait::async_trait]
 impl KefuMessageHandler for KefuDesktopHandler {
-    async fn on_message(
-        &self,
-        client: &KefuClient,
-        msg: &serde_json::Value,
-        open_kfid: &str,
-    ) {
+    async fn on_message(&self, client: &KefuClient, msg: &serde_json::Value, open_kfid: &str) {
         // Only process customer messages (origin=3)
         let origin = msg.get("origin").and_then(|v| v.as_u64()).unwrap_or(0);
         if origin != 3 {
@@ -199,7 +179,10 @@ impl KefuMessageHandler for KefuDesktopHandler {
             }
         };
 
-        let msgtype = msg.get("msgtype").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let msgtype = msg
+            .get("msgtype")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         // Extract text content
         let user_text = match msgtype {
@@ -211,9 +194,21 @@ impl KefuMessageHandler for KefuDesktopHandler {
                 .to_string(),
             "link" => {
                 // Extract link title + desc as text input
-                let title = msg.get("link").and_then(|l| l.get("title")).and_then(|t| t.as_str()).unwrap_or("");
-                let desc = msg.get("link").and_then(|l| l.get("desc")).and_then(|d| d.as_str()).unwrap_or("");
-                let url = msg.get("link").and_then(|l| l.get("url")).and_then(|u| u.as_str()).unwrap_or("");
+                let title = msg
+                    .get("link")
+                    .and_then(|l| l.get("title"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let desc = msg
+                    .get("link")
+                    .and_then(|l| l.get("desc"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("");
+                let url = msg
+                    .get("link")
+                    .and_then(|l| l.get("url"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("");
                 format!("{title}\n{desc}\n{url}")
             }
             "event" => return,
@@ -329,7 +324,9 @@ impl KefuDesktopHandler {
         question: &str,
     ) {
         if question.is_empty() {
-            let _ = client.send_text(userid, open_kfid, "请在 ? 后面输入问题").await;
+            let _ = client
+                .send_text(userid, open_kfid, "请在 ? 后面输入问题")
+                .await;
             return;
         }
 
@@ -388,21 +385,14 @@ impl KefuDesktopHandler {
         // Structured reply format.
         let sources_section = format_query_sources_section(&sources);
 
-        let reply = format!(
-            "💡 {question}\n\n{answer}{sources_section}\n\n—— 基于 ClawWiki 知识库回答"
-        );
+        let reply =
+            format!("💡 {question}\n\n{answer}{sources_section}\n\n—— 基于 ClawWiki 知识库回答");
         let _ = client.send_text(userid, open_kfid, &reply).await;
         eprintln!("[kefu handler] query replied ({} chars)", reply.len());
     }
 
     /// /recent, /stats 命令
-    async fn handle_command(
-        &self,
-        client: &KefuClient,
-        userid: &str,
-        open_kfid: &str,
-        cmd: &str,
-    ) {
+    async fn handle_command(&self, client: &KefuClient, userid: &str, open_kfid: &str, cmd: &str) {
         let paths = match &self.wiki_paths {
             Some(p) => p.clone(),
             None => {
@@ -421,10 +411,7 @@ impl KefuDesktopHandler {
                     "📥 暂无入库记录".to_string()
                 } else {
                     let stats = wiki_store::wiki_stats(&paths).ok();
-                    let mut lines = vec![format!(
-                        "📥 最近入库 ({} 条):\n",
-                        recent.len()
-                    )];
+                    let mut lines = vec![format!("📥 最近入库 ({} 条):\n", recent.len())];
                     for (i, e) in recent.iter().enumerate() {
                         let emoji = source_emoji(&e.source);
                         lines.push(format!("{}. {} {} — {}", i + 1, emoji, e.slug, e.source));
@@ -474,10 +461,9 @@ impl KefuDesktopHandler {
     /// into `crate::url_ingest::ingest_url`. The kefu-specific side
     /// effects (absorb trigger + Chinese WeChat replies + delayed
     /// conflict check) still live here — the orchestrator does not
-    /// speak WeChat. We pass `prefer_playwright: None` so the
-    /// orchestrator auto-selects Playwright for `weixin.qq.com` hosts
-    /// and the generic HTTP fetch for everything else (M2 capability
-    /// enhancement over the v2 hand-roll, which was generic-only).
+    /// speak WeChat. We force the generic HTTP extractor because most
+    /// public-account articles include server-rendered `#js_content`;
+    /// Playwright is slower and can hang on WeChat background requests.
     async fn handle_url_ingest(
         &self,
         client: &KefuClient,
@@ -501,14 +487,10 @@ impl KefuDesktopHandler {
         let outcome = crate::url_ingest::ingest_url(crate::url_ingest::IngestRequest {
             url,
             origin_tag: origin.clone(),
-            // `None` lets the orchestrator route weixin.qq.com URLs
-            // through Playwright automatically — a capability
-            // enhancement over the v2 hand-roll, which used only the
-            // generic HTTP fetch. Machines without Playwright will
-            // surface `PrerequisiteMissing` which we relay verbatim
-            // so the sender can install the dep instead of silently
-            // failing.
-            prefer_playwright: None,
+            // Prefer the HTTP extractor for WeChat articles. It avoids
+            // Playwright's brittle network-idle waits while preserving the
+            // quality gate before anything is written.
+            prefer_playwright: Some(false),
             fetch_timeout: std::time::Duration::from_secs(60),
             // kefu has never supported a text-fallback path —
             // `allow_text_fallback: None` keeps the original v2
@@ -538,8 +520,7 @@ impl KefuDesktopHandler {
                 let absorb_reply = trigger_absorb_internal(raw_entry.id).await;
 
                 // Step 4: Reply confirmation.
-                let reply =
-                    format!("✓ 已入库「{display_title}」{absorb_reply}");
+                let reply = format!("✓ 已入库「{display_title}」{absorb_reply}");
                 let _ = client.send_text(userid, open_kfid, &reply).await;
                 eprintln!(
                     "[kefu handler] URL ingested: {} → raw #{}",
@@ -552,26 +533,19 @@ impl KefuDesktopHandler {
                 let client_kfid = open_kfid.to_string();
                 let client_clone = client.clone();
                 tokio::spawn(async move {
-                    check_and_notify_conflicts(
-                        &paths_c,
-                        &client_clone,
-                        &client_uid,
-                        &client_kfid,
-                    )
-                    .await;
+                    check_and_notify_conflicts(&paths_c, &client_clone, &client_uid, &client_kfid)
+                        .await;
                 });
             }
             crate::url_ingest::IngestOutcome::IngestedInboxSuppressed {
-                entry: raw_entry,
-                ..
+                entry: raw_entry, ..
             } => {
                 // M1 inbox dedupe hit — a prior NewRaw for this raw is
                 // still pending. Treat as success; fall back to the
                 // slug since this variant carries no title.
                 let display_title = raw_entry.slug.clone();
                 let absorb_reply = trigger_absorb_internal(raw_entry.id).await;
-                let reply =
-                    format!("✓ 已入库「{display_title}」{absorb_reply}");
+                let reply = format!("✓ 已入库「{display_title}」{absorb_reply}");
                 let _ = client.send_text(userid, open_kfid, &reply).await;
                 eprintln!(
                     "[kefu handler] URL ingested (dedupe): {} → raw #{}",
@@ -583,13 +557,8 @@ impl KefuDesktopHandler {
                 let client_kfid = open_kfid.to_string();
                 let client_clone = client.clone();
                 tokio::spawn(async move {
-                    check_and_notify_conflicts(
-                        &paths_c,
-                        &client_clone,
-                        &client_uid,
-                        &client_kfid,
-                    )
-                    .await;
+                    check_and_notify_conflicts(&paths_c, &client_clone, &client_uid, &client_kfid)
+                        .await;
                 });
             }
             crate::url_ingest::IngestOutcome::ReusedExisting {
@@ -622,9 +591,7 @@ impl KefuDesktopHandler {
                     .send_text(
                         userid,
                         open_kfid,
-                        &format!(
-                            "❌ 链接抓取失败（{reason}）\n请手动复制内容发送"
-                        ),
+                        &format!("❌ 链接抓取失败（{reason}）\n请手动复制内容发送"),
                     )
                     .await;
             }
@@ -634,35 +601,20 @@ impl KefuDesktopHandler {
                     .send_text(
                         userid,
                         open_kfid,
-                        &format!(
-                            "❌ 无法获取链接内容: {error}\n请手动复制内容发送"
-                        ),
+                        &format!("❌ 无法获取链接内容: {error}\n请手动复制内容发送"),
                     )
                     .await;
             }
-            crate::url_ingest::IngestOutcome::PrerequisiteMissing {
-                dep,
-                hint,
-            } => {
-                eprintln!(
-                    "[kefu handler] URL ingest prerequisite missing: {dep} — {hint}"
-                );
+            crate::url_ingest::IngestOutcome::PrerequisiteMissing { dep, hint } => {
+                eprintln!("[kefu handler] URL ingest prerequisite missing: {dep} — {hint}");
                 let _ = client
-                    .send_text(
-                        userid,
-                        open_kfid,
-                        &format!("❌ 缺少依赖 {dep}\n{hint}"),
-                    )
+                    .send_text(userid, open_kfid, &format!("❌ 缺少依赖 {dep}\n{hint}"))
                     .await;
             }
             crate::url_ingest::IngestOutcome::InvalidUrl { reason } => {
                 eprintln!("[kefu handler] URL invalid: {reason}");
                 let _ = client
-                    .send_text(
-                        userid,
-                        open_kfid,
-                        &format!("❌ URL 无效: {reason}"),
-                    )
+                    .send_text(userid, open_kfid, &format!("❌ URL 无效: {reason}"))
                     .await;
             }
             crate::url_ingest::IngestOutcome::FallbackToText { .. } => {
@@ -712,8 +664,7 @@ impl KefuDesktopHandler {
         let short_id = &userid[..8.min(userid.len())];
         let slug = format!("kefu-{short_id}");
         let fm = wiki_store::RawFrontmatter::for_paste("wechat-text", None);
-        let raw_entry = match wiki_store::write_raw_entry(&paths, "wechat-text", &slug, text, &fm)
-        {
+        let raw_entry = match wiki_store::write_raw_entry(&paths, "wechat-text", &slug, text, &fm) {
             Ok(e) => e,
             Err(e) => {
                 let _ = client
@@ -894,27 +845,18 @@ fn latest_assistant_text(session: &crate::DesktopSessionDetail) -> Option<String
 }
 
 #[allow(dead_code)]
-fn ingest_kefu_text_to_wiki(
-    paths: &wiki_store::WikiPaths,
-    external_userid: &str,
-    user_text: &str,
-) {
+fn ingest_kefu_text_to_wiki(paths: &wiki_store::WikiPaths, external_userid: &str, user_text: &str) {
     let short_id = &external_userid[..8.min(external_userid.len())];
     let slug = format!("kefu-{short_id}");
     let frontmatter = wiki_store::RawFrontmatter::for_paste("kefu-text", None);
-    let entry = match wiki_store::write_raw_entry(
-        paths,
-        "kefu-text",
-        &slug,
-        user_text,
-        &frontmatter,
-    ) {
-        Ok(entry) => entry,
-        Err(err) => {
-            eprintln!("[kefu handler] wiki write_raw_entry failed: {err}");
-            return;
-        }
-    };
+    let entry =
+        match wiki_store::write_raw_entry(paths, "kefu-text", &slug, user_text, &frontmatter) {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("[kefu handler] wiki write_raw_entry failed: {err}");
+                return;
+            }
+        };
     let origin = format!("WeChat kefu user `{short_id}`");
     if let Err(err) = wiki_store::append_new_raw_task(paths, &entry, &origin) {
         eprintln!("[kefu handler] inbox append failed: {err}");
@@ -1128,7 +1070,10 @@ mod tests {
             "url",
             "kefu-url",
             &"Fetched article body from URL. ".repeat(12),
-            &wiki_store::RawFrontmatter::for_paste("url", Some("https://example.com/a".to_string())),
+            &wiki_store::RawFrontmatter::for_paste(
+                "url",
+                Some("https://example.com/a".to_string()),
+            ),
         )
         .expect("write raw");
         wiki_store::append_new_raw_task(&paths, &raw, "WeChat kefu").expect("new raw task");

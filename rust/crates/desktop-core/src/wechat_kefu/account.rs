@@ -75,8 +75,7 @@ pub fn load_cursor() -> Result<String, AccountError> {
         return Ok(String::new());
     }
     let data = fs::read_to_string(&path).map_err(AccountError::Io)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&data).map_err(AccountError::Json)?;
+    let parsed: serde_json::Value = serde_json::from_str(&data).map_err(AccountError::Json)?;
     Ok(parsed
         .get("cursor")
         .and_then(|v| v.as_str())
@@ -102,15 +101,11 @@ pub fn load_session_map() -> Result<HashMap<String, String>, AccountError> {
         return Ok(HashMap::new());
     }
     let data = fs::read_to_string(&path).map_err(AccountError::Io)?;
-    let map: HashMap<String, String> =
-        serde_json::from_str(&data).map_err(AccountError::Json)?;
+    let map: HashMap<String, String> = serde_json::from_str(&data).map_err(AccountError::Json)?;
     Ok(map)
 }
 
-pub fn upsert_session(
-    external_userid: &str,
-    session_id: &str,
-) -> Result<(), AccountError> {
+pub fn upsert_session(external_userid: &str, session_id: &str) -> Result<(), AccountError> {
     let dir = ensure_dir()?;
     let mut map = load_session_map().unwrap_or_default();
     map.insert(external_userid.to_string(), session_id.to_string());

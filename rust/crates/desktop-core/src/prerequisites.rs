@@ -11,11 +11,11 @@ pub enum MissingPrerequisite {
     Node,
     Npx,
     Python,
-    Playwright,     // Python pip package
-    Chromium,       // System Chrome / Edge / Chromium (Playwright uses system browser)
-    OpenCli,        // opencli / @jackwener/opencli
-    BrowserBridge,  // OpenCLI Chrome extension not connected
-    Markitdown,     // pip markitdown[all]
+    Playwright,    // Python pip package
+    Chromium,      // System Chrome / Edge / Chromium (Playwright uses system browser)
+    OpenCli,       // opencli / @jackwener/opencli
+    BrowserBridge, // OpenCLI Chrome extension not connected
+    Markitdown,    // pip markitdown[all]
     Other(String),
 }
 
@@ -35,7 +35,8 @@ impl MissingPrerequisite {
         }
 
         // Playwright pip package
-        if low.contains("no module named 'playwright'") || low.contains("playwright not installed") {
+        if low.contains("no module named 'playwright'") || low.contains("playwright not installed")
+        {
             return Some(Self::Playwright);
         }
 
@@ -55,7 +56,8 @@ impl MissingPrerequisite {
         }
 
         // markitdown
-        if low.contains("no module named 'markitdown'") || low.contains("markitdown not installed") {
+        if low.contains("no module named 'markitdown'") || low.contains("markitdown not installed")
+        {
             return Some(Self::Markitdown);
         }
 
@@ -75,15 +77,15 @@ impl MissingPrerequisite {
     /// Machine-readable identifier sent to the frontend alongside the hint.
     pub fn as_str(&self) -> &str {
         match self {
-            Self::Node          => "node",
-            Self::Npx           => "npx",
-            Self::Python        => "python",
-            Self::Playwright    => "playwright",
-            Self::Chromium      => "chromium",
-            Self::OpenCli       => "opencli",
+            Self::Node => "node",
+            Self::Npx => "npx",
+            Self::Python => "python",
+            Self::Playwright => "playwright",
+            Self::Chromium => "chromium",
+            Self::OpenCli => "opencli",
             Self::BrowserBridge => "browser-bridge",
-            Self::Markitdown    => "markitdown",
-            Self::Other(_)      => "other",
+            Self::Markitdown => "markitdown",
+            Self::Other(_) => "other",
         }
     }
 
@@ -111,13 +113,19 @@ mod tests {
     #[test]
     fn detect_playwright_module_missing() {
         let err = "Failed to spawn Python: ... No module named 'playwright'";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::Playwright));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::Playwright)
+        );
     }
 
     #[test]
     fn detect_python_not_found_when_no_playwright() {
         let err = "Failed to spawn Python: OS error — not found";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::Python));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::Python)
+        );
     }
 
     #[test]
@@ -125,31 +133,46 @@ mod tests {
         // "Failed to spawn Python ... Is Playwright installed?" should route
         // to Playwright variant, NOT Python (the hint is more actionable).
         let err = "Failed to spawn Python: No module named 'playwright'. Is Playwright installed?";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::Playwright));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::Playwright)
+        );
     }
 
     #[test]
     fn detect_chromium_executable() {
         let err = "BrowserType.launch: Executable doesn't exist at /foo/chrome";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::Chromium));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::Chromium)
+        );
     }
 
     #[test]
     fn detect_node_windows_recognized() {
         let err = "'node' is not recognized as an internal or external command";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::Node));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::Node)
+        );
     }
 
     #[test]
     fn detect_opencli() {
         let err = "OpenCLI unavailable. Install it globally or allow npx --yes";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::OpenCli));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::OpenCli)
+        );
     }
 
     #[test]
     fn detect_markitdown() {
         let err = "No module named 'markitdown'";
-        assert_eq!(MissingPrerequisite::detect(err), Some(MissingPrerequisite::Markitdown));
+        assert_eq!(
+            MissingPrerequisite::detect(err),
+            Some(MissingPrerequisite::Markitdown)
+        );
     }
 
     #[test]

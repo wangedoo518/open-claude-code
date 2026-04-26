@@ -63,6 +63,8 @@ HARD RULES (canonical `schema/CLAUDE.md` §Triggers and §"Never do"):
    that sets `summary` to "uncertain: {reason}" and a minimal body.
    DO NOT refuse and DO NOT return a non-JSON apology — an uncertain
    proposal is better than a parse error.
+7. Never use JSON null. Use empty arrays for no conflicts and non-empty
+   strings for slug/title/summary/body.
 "#;
 
 /// Build the concept-page request. The assistant will see a
@@ -382,9 +384,21 @@ mod tests {
     #[test]
     fn build_combined_merge_request_shape_and_body() {
         let sources = vec![
-            (10_u32, "Transformer 论文".to_string(), "Body ten.".to_string()),
-            (11_u32, "Attention survey".to_string(), "Body eleven.".to_string()),
-            (12_u32, "Flash attention".to_string(), "Body twelve.".to_string()),
+            (
+                10_u32,
+                "Transformer 论文".to_string(),
+                "Body ten.".to_string(),
+            ),
+            (
+                11_u32,
+                "Attention survey".to_string(),
+                "Body eleven.".to_string(),
+            ),
+            (
+                12_u32,
+                "Flash attention".to_string(),
+                "Body twelve.".to_string(),
+            ),
         ];
         let req = build_combined_merge_request(
             "attention",

@@ -147,7 +147,12 @@ impl QrLoginSession {
             "{}ilink/bot/get_bot_qrcode?bot_type={}",
             self.base_url, self.bot_type
         );
-        let res = self.http.get(&url).headers(Self::extra_headers()).send().await?;
+        let res = self
+            .http
+            .get(&url)
+            .headers(Self::extra_headers())
+            .send()
+            .await?;
         let status = res.status();
         let text = res.text().await?;
         if !status.is_success() {

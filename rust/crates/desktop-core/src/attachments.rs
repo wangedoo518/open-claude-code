@@ -68,8 +68,8 @@ pub fn process_attachment(filename: &str, bytes: &[u8]) -> AttachmentContent {
     match ext.as_str() {
         // Plain text formats.
         "txt" | "md" | "markdown" | "log" | "csv" | "tsv" | "json" | "yaml" | "yml" | "toml"
-        | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "c" | "cpp" | "h"
-        | "hpp" | "html" | "css" | "xml" | "sh" | "sql" => extract_text(filename, bytes),
+        | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "c" | "cpp" | "h" | "hpp"
+        | "html" | "css" | "xml" | "sh" | "sql" => extract_text(filename, bytes),
 
         // PDF via pdf-extract.
         "pdf" => extract_pdf(filename, bytes),
@@ -157,10 +157,7 @@ fn extract_pdf(filename: &str, bytes: &[u8]) -> AttachmentContent {
         }
         Err(error) => AttachmentContent {
             filename: filename.to_string(),
-            content: format!(
-                "[PDF extraction failed for {}: {}]",
-                filename, error
-            ),
+            content: format!("[PDF extraction failed for {}: {}]", filename, error),
             truncated: false,
             kind: AttachmentKind::BinaryStub,
         },

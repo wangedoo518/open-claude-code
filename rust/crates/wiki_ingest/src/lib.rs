@@ -333,9 +333,7 @@ fn strip_empty_images(input: &str) -> String {
         .filter(|line| {
             let trimmed = line.trim();
             // `![]( )` or `![]()` → drop
-            !(trimmed.starts_with("![](")
-                && trimmed.ends_with(')')
-                && trimmed.len() <= 6)
+            !(trimmed.starts_with("![](") && trimmed.ends_with(')') && trimmed.len() <= 6)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -397,7 +395,10 @@ fn find_byte_from(haystack: &[u8], needle: u8, from: usize) -> Option<usize> {
     if from >= haystack.len() {
         return None;
     }
-    haystack[from..].iter().position(|&b| b == needle).map(|p| p + from)
+    haystack[from..]
+        .iter()
+        .position(|&b| b == needle)
+        .map(|p| p + from)
 }
 
 #[cfg(test)]
@@ -525,7 +526,10 @@ mod validate_tests {
         let payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA";
         let body = format!("![icon](data:image/png;base64,{payload})");
         let out = sanitize_markdown(&body);
-        assert!(out.contains("data:image/png"), "well-formed PNG data URI was wrongly stripped: {out}");
+        assert!(
+            out.contains("data:image/png"),
+            "well-formed PNG data URI was wrongly stripped: {out}"
+        );
     }
 
     #[test]
@@ -551,7 +555,10 @@ mod validate_tests {
             另一段。![](data:image/svg+xml,%3C%3Fxml version=)";
         let out = sanitize_markdown(raw);
         assert!(!out.contains("&nbsp;"), "&nbsp; remained: {out}");
-        assert!(!out.contains("data:image/svg"), "broken svg remained: {out}");
+        assert!(
+            !out.contains("data:image/svg"),
+            "broken svg remained: {out}"
+        );
         assert!(out.contains("正文段落") && out.contains("另一段"));
     }
 

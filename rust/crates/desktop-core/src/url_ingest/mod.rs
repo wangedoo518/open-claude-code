@@ -366,10 +366,7 @@ pub async fn ingest_url(req: IngestRequest<'_>) -> IngestOutcome {
     // CreatedNew fall through to the fetch pipeline. `RefreshedContent`
     // / `ContentDuplicate` can't appear here because content_hash
     // was None, so their preconditions were unreachable.
-    if !req.force
-        && early_decision.decision.is_reuse()
-        && early_decision.existing_raw.is_some()
-    {
+    if !req.force && early_decision.decision.is_reuse() && early_decision.existing_raw.is_some() {
         let DedupeResult {
             decision,
             existing_raw,
@@ -407,13 +404,7 @@ pub async fn ingest_url(req: IngestRequest<'_>) -> IngestOutcome {
             // `detect_playwright_prereq` for the classifier.
             if use_playwright {
                 if let Some(prereq) = detect_playwright_prereq(&err) {
-                    push_recent_log(
-                        trimmed_url,
-                        &canonical,
-                        &req.origin_tag,
-                        &prereq,
-                        None,
-                    );
+                    push_recent_log(trimmed_url, &canonical, &req.origin_tag, &prereq, None);
                     return prereq;
                 }
             }
@@ -454,9 +445,7 @@ pub async fn ingest_url(req: IngestRequest<'_>) -> IngestOutcome {
         match dedupe::decide(&paths, &canonical, body_hash.as_deref(), mode) {
             Ok(r) => r.decision,
             Err(err) => {
-                eprintln!(
-                    "[url_ingest] post-fetch dedupe check failed (continuing): {err}"
-                );
+                eprintln!("[url_ingest] post-fetch dedupe check failed (continuing): {err}");
                 IngestDecision::CreatedNew
             }
         }
@@ -667,11 +656,7 @@ fn write_and_queue(
     }
 }
 
-fn write_fallback(
-    fallback: &TextFallback,
-    origin_tag: &str,
-    reason: String,
-) -> IngestOutcome {
+fn write_fallback(fallback: &TextFallback, origin_tag: &str, reason: String) -> IngestOutcome {
     let paths = match resolve_wiki_paths() {
         Ok(p) => p,
         Err(err) => {
@@ -697,9 +682,7 @@ fn write_fallback(
         Ok(e) => e,
         Err(err) => {
             return IngestOutcome::FetchFailed {
-                error: IngestError::Parse(format!(
-                    "fallback write_raw_entry failed: {err}"
-                )),
+                error: IngestError::Parse(format!("fallback write_raw_entry failed: {err}")),
             };
         }
     };
@@ -708,9 +691,7 @@ fn write_fallback(
         Ok(e) => e,
         Err(err) => {
             return IngestOutcome::FetchFailed {
-                error: IngestError::Parse(format!(
-                    "fallback append_new_raw_task failed: {err}"
-                )),
+                error: IngestError::Parse(format!("fallback append_new_raw_task failed: {err}")),
             };
         }
     };
@@ -788,9 +769,7 @@ fn push_recent_log(
     // opaque JSON keyed by the `kind` tag.
     let decision_json = match outcome {
         IngestOutcome::Ingested { decision, .. }
-        | IngestOutcome::ReusedExisting { decision, .. } => {
-            serde_json::to_value(decision).ok()
-        }
+        | IngestOutcome::ReusedExisting { decision, .. } => serde_json::to_value(decision).ok(),
         _ => None,
     };
 
@@ -827,11 +806,10 @@ fn push_recent_log(
     };
 
     let inbox_id = match outcome {
-        IngestOutcome::Ingested { inbox, .. }
-        | IngestOutcome::FallbackToText { inbox, .. } => Some(inbox.id),
-        IngestOutcome::IngestedInboxSuppressed { existing_inbox, .. } => {
-            Some(existing_inbox.id)
+        IngestOutcome::Ingested { inbox, .. } | IngestOutcome::FallbackToText { inbox, .. } => {
+            Some(inbox.id)
         }
+        IngestOutcome::IngestedInboxSuppressed { existing_inbox, .. } => Some(existing_inbox.id),
         IngestOutcome::ReusedExisting { existing_inbox, .. } => {
             existing_inbox.as_ref().map(|i| i.id)
         }
@@ -911,8 +889,7 @@ mod tests {
     #[test]
     fn detect_playwright_prereq_matches_module_error() {
         let err = IngestError::Parse(
-            "WeChat fetch failed: ModuleNotFoundError: No module named 'playwright'"
-                .into(),
+            "WeChat fetch failed: ModuleNotFoundError: No module named 'playwright'".into(),
         );
         let hit = detect_playwright_prereq(&err);
         assert!(
@@ -924,8 +901,7 @@ mod tests {
     #[test]
     fn detect_playwright_prereq_matches_install_hint() {
         let err = IngestError::Parse(
-            "WeChat fetch failed: Playwright not installed. Run: pip install playwright"
-                .into(),
+            "WeChat fetch failed: Playwright not installed. Run: pip install playwright".into(),
         );
         let hit = detect_playwright_prereq(&err);
         assert!(matches!(
@@ -957,10 +933,7 @@ mod tests {
     fn outcome_is_persisted_classifies_correctly() {
         let err = IngestError::Network("boom".into());
         assert!(!IngestOutcome::FetchFailed { error: err }.is_persisted());
-        assert!(!IngestOutcome::RejectedQuality {
-            reason: "x".into(),
-        }
-        .is_persisted());
+        assert!(!IngestOutcome::RejectedQuality { reason: "x".into() }.is_persisted());
         assert!(!IngestOutcome::InvalidUrl { reason: "y".into() }.is_persisted());
     }
 
@@ -997,7 +970,10 @@ mod tests {
                 reason: "silent_test".into(),
             },
         };
-        assert!(out.is_persisted(), "ReusedExisting should count as persisted");
+        assert!(
+            out.is_persisted(),
+            "ReusedExisting should count as persisted"
+        );
         assert!(!out.as_display().is_empty());
     }
 }

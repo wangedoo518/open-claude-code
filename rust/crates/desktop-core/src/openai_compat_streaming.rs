@@ -240,14 +240,14 @@ pub async fn run_streaming_turn(
 
     eprintln!(
         "[openai-compat-stream] session={session_id} model={:?} deltas={} len={}",
-        upstream_model, delta_count, accumulated.len()
+        upstream_model,
+        delta_count,
+        accumulated.len()
     );
 
     let message = ConversationMessage {
         role: MessageRole::Assistant,
-        blocks: vec![ContentBlock::Text {
-            text: accumulated,
-        }],
+        blocks: vec![ContentBlock::Text { text: accumulated }],
         usage: None,
     };
 
@@ -269,9 +269,7 @@ fn drain_next_line(buffer: &mut Vec<u8>) -> Option<String> {
 /// Flatten a `RuntimeSession`'s history into OpenAI-style
 /// `{role, content}` messages. Tool blocks are dropped (MVP path)
 /// and each message's text blocks are concatenated with newlines.
-pub fn messages_from_runtime_session(
-    session: &runtime::Session,
-) -> Vec<OpenAiChatMessage> {
+pub fn messages_from_runtime_session(session: &runtime::Session) -> Vec<OpenAiChatMessage> {
     session
         .messages
         .iter()

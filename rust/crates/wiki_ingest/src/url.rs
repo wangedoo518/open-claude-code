@@ -15,7 +15,7 @@
 //!
 //! That stack is deferred (it's 2-3 days of dep work). The MVP in
 //! this module ships a **dumb-but-honest** extractor: fetch the
-//! body, cap it at 2 MiB, and if the response is `text/html` store
+//! body, cap it at 5 MiB, and if the response is `text/html` store
 //! the raw HTML under a code fence so Markdown renderers don't try
 //! to interpret it. `text/plain` / `text/markdown` bodies are stored
 //! verbatim. Everything else gets a short stub pointing at the URL.
@@ -31,10 +31,11 @@ use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use crate::extractor::{extract_from_html, ExtractedArticle};
 use crate::{IngestError, IngestResult, Result};
 
-/// Hard cap on body bytes we'll load into memory. 2 MiB is enough
-/// for any WeChat article (they run 40-200 KB) and any reasonable
-/// long-form blog post, while still being cheap to hold and serialise.
-pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// Hard cap on body bytes we'll load into memory. Some WeChat article
+/// pages ship several MiB of inline runtime payload around a short
+/// article, so the cap needs to be higher than the clean markdown size
+/// while still protecting the ingest path from hostile huge responses.
+pub const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 
 /// Network timeout for the GET. Kept short because the desktop-server
 /// HTTP handler that calls this runs on the request thread; we'd
@@ -128,7 +129,8 @@ fn shape_ingest_output(
 ) -> Result<(String, String)> {
     let fallback_title = derive_title_from_url(url);
 
-    let is_html = matches!(content_type, Some(ct) if ct == "text/html" || ct.starts_with("text/html"));
+    let is_html =
+        matches!(content_type, Some(ct) if ct == "text/html" || ct.starts_with("text/html"));
 
     if is_html {
         // Decode UTF-8 first so the extractor receives a &str.
@@ -285,11 +287,7 @@ fn extract_content_type(headers: &HeaderMap) -> Option<String> {
 ///   MVP stand-in for the defuddle/obsidian-clipper path.
 /// * Everything else → a short "fetched opaque blob" stub with byte
 ///   count and content-type so the user sees *something*.
-fn body_for_content_type(
-    url: &str,
-    bytes: &[u8],
-    content_type: Option<&str>,
-) -> Result<String> {
+fn body_for_content_type(url: &str, bytes: &[u8], content_type: Option<&str>) -> Result<String> {
     match content_type {
         Some(ct) if ct == "text/markdown" || ct == "text/plain" => {
             decode_utf8(bytes).map(|text| text.into_owned())
@@ -348,14 +346,8 @@ mod tests {
 
     #[test]
     fn validate_url_rejects_empty() {
-        assert!(matches!(
-            validate_url(""),
-            Err(IngestError::Invalid(_))
-        ));
-        assert!(matches!(
-            validate_url("   "),
-            Err(IngestError::Invalid(_))
-        ));
+        assert!(matches!(validate_url(""), Err(IngestError::Invalid(_))));
+        assert!(matches!(validate_url("   "), Err(IngestError::Invalid(_))));
     }
 
     #[test]
@@ -385,7 +377,10 @@ mod tests {
 
         let mut h = HeaderMap::new();
         h.insert(CONTENT_TYPE, "application/json".parse().unwrap());
-        assert_eq!(extract_content_type(&h), Some("application/json".to_string()));
+        assert_eq!(
+            extract_content_type(&h),
+            Some("application/json".to_string())
+        );
 
         let h = HeaderMap::new();
         assert_eq!(extract_content_type(&h), None);
@@ -441,12 +436,8 @@ mod tests {
 
     #[test]
     fn body_for_missing_content_type_stores_stub() {
-        let body = body_for_content_type(
-            "https://example.com/mystery",
-            b"\xff\xfe opaque",
-            None,
-        )
-        .unwrap();
+        let body =
+            body_for_content_type("https://example.com/mystery", b"\xff\xfe opaque", None).unwrap();
         assert!(body.contains("No Content-Type header returned"));
     }
 
@@ -468,10 +459,7 @@ mod tests {
             derive_title_from_url("https://mp.weixin.qq.com/s/abc"),
             "mp.weixin.qq.com"
         );
-        assert_eq!(
-            derive_title_from_url("http://example.com"),
-            "example.com"
-        );
+        assert_eq!(derive_title_from_url("http://example.com"), "example.com");
         assert_eq!(
             derive_title_from_url("https://example.com/path/a/b"),
             "example.com"
@@ -617,12 +605,12 @@ mod tests {
     #[tokio::test]
     async fn fetch_and_body_enforces_max_body_bytes() {
         // Canonical §7.2 + the `MAX_BODY_BYTES` constant: anything
-        // over the 2 MiB hard cap must return `IngestError::TooLarge`
+        // over the hard cap must return `IngestError::TooLarge`
         // BEFORE we try to decode or store the body. This is the one
         // DoS-level defense in the ingest path — without it a hostile
         // server could stream a 10 GB body into our memory.
         //
-        // We don't want a 2 MiB fixture in the repo, so we
+        // We don't want a multi-MiB fixture in the repo, so we
         // temporarily cheat: send a Content-Length header that
         // advertises more than the limit, followed by a small body.
         // reqwest will short-circuit on Content-Length before reading
@@ -630,9 +618,9 @@ mod tests {
         // `bytes.len() > MAX_BODY_BYTES` after the read completes.
         //
         // Best way to exercise this: construct a response whose
-        // *actual* body exceeds the cap. We use a 3 MiB filler, which
-        // is small enough to keep the test fast but big enough to
-        // trip the check.
+        // *actual* body exceeds the cap. We use a `MAX_BODY_BYTES +
+        // 1024` filler, which is small enough to keep the test fast
+        // but big enough to trip the check.
         const OVERSIZE_BYTES: usize = MAX_BODY_BYTES + 1024;
         let headers = format!(
             "HTTP/1.1 200 OK\r\n\

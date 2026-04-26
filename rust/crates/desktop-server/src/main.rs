@@ -136,8 +136,8 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // valid credential to compare against (standalone `cargo run -p
     // desktop-server` runs with no Tauri parent and no client that
     // needs the route).
-    let shutdown_token = env::var("OCL_SHUTDOWN_TOKEN")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let shutdown_token =
+        env::var("OCL_SHUTDOWN_TOKEN").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
 
     // Ctrl-C handler. `ctrl_c()` completes on the first Ctrl-C and
     // the spawned task exits; a second Ctrl-C would be handled by the
@@ -218,9 +218,7 @@ fn ensure_claw_config_home_is_valid() {
                 .or_else(|| {
                     env::var_os("USERPROFILE")
                         .map(std::path::PathBuf::from)
-                        .map(|p| {
-                            p.join("AppData").join("Local").join("warwolf").join("claw")
-                        })
+                        .map(|p| p.join("AppData").join("Local").join("warwolf").join("claw"))
                 });
 
             if let Some(path) = target {
@@ -352,10 +350,16 @@ async fn run_wechat_login() -> Result<(), Box<dyn std::error::Error>> {
 /// Silently auto-install Python deps on startup (background task).
 async fn auto_install_python_deps() {
     // Check Python
-    let py = tokio::process::Command::new("python").args(["--version"]).output().await;
+    let py = tokio::process::Command::new("python")
+        .args(["--version"])
+        .output()
+        .await;
     match py {
         Ok(o) if o.status.success() => {
-            eprintln!("[auto-install] {}", String::from_utf8_lossy(&o.stdout).trim());
+            eprintln!(
+                "[auto-install] {}",
+                String::from_utf8_lossy(&o.stdout).trim()
+            );
         }
         _ => {
             eprintln!("[auto-install] Python not found, skipping");
@@ -366,13 +370,23 @@ async fn auto_install_python_deps() {
     // markitdown
     let ok = tokio::process::Command::new("python")
         .args(["-c", "import markitdown"])
-        .output().await
-        .map(|o| o.status.success()).unwrap_or(false);
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if !ok {
         eprintln!("[auto-install] installing markitdown[all]...");
         let _ = tokio::process::Command::new("python")
-            .args(["-m", "pip", "install", "--upgrade", "--quiet", "markitdown[all]"])
-            .output().await;
+            .args([
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--quiet",
+                "markitdown[all]",
+            ])
+            .output()
+            .await;
         eprintln!("[auto-install] markitdown done");
     }
 
@@ -381,24 +395,29 @@ async fn auto_install_python_deps() {
     // Chrome/Edge instead of downloading a separate Chromium binary.
     let ok = tokio::process::Command::new("python")
         .args(["-c", "from playwright.sync_api import sync_playwright"])
-        .output().await
-        .map(|o| o.status.success()).unwrap_or(false);
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if !ok {
         eprintln!("[auto-install] installing playwright pip package...");
         let _ = tokio::process::Command::new("python")
             .args(["-m", "pip", "install", "--upgrade", "--quiet", "playwright"])
-            .output().await;
-        eprintln!("[auto-install] playwright pip done (using system Chrome/Edge, no Chromium download)");
+            .output()
+            .await;
+        eprintln!(
+            "[auto-install] playwright pip done (using system Chrome/Edge, no Chromium download)"
+        );
     }
 
     // defuddle (Node.js content extraction)
-    let defuddle_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../wiki_ingest/src");
+    let defuddle_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../wiki_ingest/src");
     if !defuddle_dir.join("node_modules/defuddle").exists() {
         eprintln!("[auto-install] installing defuddle (npm)...");
         let _ = tokio::process::Command::new("npm")
             .args(["install", "--prefix", &defuddle_dir.to_string_lossy()])
-            .output().await;
+            .output()
+            .await;
         eprintln!("[auto-install] defuddle done");
     }
 

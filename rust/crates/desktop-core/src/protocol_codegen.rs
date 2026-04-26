@@ -787,10 +787,8 @@ mod tests {
         assert_eq!(success["title"], "T");
         assert_eq!(success["raw_id"], 1);
 
-        let rejected = serde_json::to_value(EnrichStatus::RejectedQuality {
-            reason: "r".into(),
-        })
-        .unwrap();
+        let rejected =
+            serde_json::to_value(EnrichStatus::RejectedQuality { reason: "r".into() }).unwrap();
         assert_eq!(rejected["kind"], "rejected_quality");
 
         let prereq = serde_json::to_value(EnrichStatus::PrerequisiteMissing {
@@ -800,10 +798,8 @@ mod tests {
         .unwrap();
         assert_eq!(prereq["kind"], "prerequisite_missing");
 
-        let fetch_failed = serde_json::to_value(EnrichStatus::FetchFailed {
-            reason: "f".into(),
-        })
-        .unwrap();
+        let fetch_failed =
+            serde_json::to_value(EnrichStatus::FetchFailed { reason: "f".into() }).unwrap();
         assert_eq!(fetch_failed["kind"], "fetch_failed");
     }
 

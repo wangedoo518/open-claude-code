@@ -1,81 +1,228 @@
-/**
- * RawEntryCard — card-style row for the Raw material library.
- *
- * DS 2.x-A product of Batch B audit §4.2 方案 B: an inline 152-line
- * `EntryCard` function in `features/raw/RawLibraryPage.tsx`
- * (pre-migration L852-1003) promoted to a dedicated component so
- * RawLibraryPage keeps only page-level state (selection, expansion,
- * mutations) and the card markup lives in a single focused file.
- *
- * Semantic upgrade (audit §6 spec): outer container is `<article>`,
- * not `<div>`. The card is not inside a `<ul>` and acts as a
- * self-contained document card — `<article>` reads cleaner to screen
- * readers than a generic `<div>`. DOM id `raw-entry-${id}` is preserved
- * verbatim for `?entry=N` deep-link scrollIntoView.
- *
- * Contrast with `ListItem.tsx` / `InboxRow.tsx`:
- *  - ListItem is a flat KB-editorial row with chevron-right.
- *  - InboxRow is a compact queue row with a 3-badge meta and a
- *    batch-mode leading-slot swap.
- *  - RawEntryCard is a full card (rounded-xl + shadow-warm-ring) with
- *    hover-revealed trailing actions (Ask / Delete / ClearFocus) and
- *    an expand-in-place body viewer slot. The `group` utility is on
- *    the outer <article> so children can use `group-hover:*`.
- *
- * Leaf deps (NOT modified by DS 2.x-A per worksheet hard constraint):
- *  - RawLineageBadge
- *  - `expandedContent` slot accepts any ReactNode — callers typically
- *    pass `<ExpandedDetail />`; caller owns its query/lifecycle.
- *    `FullScreenReader` is a child of `ExpandedDetail`, transitively
- *    out of scope too.
- *
- * Source helpers (translateSource / sourceBadgeStyle / SourceIcon /
- * formatSize) are imported from `@/components/ds/row-primitives`. The
- * DS 2.x-B hoist collapsed what DS 2.x-A temporarily duplicated
- * (RawLibraryPage's ExpandedDetail / FullScreenReader now import the
- * same primitive).
- */
-
 import type { ReactNode } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
-  MessageCircleQuestion,
-  Trash2,
-  Loader2,
-  X,
   ChevronDown,
+  Loader2,
+  MessageCircleQuestion,
+  Sparkles,
+  Trash2,
+  X,
 } from "lucide-react";
+import { getRawEntry } from "@/api/wiki/repository";
 import type { RawEntry } from "@/api/wiki/types";
 import { RawLineageBadge } from "@/features/raw/RawLineageBadge";
 import {
   SourceIcon,
   sourceBadgeStyle,
   translateSource,
-  formatSize,
 } from "@/components/ds/row-primitives";
 
 export interface RawEntryCardProps {
-  /** Full raw entry (slug, source, date, byte_size, etc.). */
   entry: RawEntry;
-  /** Batch-delete selection state. */
   isSelected: boolean;
-  /** Expand state — drives borderLeft accent + expandedContent render. */
   isExpanded: boolean;
-  /** Delete mutation inflight — swaps Trash2 for Loader2 + disables the button. */
   isDeleting: boolean;
+  batchMode?: boolean;
+  isOrganizing?: boolean;
   onToggleSelect: () => void;
   onToggleExpand: () => void;
-  /** Clear-focus X (only rendered while `isExpanded`). */
   onClearExpand: () => void;
   onDelete: () => void;
-  /** Fires the "用这条素材提问" hover action (parent composes the /ask URL). */
   onAsk: () => void;
-  /**
-   * Caller-provided expand body slot. Typically an `<ExpandedDetail />`
-   * instance. Only rendered when `isExpanded`; the component's own
-   * guard + the parent's typical gating pattern both produce the same
-   * effect — defense in depth against prop/state drift.
-   */
+  onOrganize?: () => void;
+  onBeginDragSelect?: () => void;
+  onDragSelect?: () => void;
   expandedContent?: ReactNode;
+}
+
+interface RawPresentation {
+  title: string;
+  subtitle: string;
+  meta: string;
+  sourceLabel: string;
+  pendingTitle: boolean;
+}
+
+const HASHISH_RE = /^(u-|raw-|wechat-)?[a-z0-9_-]{10,}$/i;
+const URL_RE = /https?:\/\/[^\s)）]+/i;
+
+function shouldFetchBody(entry: RawEntry): boolean {
+  if (entry.source.startsWith("wechat")) return true;
+  if (entry.source_url) return true;
+  return isMachineTitle(entry.slug) || isMachineTitle(entry.filename);
+}
+
+function isMachineTitle(value: string | null | undefined): boolean {
+  if (!value) return true;
+  const text = value.trim();
+  if (!text) return true;
+  if (URL_RE.test(text)) return true;
+  if (/^mp-weixin-qq-com/i.test(text)) return true;
+  if (/^wechat-[a-z0-9_-]+$/i.test(text)) return true;
+  return HASHISH_RE.test(text);
+}
+
+function cleanTitle(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/^#+\s*/, "")
+    .replace(/^\[[^\]]+\]\(([^)]+)\)$/, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titleFromBody(body: string | null | undefined): string | null {
+  if (!body) return null;
+  const lines = body
+    .replace(/^---[\s\S]*?---\s*/m, "")
+    .split(/\r?\n/)
+    .map(cleanTitle)
+    .filter((line) => line.length > 0 && !URL_RE.test(line));
+  const heading = lines.find((line) => line.length >= 4 && line.length <= 80);
+  return heading ?? null;
+}
+
+function snippetFromBody(body: string | null | undefined): string | null {
+  const text = (body ?? "")
+    .replace(/^---[\s\S]*?---\s*/m, "")
+    .replace(/[#>*_`[\]()]/g, "")
+    .replace(URL_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  return text.length > 30 ? `${text.slice(0, 30)}…` : text;
+}
+
+function hostFrom(entry: RawEntry): string | null {
+  const raw = entry.source_url ?? entry.canonical_url ?? entry.original_url ?? extractUrl(entry.slug);
+  if (!raw) return null;
+  try {
+    return new URL(raw).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function extractUrl(text: string | null | undefined): string | null {
+  return text?.match(URL_RE)?.[0] ?? null;
+}
+
+function readableFallback(entry: RawEntry): string {
+  const raw = cleanTitle(entry.filename || entry.slug);
+  if (!raw || isMachineTitle(raw)) return "";
+  return raw.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[-_]+/g, " ");
+}
+
+function estimateWords(bytes: number): string {
+  const words = Math.max(1, Math.round((bytes || 0) / 2));
+  if (words >= 1000) return `约 ${Math.round(words / 100) / 10} 千字`;
+  return `约 ${words} 字`;
+}
+
+function materialMeta(entry: RawEntry): string {
+  const source = entry.source.toLowerCase();
+  const host = hostFrom(entry);
+  if (host && (source.includes("url") || source === "url" || source.includes("article"))) {
+    return host;
+  }
+  if (source.includes("image") || source === "image") return "图片素材";
+  if (source.includes("voice") || source.includes("audio") || source.includes("video")) {
+    return "音视频素材";
+  }
+  return estimateWords(entry.byte_size);
+}
+
+function formatMaterialDate(raw: string): string {
+  const time = Date.parse(raw);
+  if (Number.isNaN(time)) return raw;
+  const date = new Date(time);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const thatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const diff = Math.floor((today - thatDay) / (24 * 60 * 60 * 1000));
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  if (diff <= 0) return `今天 ${hh}:${mm}`;
+  if (diff === 1) return `昨天 ${hh}:${mm}`;
+  if (diff < 7) return `${diff} 天前`;
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
+function buildPresentation(entry: RawEntry, body?: string | null): RawPresentation {
+  const source = entry.source.toLowerCase();
+  const sourceLabel = translateSource(entry.source);
+  const bodyTitle = titleFromBody(body);
+  const snippet = snippetFromBody(body);
+  const host = hostFrom(entry);
+  const fallback = readableFallback(entry);
+  const meta = materialMeta(entry);
+  const originalRef = host ?? entry.slug;
+
+  if (source === "wechat-text" || source === "wechat-message") {
+    if (snippet) {
+      return {
+        title: `微信消息 · ${snippet}`,
+        subtitle: `来源 ${entry.slug}`,
+        meta,
+        sourceLabel,
+        pendingTitle: false,
+      };
+    }
+    return {
+      title: source.includes("image") ? "微信图片消息 · 来自微信" : "未命名 · AI 推荐标题中…",
+      subtitle: `来源 ${entry.slug}`,
+      meta,
+      sourceLabel,
+      pendingTitle: true,
+    };
+  }
+
+  if (source === "wechat-article") {
+    const title = bodyTitle ?? fallback;
+    return title
+      ? { title, subtitle: host ?? "微信公众号文章", meta, sourceLabel, pendingTitle: false }
+      : {
+          title: "未命名 · AI 推荐标题中…",
+          subtitle: originalRef,
+          meta,
+          sourceLabel,
+          pendingTitle: true,
+        };
+  }
+
+  if (source.includes("url") || source === "url") {
+    const title = bodyTitle ?? fallback;
+    return title
+      ? { title, subtitle: host ?? entry.source_url ?? entry.slug, meta, sourceLabel, pendingTitle: false }
+      : {
+          title: "未命名 · AI 推荐标题中…",
+          subtitle: host ?? entry.source_url ?? entry.slug,
+          meta,
+          sourceLabel,
+          pendingTitle: true,
+        };
+  }
+
+  if (source.includes("image") || source === "image") {
+    return {
+      title: fallback || "图片素材",
+      subtitle: entry.filename || "本地图片",
+      meta,
+      sourceLabel,
+      pendingTitle: false,
+    };
+  }
+
+  const title = bodyTitle ?? fallback;
+  return title
+    ? { title, subtitle: entry.filename || entry.slug, meta, sourceLabel, pendingTitle: false }
+    : {
+        title: "未命名 · AI 推荐标题中…",
+        subtitle: entry.filename || entry.slug,
+        meta,
+        sourceLabel,
+        pendingTitle: true,
+      };
 }
 
 export function RawEntryCard({
@@ -83,156 +230,188 @@ export function RawEntryCard({
   isSelected,
   isExpanded,
   isDeleting,
+  batchMode = false,
+  isOrganizing = false,
   onToggleSelect,
   onToggleExpand,
   onClearExpand,
   onDelete,
   onAsk,
+  onOrganize,
+  onBeginDragSelect,
+  onDragSelect,
   expandedContent,
 }: RawEntryCardProps) {
   const badge = sourceBadgeStyle(entry.source);
+  const detailQuery = useQuery({
+    queryKey: ["wiki", "raw", "detail", entry.id],
+    queryFn: () => getRawEntry(entry.id),
+    enabled: shouldFetchBody(entry),
+    staleTime: 60_000,
+  });
+
+  const presentation = useMemo(
+    () => buildPresentation(entry, detailQuery.data?.body ?? null),
+    [detailQuery.data?.body, entry],
+  );
 
   return (
     <article
       id={`raw-entry-${entry.id}`}
-      className="group rounded-xl border bg-card p-4 shadow-warm-ring transition-shadow hover:shadow-warm-ring-hover"
-      style={{
-        borderLeft: isExpanded ? "3px solid var(--color-primary)" : undefined,
+      className="raw-entry-card-v2 group"
+      data-expanded={isExpanded || undefined}
+      data-selected={isSelected || undefined}
+      data-batch={batchMode || isSelected || undefined}
+      onMouseDown={(event) => {
+        if (batchMode && event.button === 0) {
+          onBeginDragSelect?.();
+        }
+      }}
+      onMouseEnter={() => {
+        if (batchMode) {
+          onDragSelect?.();
+        }
       }}
     >
-      {/* Card row */}
-      <div className="flex items-center gap-3">
-        {/* Checkbox for multi-select */}
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={(e) => {
-            e.stopPropagation();
-            onToggleSelect();
-          }}
-          className="size-3.5 shrink-0 cursor-pointer rounded border-border accent-primary"
-        />
+      <div className="raw-entry-card-v2-row">
+        <label
+          className="raw-entry-card-v2-check"
+          aria-label={`选择素材 ${entry.id}`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={onToggleSelect}
+          />
+        </label>
 
-        {/* Clickable content area */}
         <button
           type="button"
-          onClick={onToggleExpand}
-          title={`${entry.slug} · ${translateSource(entry.source)}`}
-          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+          className="raw-entry-card-v2-main"
+          aria-expanded={isExpanded}
+          onClick={() => {
+            if (!batchMode) {
+              onToggleExpand();
+            }
+          }}
+          title={`${presentation.title} · ${presentation.subtitle}`}
         >
-          {/* Source icon tile */}
-          <div
-            className="flex size-8 shrink-0 items-center justify-center rounded-md"
-            style={{ backgroundColor: badge.bg }}
+          <span
+            className="raw-entry-card-v2-icon"
+            style={
+              presentation.pendingTitle
+                ? { backgroundColor: "#FAECE7", color: "var(--claude-orange)" }
+                : { backgroundColor: badge.bg, color: badge.text }
+            }
           >
-            <SourceIcon
-              source={entry.source}
-              className="size-4"
-              style={{ color: badge.text }}
-            />
-          </div>
+            {presentation.pendingTitle ? (
+              <Sparkles className="size-4" strokeWidth={1.5} />
+            ) : (
+              <SourceIcon source={entry.source} className="size-4" />
+            )}
+          </span>
 
-          {/* Title + metadata */}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              {/* Source badge pill */}
+          <span className="raw-entry-card-v2-copy">
+            <span className="raw-entry-card-v2-title-row">
               <span
-                className="shrink-0 rounded-full px-1.5 py-0.5 font-medium"
-                style={{
-                  fontSize: 10,
-                  backgroundColor: badge.bg,
-                  color: badge.text,
-                }}
+                className="raw-entry-card-v2-title"
+                data-pending={presentation.pendingTitle || undefined}
               >
-                {translateSource(entry.source)}
-              </span>
-              {/* Date + size */}
-              <span
-                className="text-muted-foreground/40"
-                style={{ fontSize: 11 }}
-              >
-                {entry.date}
+                {presentation.title}
               </span>
               <span
-                className="text-muted-foreground/30"
-                style={{ fontSize: 11 }}
+                className="raw-entry-card-v2-source"
+                style={{ backgroundColor: badge.bg, color: badge.text }}
               >
-                {formatSize(entry.byte_size)}
+                {presentation.sourceLabel}
               </span>
-              {/* P1 sprint — downstream lineage status badge. */}
-              <RawLineageBadge rawId={entry.id} />
-            </div>
-            {/* Title */}
-            <div
-              className="mt-0.5 truncate text-foreground"
-              style={{ fontSize: 13, fontWeight: isExpanded ? 500 : 400 }}
-            >
-              {entry.slug}
-            </div>
-          </div>
+            </span>
+            <span className="raw-entry-card-v2-subtitle">
+              {presentation.subtitle}
+            </span>
+            <span className="raw-entry-card-v2-meta">
+              <span>{formatMaterialDate(entry.ingested_at || entry.date)}</span>
+              <span>{presentation.meta}</span>
+              <RawLineageBadge rawId={entry.id} onOrganize={onOrganize} />
+            </span>
+          </span>
         </button>
 
-        {/* Ask with this — visible on hover */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onAsk();
-          }}
-          className="shrink-0 rounded-md p-1.5 text-muted-foreground/30 opacity-0 transition-all hover:bg-primary/10 hover:text-primary group-hover:opacity-100"
-          title="用这条素材提问"
-          aria-label="Ask with this"
-        >
-          <MessageCircleQuestion className="size-3.5" />
-        </button>
-
-        {/* Delete button — visible on hover */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          disabled={isDeleting}
-          className="shrink-0 rounded-md p-1.5 text-muted-foreground/30 opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
-          title="删除"
-        >
-          {isDeleting ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Trash2 className="size-3.5" />
-          )}
-        </button>
-
-        {/* Clear-focus × — only while expanded. Mirrors the chip's ×
-            so the user has two consistent exits. */}
-        {isExpanded && (
+        <div className="raw-entry-card-v2-actions">
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onClearExpand();
+            onClick={(event) => {
+              event.stopPropagation();
+              onAsk();
             }}
-            title="清除聚焦"
-            aria-label="清除聚焦"
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground/50 transition-colors hover:bg-accent hover:text-foreground"
+            className="raw-entry-card-v2-action"
+            title="用这条素材提问"
+            aria-label="用这条素材提问"
           >
-            <X className="size-3.5" />
+            <MessageCircleQuestion className="size-3.5" />
           </button>
-        )}
 
-        {/* Expand indicator */}
+          {onOrganize && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOrganize();
+              }}
+              disabled={isOrganizing}
+              className="raw-entry-card-v2-action raw-entry-card-v2-action--organize"
+              title="重新整理这条素材"
+              aria-label="重新整理这条素材"
+            >
+              {isOrganizing ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
+            }}
+            disabled={isDeleting}
+            className="raw-entry-card-v2-action raw-entry-card-v2-action--delete"
+            title="删除"
+            aria-label="删除"
+          >
+            {isDeleting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="size-3.5" />
+            )}
+          </button>
+
+          {isExpanded && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onClearExpand();
+              }}
+              title="清除聚焦"
+              aria-label="清除聚焦"
+              className="raw-entry-card-v2-action"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
         <ChevronDown
-          className={
-            "size-3.5 shrink-0 text-muted-foreground/30 transition-transform " +
-            (isExpanded ? "rotate-180" : "")
-          }
+          className="raw-entry-card-v2-chevron size-3.5"
+          aria-hidden
         />
       </div>
 
-      {/* Expanded detail — caller-provided slot. Gated by isExpanded so
-          parent & row agree on visibility even if expandedContent is
-          passed unconditionally. */}
       {isExpanded && expandedContent}
     </article>
   );

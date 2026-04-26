@@ -323,13 +323,14 @@ mod tests {
     fn decrypt_wrong_magic_fails() {
         ensure_test_key();
         let path = temp_path("wrong-magic");
-        std::fs::write(&path, b"XXXX\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00junk").unwrap();
+        std::fs::write(
+            &path,
+            b"XXXX\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00junk",
+        )
+        .unwrap();
 
         let result = read_encrypted(&path);
-        assert!(matches!(
-            result,
-            Err(SecureStorageError::InvalidFormat(_))
-        ));
+        assert!(matches!(result, Err(SecureStorageError::InvalidFormat(_))));
 
         let _ = std::fs::remove_file(&path);
     }
@@ -341,10 +342,7 @@ mod tests {
         std::fs::write(&path, b"short").unwrap();
 
         let result = read_encrypted(&path);
-        assert!(matches!(
-            result,
-            Err(SecureStorageError::InvalidFormat(_))
-        ));
+        assert!(matches!(result, Err(SecureStorageError::InvalidFormat(_))));
 
         let _ = std::fs::remove_file(&path);
     }

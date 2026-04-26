@@ -39,7 +39,7 @@ def defuddle_extract(html: str, url: str) -> dict | None:
             input=req,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=20,
             encoding="utf-8",
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -202,16 +202,19 @@ def main():
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             })
 
-            # Navigate with retry
+            # Navigate with retry. WeChat article pages often keep background
+            # requests open, so `networkidle` can hang until the Rust-side
+            # outer timeout kills this worker. Prefer DOM readiness, then wait
+            # briefly for the article container.
             loaded = False
             for attempt in range(2):
                 try:
-                    page.goto(url, wait_until="networkidle", timeout=30000)
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
                     loaded = True
                     break
                 except Exception:
                     try:
-                        page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                        page.goto(url, wait_until="load", timeout=12000)
                         loaded = True
                         break
                     except Exception:
@@ -223,7 +226,15 @@ def main():
                 browser.close()
                 return
 
-            page.wait_for_timeout(random.randint(1500, 3000))
+            try:
+                page.wait_for_selector(
+                    "#js_content, .rich_media_content, article, body",
+                    timeout=8000,
+                )
+            except Exception:
+                pass
+
+            page.wait_for_timeout(random.randint(800, 1600))
 
             # Check for CAPTCHA
             page_text = page.inner_text("body")

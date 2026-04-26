@@ -88,10 +88,7 @@ impl EmailClient {
             .await
             .map_err(|e| PipelineError::Email(e.to_string()))?;
 
-        Ok(resp["results"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
+        Ok(resp["results"].as_array().cloned().unwrap_or_default())
     }
 
     /// Poll for a mail matching a predicate. 3s interval, configurable timeout.

@@ -34,18 +34,16 @@ pub const MAX_PDF_BYTES: usize = 100 * 1024 * 1024;
 
 pub fn extract_pdf(path: &Path) -> Result<IngestResult> {
     // I4 fix: check file size BEFORE reading to prevent OOM.
-    let metadata = std::fs::metadata(path).map_err(|e| {
-        IngestError::Invalid(format!("cannot stat PDF at {}: {e}", path.display()))
-    })?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| IngestError::Invalid(format!("cannot stat PDF at {}: {e}", path.display())))?;
     if metadata.len() > MAX_PDF_BYTES as u64 {
         return Err(IngestError::TooLarge {
             bytes: metadata.len() as usize,
             max: MAX_PDF_BYTES,
         });
     }
-    let bytes = std::fs::read(path).map_err(|e| {
-        IngestError::Invalid(format!("cannot read PDF at {}: {e}", path.display()))
-    })?;
+    let bytes = std::fs::read(path)
+        .map_err(|e| IngestError::Invalid(format!("cannot read PDF at {}: {e}", path.display())))?;
 
     let text = pdf_extract::extract_text_from_mem(&bytes).map_err(|e| {
         IngestError::Invalid(format!("PDF extraction failed for {}: {e}", path.display()))
@@ -124,10 +122,7 @@ mod tests {
             title_from_path(Path::new("/docs/my-report.pdf")),
             "my-report"
         );
-        assert_eq!(
-            title_from_path(Path::new("单页.pdf")),
-            "单页"
-        );
+        assert_eq!(title_from_path(Path::new("单页.pdf")), "单页");
     }
 
     // NOTE: We don't include a real PDF fixture in the repo to keep

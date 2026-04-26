@@ -17,7 +17,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, MessageSquare, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  BookOpen,
+  Database,
+  Search,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react";
 import { AskHeader } from "./AskHeader";
 import { useWikiQuery } from "./useWikiQuery";
 import { WikiQueryMessage } from "./WikiQueryMessage";
@@ -60,6 +68,10 @@ import {
 } from "./streamingReplayHarness";
 import { useAskUiStore } from "@/state/ask-ui-store";
 import { formatIngestError } from "@/lib/ingest/format-error";
+import {
+  getStoredProfileName,
+  subscribeProfileName,
+} from "@/lib/profile-name";
 import { FailureBanner } from "@/components/ui/failure-banner";
 import {
   classifyAskError,
@@ -248,6 +260,7 @@ export function AskWorkbench({
   const setShowDemo = useAskUiStore((s) => s.setShowDemo);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const [starterDraft, setStarterDraft] = useState<string | null>(null);
   const replayTimerRef = useRef<number | null>(null);
   const replayHandoffTimerRef = useRef<number | null>(null);
   const [streamingReplay, setStreamingReplay] =
@@ -810,7 +823,7 @@ export function AskWorkbench({
       )}
 
       {displayMessages.length === 0 && !isLoadingSession ? (
-        <WelcomeScreen />
+        <WelcomeScreen onSelectPrompt={setStarterDraft} />
       ) : (
         <ConversationScroller>
           <div className="flex min-h-full flex-col">
@@ -946,6 +959,8 @@ export function AskWorkbench({
         onCompact={handleCompact}
         binding={binding}
         onClearBinding={handleClearBinding}
+        draftValue={starterDraft}
+        onDraftConsumed={() => setStarterDraft(null)}
       />
 
       {/* StatusLine removed — Composer's inline toolbar now shows model + permission + environment */}
@@ -1004,50 +1019,89 @@ function MessageSkeleton() {
 // concrete starter prompts, and the composer below stays the real
 // call-to-action. We keep the 演示模式 button because it's how the
 // product ships mock data for gray-test users.
-const STARTER_PROMPTS = [
-  "帮我总结今天微信里入库的素材，给一个两段式摘要。",
-  "把以下链接整理成一篇知识页，保持客观语气：",
-  "我想问一个长期问题：ClawWiki 应该怎么处理长尾知识？",
+const STARTER_PROMPTS: Array<{
+  title: string;
+  description: string;
+  prompt: string;
+  icon: LucideIcon;
+  tone: "orange" | "green" | "purple";
+}> = [
+  {
+    title: "总结今天的微信素材",
+    description: "把新入库内容压缩成可追问的两段摘要。",
+    prompt: "帮我总结今天微信里入库的素材，给一个两段式摘要。",
+    icon: Database,
+    tone: "orange",
+  },
+  {
+    title: "整理一条链接",
+    description: "提取主题、要点和可以沉淀的知识页。",
+    prompt: "把以下链接整理成一篇知识页，保持客观语气：",
+    icon: BookOpen,
+    tone: "green",
+  },
+  {
+    title: "追问已有知识库",
+    description: "基于外脑里的内容找答案、来源和后续行动。",
+    prompt: "我想问一个长期问题：你的外脑应该怎么处理长尾知识？",
+    icon: Search,
+    tone: "purple",
+  },
 ];
 
-function WelcomeScreen() {
+function WelcomeScreen({
+  onSelectPrompt,
+}: {
+  onSelectPrompt: (prompt: string) => void;
+}) {
+  const profileName = useProfileName();
+
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 py-10">
-      {/* Greeting */}
-      <div className="flex flex-col items-center gap-3 text-center">
-        <div
-          className="flex size-12 items-center justify-center rounded-2xl"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--deeptutor-primary, var(--claude-orange)), var(--deeptutor-primary-hi, var(--claude-orange-shimmer)))",
-          }}
-        >
-          <MessageSquare className="size-6 text-white" />
+    <div className="ask-welcome-shell flex flex-1 flex-col items-center justify-center px-6 py-8">
+      <div className="ask-welcome-panel w-full max-w-[680px]">
+        <div className="ask-ready-badge">
+          <span className="ask-ready-dot" aria-hidden="true" />
+          外脑已就绪
         </div>
-        <div>
-          <h2 className="ask-serif text-xl font-medium text-foreground">
-            有什么我能帮你的？
+
+        <div className="mt-4">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-[#888780]">
+            ASK · YOUR OUTER BRAIN
+          </p>
+          <h2 className="ask-serif mt-2 text-[28px] font-medium leading-tight text-[#2C2C2A]">
+            {profileName}，问任何事
           </h2>
-          <p className="mt-1.5 max-w-md text-sm text-muted-foreground/80">
-            发条问题，或粘贴一段素材。
+          <p className="mt-2 max-w-[520px] text-[13.5px] leading-relaxed text-[#5F5E5A]">
+            直接提问、粘贴微信文章或追问已有知识。外脑会优先基于你的知识库回答，并保留来源线索。
           </p>
         </div>
-      </div>
 
-      {/* Starter prompts — Claude-style suggestion strip */}
-      <ul className="flex w-full max-w-lg flex-col gap-1.5">
-        {STARTER_PROMPTS.map((prompt) => (
-          <li key={prompt}>
-            <div className="group/prompt flex items-start gap-2 rounded-md border border-border/30 bg-card/30 px-3 py-2 text-[13px] leading-relaxed text-muted-foreground/80 transition-colors hover:border-border/60 hover:bg-accent/30 hover:text-foreground">
-              <Sparkles
-                className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover/prompt:text-[color:var(--deeptutor-primary,var(--claude-orange))]"
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1">{prompt}</span>
-            </div>
-          </li>
-        ))}
-      </ul>
+        <div className="mt-6 grid gap-2 md:grid-cols-3">
+          {STARTER_PROMPTS.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.title}
+                type="button"
+                className="ask-starter-prompt group/prompt flex min-h-[104px] flex-col rounded-xl border border-[rgba(44,44,42,0.12)] bg-white/70 p-3.5 text-left"
+                data-tone={item.tone}
+                onClick={() => onSelectPrompt(item.prompt)}
+              >
+                <span className="ask-starter-icon">
+                  <Icon className="size-3.5" aria-hidden="true" />
+                </span>
+                <span className="mt-3 flex items-center justify-between gap-2 text-[12.5px] font-medium text-[#2C2C2A]">
+                  {item.title}
+                  <ArrowRight className="size-3 shrink-0 text-[#888780] transition-transform duration-200 group-hover/prompt:translate-x-0.5 group-hover/prompt:text-[#D85A30]" />
+                </span>
+                <span className="mt-1.5 text-[11.5px] leading-relaxed text-[#888780]">
+                  {item.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* DS quiet-intellectual — empty state is just a greeting + a
           hint line + the starter prompts. Keyboard shortcuts (Enter
@@ -1057,6 +1111,16 @@ function WelcomeScreen() {
           the welcome hero as a 5th content tier. */}
     </div>
   );
+}
+
+function useProfileName(): string {
+  const [profileName, setProfileName] = useState(getStoredProfileName);
+
+  useEffect(() => {
+    return subscribeProfileName(setProfileName);
+  }, []);
+
+  return profileName;
 }
 
 /* ─── Message flattening ─────────────────────────────────────────── */

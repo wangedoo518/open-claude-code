@@ -10,9 +10,8 @@ use std::time::{Duration, Instant};
 
 use reqwest::Response;
 use runtime::{
-    should_compact, compact_session, CompactionConfig,
-    ContentBlock, ConversationMessage, HookRunner, ManagedMcpTool, McpServerManager,
-    RuntimeHookConfig, Session as RuntimeSession,
+    compact_session, should_compact, CompactionConfig, ContentBlock, ConversationMessage,
+    HookRunner, ManagedMcpTool, McpServerManager, RuntimeHookConfig, Session as RuntimeSession,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -150,12 +149,14 @@ impl PermissionGate {
         }
 
         // Broadcast the permission request to the frontend.
-        let _ = self.event_sender.send(DesktopSessionEvent::PermissionRequest {
-            session_id: self.session_id.clone(),
-            request_id: request_id.clone(),
-            tool_name: tool_name.to_string(),
-            tool_input: tool_input.to_string(),
-        });
+        let _ = self
+            .event_sender
+            .send(DesktopSessionEvent::PermissionRequest {
+                session_id: self.session_id.clone(),
+                request_id: request_id.clone(),
+                tool_name: tool_name.to_string(),
+                tool_input: tool_input.to_string(),
+            });
 
         // Wait for the user's response (with timeout).
         //
@@ -269,7 +270,10 @@ impl std::fmt::Display for AgenticError {
         match self {
             Self::ApiError(msg) => write!(f, "LLM API error: {msg}"),
             Self::MaxIterationsExceeded => {
-                write!(f, "exceeded maximum loop iterations ({MAX_LOOP_ITERATIONS})")
+                write!(
+                    f,
+                    "exceeded maximum loop iterations ({MAX_LOOP_ITERATIONS})"
+                )
             }
             Self::Cancelled => write!(f, "turn cancelled by user"),
             Self::Internal(msg) => write!(f, "internal error: {msg}"),
@@ -373,9 +377,11 @@ pub async fn run_agentic_loop(
     // pushed before spawning the loop, so `SourceFirst` keeps the
     // user question plus at most one prior assistant turn.
     if matches!(config.context_mode, ContextMode::SourceFirst) {
-        let packaged =
-            ask_context::package_history(config.context_mode, &current_session.messages);
-        let removed = current_session.messages.len().saturating_sub(packaged.len());
+        let packaged = ask_context::package_history(config.context_mode, &current_session.messages);
+        let removed = current_session
+            .messages
+            .len()
+            .saturating_sub(packaged.len());
         if removed > 0 {
             eprintln!(
                 "[agentic_loop] SourceFirst: trimmed {} historical message(s) for topic reset",
@@ -607,9 +613,18 @@ pub async fn run_agentic_loop(
                         // PostToolUse hook runs for MCP tools too.
                         if let Some(ref runner) = hook_runner {
                             if is_error {
-                                let _ = runner.run_post_tool_use_failure(&tool_name, &tool_input_str, &output);
+                                let _ = runner.run_post_tool_use_failure(
+                                    &tool_name,
+                                    &tool_input_str,
+                                    &output,
+                                );
                             } else {
-                                let _ = runner.run_post_tool_use(&tool_name, &tool_input_str, &output, false);
+                                let _ = runner.run_post_tool_use(
+                                    &tool_name,
+                                    &tool_input_str,
+                                    &output,
+                                    false,
+                                );
                             }
                         }
 
@@ -643,19 +658,17 @@ pub async fn run_agentic_loop(
                         let join = tokio::task::spawn_blocking(move || {
                             execute_tool_in_workspace(&tool_cwd, &name, &input_value)
                         });
-                        let result = match tokio::time::timeout(
-                            Duration::from_secs(timeout_secs),
-                            join,
-                        )
-                        .await
-                        {
-                            Ok(Ok(r)) => r,
-                            Ok(Err(e)) => Err(format!("tool task panicked: {e}")),
-                            Err(_) => Err(format!(
-                                "tool execution timed out after {timeout_secs}s \
+                        let result =
+                            match tokio::time::timeout(Duration::from_secs(timeout_secs), join)
+                                .await
+                            {
+                                Ok(Ok(r)) => r,
+                                Ok(Err(e)) => Err(format!("tool task panicked: {e}")),
+                                Err(_) => Err(format!(
+                                    "tool execution timed out after {timeout_secs}s \
                                  (override via OCL_TOOL_TIMEOUT_SECS env var)"
-                            )),
-                        };
+                                )),
+                            };
 
                         let (output, is_error) = match result {
                             Ok(output) => (truncate_tool_output(output), false),
@@ -665,9 +678,18 @@ pub async fn run_agentic_loop(
                         // Run PostToolUse hook (if configured).
                         if let Some(ref runner) = hook_runner {
                             if is_error {
-                                let _ = runner.run_post_tool_use_failure(&tool_name, &tool_input_str, &output);
+                                let _ = runner.run_post_tool_use_failure(
+                                    &tool_name,
+                                    &tool_input_str,
+                                    &output,
+                                );
                             } else {
-                                let _ = runner.run_post_tool_use(&tool_name, &tool_input_str, &output, false);
+                                let _ = runner.run_post_tool_use(
+                                    &tool_name,
+                                    &tool_input_str,
+                                    &output,
+                                    false,
+                                );
                             }
                         }
 
@@ -925,7 +947,14 @@ async fn call_llm_api_streaming(
         .to_string();
 
     if content_type.contains("text/event-stream") {
-        parse_sse_stream(response, event_sender, session_id, cancel_token, on_stream_tick).await
+        parse_sse_stream(
+            response,
+            event_sender,
+            session_id,
+            cancel_token,
+            on_stream_tick,
+        )
+        .await
     } else {
         // Fallback: non-streaming JSON response (upstream didn't support streaming).
         let body_future = response.json::<Value>();
@@ -1045,30 +1074,21 @@ async fn parse_sse_stream(
                     Err(_) => continue,
                 };
 
-                let event_type = event
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
                 match event_type {
                     "message_start" => {
                         if let Some(msg) = event.get("message") {
-                            model_label = msg
-                                .get("model")
-                                .and_then(|v| v.as_str())
-                                .map(String::from);
+                            model_label =
+                                msg.get("model").and_then(|v| v.as_str()).map(String::from);
                         }
                     }
                     "content_block_start" => {
-                        let index = event
-                            .get("index")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
+                        let index =
+                            event.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                         if let Some(cb) = event.get("content_block") {
-                            let block_type = cb
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("text");
+                            let block_type =
+                                cb.get("type").and_then(|v| v.as_str()).unwrap_or("text");
                             block_types.insert(index, block_type.to_string());
                             match block_type {
                                 "text" => {
@@ -1104,37 +1124,28 @@ async fn parse_sse_stream(
                         maybe_tick();
                     }
                     "content_block_delta" => {
-                        let index = event
-                            .get("index")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
+                        let index =
+                            event.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                         if let Some(delta) = event.get("delta") {
-                            let delta_type = delta
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let delta_type =
+                                delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
                             match delta_type {
                                 "text_delta" => {
-                                    if let Some(text) =
-                                        delta.get("text").and_then(|v| v.as_str())
-                                    {
+                                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
                                         if let Some(acc) = text_blocks.get_mut(&index) {
                                             acc.push_str(text);
                                         }
                                         // Broadcast text delta to frontend.
-                                        let _ = event_sender.send(
-                                            DesktopSessionEvent::TextDelta {
-                                                session_id: session_id.to_string(),
-                                                content: text.to_string(),
-                                            },
-                                        );
+                                        let _ = event_sender.send(DesktopSessionEvent::TextDelta {
+                                            session_id: session_id.to_string(),
+                                            content: text.to_string(),
+                                        });
                                         maybe_tick();
                                     }
                                 }
                                 "input_json_delta" => {
-                                    if let Some(partial) = delta
-                                        .get("partial_json")
-                                        .and_then(|v| v.as_str())
+                                    if let Some(partial) =
+                                        delta.get("partial_json").and_then(|v| v.as_str())
                                     {
                                         if let Some(acc) = tool_blocks.get_mut(&index) {
                                             acc.input_json.push_str(partial);
@@ -1239,10 +1250,7 @@ fn parse_json_response(
     let mut blocks = Vec::new();
 
     for block in content {
-        let block_type = block
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("text");
+        let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("text");
 
         match block_type {
             "text" => {
@@ -1542,7 +1550,10 @@ mod permission_gate_tests {
     use super::*;
     use tokio::sync::broadcast;
 
-    fn make_gate() -> (Arc<PermissionGate>, broadcast::Receiver<DesktopSessionEvent>) {
+    fn make_gate() -> (
+        Arc<PermissionGate>,
+        broadcast::Receiver<DesktopSessionEvent>,
+    ) {
         let (tx, rx) = broadcast::channel(16);
         let gate = Arc::new(PermissionGate::new(tx, "test-session".to_string()));
         (gate, rx)
@@ -1609,7 +1620,8 @@ mod permission_gate_tests {
             DesktopSessionEvent::PermissionRequest { request_id, .. } => request_id,
             _ => panic!(),
         };
-        gate.resolve(&request_id, PermissionDecision::AllowAlways).await;
+        gate.resolve(&request_id, PermissionDecision::AllowAlways)
+            .await;
         let d1 = first.await.unwrap();
         assert_eq!(d1, PermissionDecision::AllowAlways);
 
@@ -1635,7 +1647,14 @@ mod permission_gate_tests {
     async fn read_only_tools_auto_allowed() {
         let (gate, _rx) = make_gate();
         let token = CancellationToken::new();
-        for name in ["read_file", "glob_search", "grep_search", "Read", "Glob", "Grep"] {
+        for name in [
+            "read_file",
+            "glob_search",
+            "grep_search",
+            "Read",
+            "Glob",
+            "Grep",
+        ] {
             let decision = gate
                 .check_permission(name, &serde_json::json!({}), false, &token)
                 .await;
@@ -1646,7 +1665,9 @@ mod permission_gate_tests {
     #[tokio::test]
     async fn resolve_with_unknown_id_returns_false() {
         let (gate, _rx) = make_gate();
-        let result = gate.resolve("nonexistent-id", PermissionDecision::Allow).await;
+        let result = gate
+            .resolve("nonexistent-id", PermissionDecision::Allow)
+            .await;
         assert!(!result, "resolve with unknown id should return false");
     }
 
@@ -1680,7 +1701,10 @@ mod permission_gate_tests {
 
         match decision {
             PermissionDecision::Deny { reason } => {
-                assert!(reason.contains("cancel"), "reason should mention cancel, got: {reason}");
+                assert!(
+                    reason.contains("cancel"),
+                    "reason should mention cancel, got: {reason}"
+                );
             }
             other => panic!("expected Deny, got {other:?}"),
         }
@@ -1823,7 +1847,10 @@ mod sse_buffer_tests {
         let line = drain_next_line(&mut buf).expect("should have complete line");
         // The decoded line should contain the full "中" character, not lossy.
         assert!(line.contains("中"), "expected '中' in line, got: {line:?}");
-        assert!(!line.contains('\u{FFFD}'), "should not contain replacement char");
+        assert!(
+            !line.contains('\u{FFFD}'),
+            "should not contain replacement char"
+        );
     }
 
     #[test]
@@ -1956,9 +1983,7 @@ fn truncate_tool_output(output: String) -> String {
         boundary -= 1;
     }
     let truncated = &output[..boundary];
-    format!(
-        "{truncated}\n\n... [output truncated at {MAX_TOOL_OUTPUT_CHARS} bytes]"
-    )
+    format!("{truncated}\n\n... [output truncated at {MAX_TOOL_OUTPUT_CHARS} bytes]")
 }
 
 #[cfg(test)]
@@ -2007,7 +2032,10 @@ mod tool_timeout_tests {
 
     #[test]
     fn timeout_empty_string_returns_default() {
-        assert_eq!(resolve_tool_timeout_secs(Some("")), DEFAULT_TOOL_TIMEOUT_SECS);
+        assert_eq!(
+            resolve_tool_timeout_secs(Some("")),
+            DEFAULT_TOOL_TIMEOUT_SECS
+        );
     }
 
     #[test]
@@ -2043,10 +2071,7 @@ mod tool_timeout_tests {
 
     #[test]
     fn timeout_at_minimum_accepted() {
-        assert_eq!(
-            resolve_tool_timeout_secs(Some("5")),
-            MIN_TOOL_TIMEOUT_SECS
-        );
+        assert_eq!(resolve_tool_timeout_secs(Some("5")), MIN_TOOL_TIMEOUT_SECS);
     }
 
     #[test]

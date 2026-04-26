@@ -30,9 +30,7 @@ fn worker_script_path() -> std::path::PathBuf {
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
     let candidates = [
-        exe_dir
-            .as_ref()
-            .map(|d| d.join("markitdown_worker.py")),
+        exe_dir.as_ref().map(|d| d.join("markitdown_worker.py")),
         Some(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("src")
@@ -74,9 +72,7 @@ pub async fn check_environment() -> Result<String, String> {
 /// Convert a file to Markdown using the MarkItDown Python sidecar.
 pub async fn extract_via_markitdown(path: &Path) -> Result<IngestResult, crate::IngestError> {
     if !path.exists() {
-        return Err(crate::IngestError::NotFound(
-            path.display().to_string(),
-        ));
+        return Err(crate::IngestError::NotFound(path.display().to_string()));
     }
 
     let worker = worker_script_path();
@@ -89,9 +85,9 @@ pub async fn extract_via_markitdown(path: &Path) -> Result<IngestResult, crate::
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| crate::IngestError::Parse(format!(
-            "Failed to spawn Python: {e}. Is Python installed?"
-        )))?;
+        .map_err(|e| {
+            crate::IngestError::Parse(format!("Failed to spawn Python: {e}. Is Python installed?"))
+        })?;
 
     // Write request to stdin
     if let Some(mut stdin) = child.stdin.take() {
@@ -105,9 +101,9 @@ pub async fn extract_via_markitdown(path: &Path) -> Result<IngestResult, crate::
     // Wait with timeout
     let output = timeout(Duration::from_secs(TIMEOUT_SECS), child.wait_with_output())
         .await
-        .map_err(|_| crate::IngestError::Parse(format!(
-            "MarkItDown timed out after {TIMEOUT_SECS}s"
-        )))?
+        .map_err(|_| {
+            crate::IngestError::Parse(format!("MarkItDown timed out after {TIMEOUT_SECS}s"))
+        })?
         .map_err(|e| crate::IngestError::Parse(format!("Process error: {e}")))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -119,11 +115,12 @@ pub async fn extract_via_markitdown(path: &Path) -> Result<IngestResult, crate::
     }
 
     // Parse JSON response
-    let response: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| crate::IngestError::Parse(format!(
+    let response: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+        crate::IngestError::Parse(format!(
             "Invalid JSON from MarkItDown worker: {e}. Output: {}",
             &stdout[..stdout.len().min(200)]
-        )))?;
+        ))
+    })?;
 
     if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let error = response
@@ -162,12 +159,9 @@ pub async fn extract_via_markitdown(path: &Path) -> Result<IngestResult, crate::
 /// List of file extensions that MarkItDown can handle.
 pub fn supported_extensions() -> &'static [&'static str] {
     &[
-        "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls",
-        "jpg", "jpeg", "png", "gif", "webp", "svg",
-        "mp3", "wav", "m4a", "ogg", "flac",
-        "mp4", "mkv", "avi", "mov",
-        "html", "htm", "csv", "json", "xml",
-        "epub", "ipynb", "zip",
+        "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "jpg", "jpeg", "png", "gif", "webp",
+        "svg", "mp3", "wav", "m4a", "ogg", "flac", "mp4", "mkv", "avi", "mov", "html", "htm",
+        "csv", "json", "xml", "epub", "ipynb", "zip",
     ]
 }
 

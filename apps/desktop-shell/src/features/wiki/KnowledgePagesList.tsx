@@ -1,89 +1,130 @@
-/**
- * KnowledgePagesList — DS1.2 editorial replacement for the "pages" tab.
- *
- * The pre-DS1.2 `/wiki` page tab mounted WikiExplorerPage → WikiTab,
- * which rendered `wiki/index.md` as raw Markdown ("ClawWiki index /
- * Auto-generated catalog of every wiki page. Canonical §10, Karpathy
- * llm-wiki §'Indexing and logging'. Concept (6) / People (0) / Topic
- * (0) / Compare (0) / No people pages yet.") plus its own inner
- * "Wiki / Graph" tab bar. That content reads as engineering docs to a
- * regular user.
- *
- * DS1.2 replaces that default view with a DS-style list:
- *
- *   ┌──────────────────────────────────────────┐
- *   │ Icon   Title                  Chevron    │
- *   │        Summary (2-line clamp)            │
- *   │        badge · source · updated · size   │
- *   └──────────────────────────────────────────┘
- *
- * Data source unchanged:
- *   GET /api/wiki/pages            → `listWikiPages()`
- *
- * Navigation: clicking a row uses react-router `navigate('/wiki/<slug>')`,
- * which re-enters `/wiki/*` → KnowledgeHubPage. The parent detects the
- * slug segment and mounts `KnowledgeArticleView` (breadcrumb + WikiArticle)
- * instead of this list. No more inner WikiTabBar.
- */
-
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, FileText, Loader2, Hash } from "lucide-react";
-import { listWikiPages } from "@/api/wiki/repository";
+import {
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Loader2,
+  Search,
+  Sparkles,
+} from "lucide-react";
+import { getWikiGraph, listWikiPages } from "@/api/wiki/repository";
 import type { WikiPageSummary } from "@/api/wiki/types";
-import { ListItem, type ListItemCategory } from "@/components/ds/ListItem";
 
-/* ── Category inference (slug-based best-effort) ─────────────────
- * The backend's `WikiPageSummary` doesn't ship a category field, but
- * the canonical layer layout (`wiki/concepts/*` / `wiki/people/*` /
- * `wiki/topics/*` / `wiki/compare/*`) means most pages carry a
- * category hint in the slug prefix or as the folder shown in index.md.
- * We do a cheap classifier on title/slug heuristics; if nothing
- * matches we just omit the badge. Zero new API calls.
- */
+type SortMode = "recent" | "oldest" | "words" | "refs";
+type FilterMode = "all" | "concept" | "derived";
+type GroupKey = "today" | "yesterday" | "week" | "older";
 
-function classifyPage(p: WikiPageSummary): ListItemCategory {
-  const slug = p.slug.toLowerCase();
-  if (slug.includes("people/") || slug.includes("person/")) return "person";
-  if (slug.includes("topic/") || slug.includes("topics/")) return "topic";
-  if (slug.includes("compare/") || slug.includes("compares/")) return "compare";
-  // Default: the dominant category in the canonical layout is concept.
-  // We only mark it explicitly when we're confident so non-matches fall
-  // to "unknown" (no badge) rather than a noisy label.
-  if (slug.includes("concept/") || slug.includes("concepts/")) return "concept";
-  return "unknown";
+const GROUPS: Array<{ key: GroupKey; label: string }> = [
+  { key: "today", label: "今天" },
+  { key: "yesterday", label: "昨天" },
+  { key: "week", label: "本周" },
+  { key: "older", label: "更早" },
+];
+
+const ONE_DAY = 24 * 60 * 60 * 1000;
+const URL_RE = /https?:\/\/[^\s)）]+/i;
+
+function toTime(raw: string | null | undefined): number {
+  if (!raw) return 0;
+  const time = new Date(raw).getTime();
+  return Number.isNaN(time) ? 0 : time;
 }
 
-/* ── Friendly timestamp ──────────────────────────────────────── */
-
-function formatUpdated(raw: string | null | undefined): string {
-  if (!raw) return "";
-  const ts = new Date(raw).getTime();
-  if (Number.isNaN(ts)) return "";
-  const diffMs = Date.now() - ts;
-  const oneDay = 24 * 60 * 60 * 1000;
-  if (diffMs < oneDay) return "今天";
-  if (diffMs < 2 * oneDay) return "昨天";
-  if (diffMs < 7 * oneDay) return `${Math.floor(diffMs / oneDay)} 天前`;
-  // Longer: absolute date like 2026-04-15
-  const d = new Date(raw);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate(),
-  ).padStart(2, "0")}`;
+function classifyPage(page: WikiPageSummary): "concept" | "derived" | "other" {
+  const category = page.category?.toLowerCase();
+  const slug = page.slug.toLowerCase();
+  if (category === "concept" || slug.includes("concept/") || slug.includes("concepts/")) {
+    return "concept";
+  }
+  if (typeof page.source_raw_id === "number" && page.source_raw_id > 0) {
+    return "derived";
+  }
+  return "other";
 }
 
-function formatSize(bytes: number): string {
-  if (!bytes || bytes < 0) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 10) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${Math.round(bytes / 1024)} KB`;
+function groupByTime(raw: string): GroupKey {
+  const time = toTime(raw);
+  if (!time) return "older";
+  const now = new Date();
+  const date = new Date(time);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.floor((startOfToday - startOfDate) / ONE_DAY);
+  if (dayDiff <= 0) return "today";
+  if (dayDiff === 1) return "yesterday";
+  if (dayDiff < 7) return "week";
+  return "older";
 }
 
-/* ── Component ──────────────────────────────────────────────── */
+function formatKnowledgeTime(raw: string): string {
+  const time = toTime(raw);
+  if (!time) return "时间未知";
+  const date = new Date(time);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.floor((startOfToday - startOfDate) / ONE_DAY);
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+
+  if (dayDiff <= 0) return `今天 ${hh}:${mm}`;
+  if (dayDiff === 1) return `昨天 ${hh}:${mm}`;
+  if (dayDiff < 7) return `${dayDiff} 天前`;
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${hh}:${mm}`;
+}
+
+function estimateWords(bytes: number): string {
+  const words = Math.max(1, Math.round((bytes || 0) / 2));
+  if (words >= 10_000) return `约 ${Math.round(words / 1000) / 10} 万字`;
+  if (words >= 1000) return `约 ${Math.round(words / 100) / 10} 千字`;
+  return `约 ${words} 字`;
+}
+
+function extractUrl(text: string | null | undefined): string | null {
+  const match = text?.match(URL_RE);
+  return match?.[0] ?? null;
+}
+
+function isUntitledPage(page: WikiPageSummary): boolean {
+  const title = page.title.trim();
+  if (!title) return true;
+  if (URL_RE.test(title)) return true;
+  if (title !== page.slug) return false;
+  return /^[a-f0-9-]{12,}$/i.test(title) || title.length > 36;
+}
+
+function displayTitle(page: WikiPageSummary): string {
+  return isUntitledPage(page) ? "未命名 · AI 推荐标题中…" : page.title || page.slug;
+}
+
+function displaySummary(page: WikiPageSummary): string {
+  if (!isUntitledPage(page)) return page.summary || "暂无摘要";
+  return extractUrl(page.title) ?? extractUrl(page.summary) ?? page.slug;
+}
+
+function pageKindLabel(page: WikiPageSummary): string {
+  const kind = classifyPage(page);
+  if (kind === "concept") return "概念";
+  if (kind === "derived") return "素材衍生";
+  return "知识页";
+}
 
 export function KnowledgePagesList() {
   const navigate = useNavigate();
+  const [sortMode, setSortMode] = useState<SortMode>("recent");
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Record<GroupKey, boolean>>({
+    today: true,
+    yesterday: false,
+    week: false,
+    older: false,
+  });
+
   const listQuery = useQuery({
     queryKey: ["wiki", "pages", "list"],
     queryFn: () => listWikiPages(),
@@ -91,31 +132,90 @@ export function KnowledgePagesList() {
     refetchInterval: 30_000,
   });
 
+  const graphQuery = useQuery({
+    queryKey: ["wiki", "graph", "page-list-degrees"],
+    queryFn: () => getWikiGraph(),
+    enabled: sortMode === "refs",
+    staleTime: 30_000,
+  });
+
   const pages: WikiPageSummary[] = useMemo(
     () => listQuery.data?.pages ?? [],
     [listQuery.data],
   );
 
-  // Sort newest-first by created_at (the only temporal field on the
-  // summary type). If the backend later adds updated_at we can swap.
-  const sorted = useMemo(
-    () =>
-      [...pages].sort((a, b) => {
-        const ta = new Date(a.created_at).getTime();
-        const tb = new Date(b.created_at).getTime();
-        return tb - ta;
-      }),
-    [pages],
+  const degreeById = useMemo(() => {
+    const degree = new Map<string, number>();
+    for (const edge of graphQuery.data?.edges ?? []) {
+      degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
+    }
+    for (const node of graphQuery.data?.nodes ?? []) {
+      const count = degree.get(node.id);
+      if (typeof count === "number") {
+        degree.set(node.label, Math.max(degree.get(node.label) ?? 0, count));
+      }
+    }
+    return degree;
+  }, [graphQuery.data]);
+
+  const displayPages = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return [...pages]
+      .filter((page) => {
+        const kind = classifyPage(page);
+        if (filterMode === "concept" && kind !== "concept") return false;
+        if (filterMode === "derived" && kind !== "derived") return false;
+        if (!q) return true;
+        return [page.title, page.summary, page.slug, pageKindLabel(page)]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => {
+        if (sortMode === "oldest") return toTime(a.created_at) - toTime(b.created_at);
+        if (sortMode === "words") return b.byte_size - a.byte_size;
+        if (sortMode === "refs") {
+          const da = degreeById.get(a.slug) ?? degreeById.get(a.title) ?? 0;
+          const db = degreeById.get(b.slug) ?? degreeById.get(b.title) ?? 0;
+          if (db !== da) return db - da;
+        }
+        return toTime(b.created_at) - toTime(a.created_at);
+      });
+  }, [degreeById, filterMode, pages, searchTerm, sortMode]);
+
+  const groupedPages = useMemo(() => {
+    const groups: Record<GroupKey, WikiPageSummary[]> = {
+      today: [],
+      yesterday: [],
+      week: [],
+      older: [],
+    };
+    for (const page of displayPages) {
+      groups[groupByTime(page.created_at)].push(page);
+    }
+    return groups;
+  }, [displayPages]);
+
+  const rowIndexBySlug = useMemo(
+    () => new Map(displayPages.map((page, index) => [page.slug, index])),
+    [displayPages],
   );
 
   const total = listQuery.data?.total_count ?? pages.length;
+  const largeList = pages.length >= 50;
+  const searchActive = searchTerm.trim().length > 0;
+  const defaultFocusedSlug = displayPages[1]?.slug ?? displayPages[0]?.slug ?? null;
+  const activeFocusedSlug = focusedSlug ?? defaultFocusedSlug;
 
   if (listQuery.isLoading) {
     return (
       <div className="ds-kb-shell">
         <div className="ds-kb-header">
-          <h2 className="ds-kb-h">已整理的知识页面</h2>
-          <p className="ds-kb-sub">正在加载…</p>
+          <div>
+            <h2 className="ds-kb-h">已整理的知识页面</h2>
+            <p className="ds-kb-sub">正在加载…</p>
+          </div>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground text-[12px]">
           <Loader2 className="size-3 animate-spin" strokeWidth={1.5} />
@@ -129,17 +229,12 @@ export function KnowledgePagesList() {
     return (
       <div className="ds-kb-shell">
         <div className="ds-kb-header">
-          <h2 className="ds-kb-h">已整理的知识页面</h2>
+          <div>
+            <h2 className="ds-kb-h">已整理的知识页面</h2>
+            <p className="ds-kb-sub">页面列表暂时不可用。</p>
+          </div>
         </div>
-        <div
-          className="rounded-md border px-4 py-3 text-[12px]"
-          style={{
-            borderColor: "color-mix(in srgb, var(--color-error) 30%, transparent)",
-            backgroundColor:
-              "color-mix(in srgb, var(--color-error) 4%, transparent)",
-            color: "var(--color-error)",
-          }}
-        >
+        <div className="ds-kb-error">
           加载失败：
           {listQuery.error instanceof Error
             ? listQuery.error.message
@@ -149,12 +244,14 @@ export function KnowledgePagesList() {
     );
   }
 
-  if (sorted.length === 0) {
+  if (pages.length === 0) {
     return (
       <div className="ds-kb-shell">
         <div className="ds-kb-header">
-          <h2 className="ds-kb-h">已整理的知识页面</h2>
-          <p className="ds-kb-sub">还没有内容，先从一条微信内容或 Ask 开始吧。</p>
+          <div>
+            <h2 className="ds-kb-h">已整理的知识页面</h2>
+            <p className="ds-kb-sub">知识页会在你批准整理建议后自动出现。</p>
+          </div>
         </div>
         <div className="ds-empty-state">
           <BookOpen
@@ -162,10 +259,15 @@ export function KnowledgePagesList() {
             strokeWidth={1.2}
             style={{ color: "var(--color-muted-foreground)", marginBottom: 12 }}
           />
-          <div className="ds-empty-title">还没有知识页面</div>
-          <p className="ds-empty-desc">
-            从微信转发一条内容，或在待整理里批准一条提议后，这里会出现第一篇页面。
-          </p>
+          <div className="ds-empty-title">还没有整理出知识页</div>
+          <p className="ds-empty-desc">先去待整理批准一条 Maintainer 建议。</p>
+          <button
+            type="button"
+            className="ds-empty-action"
+            onClick={() => navigate("/inbox")}
+          >
+            去待整理 →
+          </button>
         </div>
       </div>
     );
@@ -174,43 +276,150 @@ export function KnowledgePagesList() {
   return (
     <div className="ds-kb-shell">
       <div className="ds-kb-header">
-        <h2 className="ds-kb-h">已整理的知识页面</h2>
-        <p className="ds-kb-sub">
-          共 <b style={{ color: "var(--color-foreground)" }}>{total}</b> 个页面 · 按最近更新排列
-        </p>
+        <div className="ds-kb-header-main">
+          <h2 className="ds-kb-h">已整理的知识页面</h2>
+          <p className="ds-kb-sub">
+            共 <b>{total}</b> 个页面 · 按当前筛选显示 {displayPages.length} 个
+            {largeList ? " · 已启用分组折叠" : ""}
+          </p>
+        </div>
+
+        <div className="ds-kb-toolbar" aria-label="知识页面筛选排序">
+          <label className="ds-kb-search">
+            <Search className="size-3.5" strokeWidth={1.5} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="搜索标题、摘要或来源…"
+            />
+          </label>
+          <select
+            className="ds-kb-sort"
+            value={sortMode}
+            onChange={(event) => setSortMode(event.target.value as SortMode)}
+            aria-label="排序"
+          >
+            <option value="recent">最近更新</option>
+            <option value="oldest">最早创建</option>
+            <option value="words">字数最多</option>
+            <option value="refs">引用最多</option>
+          </select>
+          <div className="ds-kb-filter" role="group" aria-label="筛选">
+            {[
+              ["all", "全部"],
+              ["concept", "概念"],
+              ["derived", "素材衍生"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                data-active={filterMode === value}
+                onClick={() => setFilterMode(value as FilterMode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <ul className="ds-kb-list" aria-label="知识页面列表">
-        {sorted.map((p) => {
-          const cat = classifyPage(p);
-          const updated = formatUpdated(p.created_at);
-          const size = formatSize(p.byte_size);
-          const target = `/wiki/${encodeURIComponent(p.slug)}`;
-          return (
-            <ListItem
-              key={p.slug}
-              icon={FileText}
-              title={p.title || p.slug}
-              summary={p.summary || undefined}
-              category={cat}
-              href={target}
-              onClick={() => navigate(target)}
-              meta={
-                <>
-                  {typeof p.source_raw_id === "number" && p.source_raw_id > 0 && (
-                    <span className="inline-flex items-center gap-1">
-                      <Hash className="size-3" strokeWidth={1.5} />
-                      来自素材 #{p.source_raw_id}
-                    </span>
-                  )}
-                  {updated && <span>更新 · {updated}</span>}
-                  {size && <span>{size}</span>}
-                </>
-              }
-            />
-          );
-        })}
-      </ul>
+      {displayPages.length === 0 ? (
+        <div className="ds-empty-state ds-empty-state--compact">
+          <div className="ds-empty-title">没有找到匹配页面</div>
+          <p className="ds-empty-desc">换一个关键词，或切回「全部」筛选。</p>
+        </div>
+      ) : (
+        <div className="ds-kb-groups" aria-label="知识页面分组列表">
+          {GROUPS.map(({ key, label }) => {
+            const items = groupedPages[key];
+            if (items.length === 0) return null;
+            const expanded = !largeList || searchActive || expandedGroups[key];
+            return (
+              <section className="ds-kb-group" key={key} aria-label={`${label}页面`}>
+                <button
+                  type="button"
+                  className="ds-kb-group-head"
+                  disabled={!largeList || searchActive}
+                  onClick={() =>
+                    setExpandedGroups((current) => ({
+                      ...current,
+                      [key]: !current[key],
+                    }))
+                  }
+                >
+                  <span>{label}</span>
+                  <span className="ds-kb-count-badge">{items.length}</span>
+                  {largeList && !searchActive ? (
+                    <ChevronDown
+                      className="size-3"
+                      strokeWidth={1.5}
+                      data-collapsed={!expanded}
+                    />
+                  ) : null}
+                </button>
+
+                {expanded ? (
+                  <ul className="ds-kb-list">
+                    {items.map((page) => {
+                      const target = `/wiki/${encodeURIComponent(page.slug)}`;
+                      const kind = classifyPage(page);
+                      const untitled = isUntitledPage(page);
+                      const focused = activeFocusedSlug === page.slug;
+                      const rowIndex = rowIndexBySlug.get(page.slug) ?? 0;
+                      return (
+                        <li key={page.slug}>
+                          <button
+                            type="button"
+                            className="ds-kb-item"
+                            data-focused={focused}
+                            style={{ animationDelay: `${Math.min(rowIndex, 12) * 30}ms` }}
+                            onFocus={() => setFocusedSlug(page.slug)}
+                            onMouseEnter={() => setFocusedSlug(page.slug)}
+                            onClick={() => navigate(target)}
+                          >
+                            <span className="ds-kb-item-pin" aria-hidden="true" />
+                            <span className="ds-kb-icon" data-kind={kind}>
+                              {untitled ? (
+                                <Sparkles className="size-4" strokeWidth={1.5} />
+                              ) : (
+                                <FileText className="size-4" strokeWidth={1.5} />
+                              )}
+                            </span>
+                            <span className="ds-kb-body">
+                              <span className="ds-kb-title-row">
+                                <span className="ds-kb-title" data-muted={untitled}>
+                                  {displayTitle(page)}
+                                </span>
+                                <span className="ds-kb-type" data-kind={kind}>
+                                  {pageKindLabel(page)}
+                                </span>
+                              </span>
+                              <span className="ds-kb-summary">{displaySummary(page)}</span>
+                              <span className="ds-kb-meta-row">
+                                <span className="ds-kb-meta-source">
+                                  <FileText className="size-3" strokeWidth={1.4} />
+                                  来自素材
+                                </span>
+                                <span>{formatKnowledgeTime(page.created_at)}</span>
+                                <span>{estimateWords(page.byte_size)}</span>
+                              </span>
+                            </span>
+                            <ChevronRight
+                              className="ds-kb-chevron size-4"
+                              strokeWidth={1.5}
+                              aria-hidden="true"
+                            />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

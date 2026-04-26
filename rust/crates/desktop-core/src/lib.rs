@@ -11,10 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::{
     detect_provider_kind, max_tokens_for_model, read_base_url as read_claw_base_url,
-    read_xai_base_url, resolve_model_alias, resolve_startup_auth_source,
-    AnthropicClient, AuthSource, ContentBlockDelta, InputContentBlock, InputMessage,
-    MessageRequest, MessageResponse, OpenAiCompatClient, OpenAiCompatConfig,
-    OutputContentBlock, ProviderClient,
+    read_xai_base_url, resolve_model_alias, resolve_startup_auth_source, AnthropicClient,
+    AuthSource, ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest,
+    MessageResponse, OpenAiCompatClient, OpenAiCompatConfig, OutputContentBlock, ProviderClient,
     ProviderKind, StreamEvent as ApiStreamEvent, ToolChoice, ToolResultContentBlock,
 };
 use plugins::{PluginManager, PluginManagerConfig};
@@ -23,9 +22,8 @@ use runtime::{
     AssistantEvent, ConfigLoader, ConfigSource, ContentBlock, ConversationMessage,
     ConversationRuntime, ManagedMcpTool, McpServerConfig, McpServerManager, MessageRole,
     PermissionMode, PermissionPolicy, ResolvedPermissionMode, RuntimeConfig, RuntimeError,
-    RuntimeFeatureConfig, Session as RuntimeSession,
-    SessionCompaction as RuntimeSessionCompaction, SessionFork as RuntimeSessionFork,
-    TokenUsage, ToolError, ToolExecutor as RuntimeToolExecutor,
+    RuntimeFeatureConfig, Session as RuntimeSession, SessionCompaction as RuntimeSessionCompaction,
+    SessionFork as RuntimeSessionFork, TokenUsage, ToolError, ToolExecutor as RuntimeToolExecutor,
 };
 use serde::{Deserialize, Serialize};
 use time::{
@@ -82,9 +80,9 @@ pub mod wechat_kefu;
 // for a wrapper struct (orphan rule forbids impl on foreign types)
 // so desktop-server's wiki routes can pass the process-global broker
 // straight into propose_for_raw_entry.
-pub mod wiki_maintainer_adapter;
-pub mod skill_router;
 pub mod absorb_task;
+pub mod skill_router;
+pub mod wiki_maintainer_adapter;
 
 pub use ask_context::binding::{SessionSourceBinding, SourceRef};
 pub use ask_context::{ContextBasis, ContextMode};
@@ -1481,8 +1479,7 @@ pub struct DesktopState {
     /// returned to the frontend. Phase 6C: lets the user add a new
     /// WeChat account entirely from the UI without running
     /// `desktop-server wechat-login` on the CLI.
-    pending_wechat_logins:
-        Arc<RwLock<HashMap<String, Arc<Mutex<wechat_ilink::PendingLoginSlot>>>>>,
+    pending_wechat_logins: Arc<RwLock<HashMap<String, Arc<Mutex<wechat_ilink::PendingLoginSlot>>>>>,
     /// Running WeChat iLink long-poll monitors keyed by account_id.
     /// Each value holds the `CancellationToken` so we can stop a
     /// monitor when the user deletes that account via the HTTP API.
@@ -1497,7 +1494,8 @@ pub struct DesktopState {
     // --- Channel B: Official WeChat Customer Service (kefu) ---
     kefu_monitor: Arc<RwLock<Option<WeChatMonitorHandle>>>,
     kefu_callback_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<wechat_kefu::CallbackEvent>>>>,
-    kefu_pipeline_state: Arc<RwLock<Option<tokio::sync::watch::Receiver<wechat_kefu::PipelineState>>>>,
+    kefu_pipeline_state:
+        Arc<RwLock<Option<tokio::sync::watch::Receiver<wechat_kefu::PipelineState>>>>,
     kefu_pipeline_cancel: Arc<RwLock<Option<CancellationToken>>>,
 
     /// Server-level shutdown cancellation token. Injected by
@@ -2588,10 +2586,7 @@ impl DesktopState {
 
     // ── Session manipulation ────────────────────────────────────────
 
-    pub async fn delete_session(
-        &self,
-        session_id: &str,
-    ) -> Result<bool, DesktopStateError> {
+    pub async fn delete_session(&self, session_id: &str) -> Result<bool, DesktopStateError> {
         let removed = self
             .store
             .write()
@@ -2616,10 +2611,7 @@ impl DesktopState {
     /// mount, and after a few route switches users ended up with a wall
     /// of placeholder entries. See [`useAskSession`] (frontend) for the
     /// upstream fix.
-    pub async fn cleanup_empty_sessions(
-        &self,
-        except: Option<&str>,
-    ) -> Vec<String> {
+    pub async fn cleanup_empty_sessions(&self, except: Option<&str>) -> Vec<String> {
         let mut store = self.store.write().await;
         let ids_to_remove: Vec<String> = store
             .sessions
@@ -2669,10 +2661,7 @@ impl DesktopState {
         Ok(())
     }
 
-    pub async fn cancel_session(
-        &self,
-        session_id: &str,
-    ) -> Result<(), DesktopStateError> {
+    pub async fn cancel_session(&self, session_id: &str) -> Result<(), DesktopStateError> {
         // Signal the agentic loop to stop (if running).
         if let Some(token) = self.cancel_tokens.read().await.get(session_id) {
             token.cancel();
@@ -2864,10 +2853,7 @@ impl DesktopState {
 
     // ── Scheduled task extended CRUD ──────────────────────────────
 
-    pub async fn delete_scheduled_task(
-        &self,
-        task_id: &str,
-    ) -> Result<bool, DesktopStateError> {
+    pub async fn delete_scheduled_task(&self, task_id: &str) -> Result<bool, DesktopStateError> {
         let removed = self
             .scheduled_store
             .write()
@@ -2876,7 +2862,9 @@ impl DesktopState {
             .remove(task_id)
             .is_some();
         if !removed {
-            return Err(DesktopStateError::ScheduledTaskNotFound(task_id.to_string()));
+            return Err(DesktopStateError::ScheduledTaskNotFound(
+                task_id.to_string(),
+            ));
         }
         self.persist_scheduled().await;
         Ok(true)
@@ -2911,10 +2899,7 @@ impl DesktopState {
 
     // ── Dispatch item extended CRUD ───────────────────────────────
 
-    pub async fn delete_dispatch_item(
-        &self,
-        item_id: &str,
-    ) -> Result<bool, DesktopStateError> {
+    pub async fn delete_dispatch_item(&self, item_id: &str) -> Result<bool, DesktopStateError> {
         let removed = self
             .dispatch_store
             .write()
@@ -2995,16 +2980,16 @@ impl DesktopState {
         let settings_path = claw_dir.join("settings.json");
 
         // Read existing settings (if any) and merge permissionMode.
-        let mut json_obj: serde_json::Map<String, serde_json::Value> =
-            if settings_path.is_file() {
-                match fs::read_to_string(&settings_path) {
-                    Ok(content) => serde_json::from_str(&content)
-                        .unwrap_or_else(|_| serde_json::Map::new()),
-                    Err(_) => serde_json::Map::new(),
+        let mut json_obj: serde_json::Map<String, serde_json::Value> = if settings_path.is_file() {
+            match fs::read_to_string(&settings_path) {
+                Ok(content) => {
+                    serde_json::from_str(&content).unwrap_or_else(|_| serde_json::Map::new())
                 }
-            } else {
-                serde_json::Map::new()
-            };
+                Err(_) => serde_json::Map::new(),
+            }
+        } else {
+            serde_json::Map::new()
+        };
         json_obj.insert(
             "permissionMode".to_string(),
             serde_json::Value::String(normalized.to_string()),
@@ -3020,9 +3005,7 @@ impl DesktopState {
 
         let serialized = serde_json::to_string_pretty(&serde_json::Value::Object(json_obj))
             .map_err(|e| {
-                DesktopStateError::InvalidProvider(format!(
-                    "failed to serialize settings: {e}"
-                ))
+                DesktopStateError::InvalidProvider(format!("failed to serialize settings: {e}"))
             })?;
 
         fs::write(&settings_path, serialized).map_err(|e| {
@@ -3122,10 +3105,7 @@ impl DesktopState {
     ///
     /// Returns the list of `ManagedMcpTool` available for the LLM to call.
     /// On failure, logs to stderr and returns an empty list (graceful degrade).
-    pub async fn ensure_mcp_initialized(
-        &self,
-        project_path: &Path,
-    ) -> Vec<ManagedMcpTool> {
+    pub async fn ensure_mcp_initialized(&self, project_path: &Path) -> Vec<ManagedMcpTool> {
         // Fast path: already initialized.
         {
             let tools = self.mcp_tools.read().await;
@@ -3287,9 +3267,7 @@ impl DesktopState {
             let record = store
                 .sessions
                 .get(parent_session_id)
-                .ok_or_else(|| {
-                    DesktopStateError::SessionNotFound(parent_session_id.to_string())
-                })?;
+                .ok_or_else(|| DesktopStateError::SessionNotFound(parent_session_id.to_string()))?;
             // Clone the full RuntimeSession to preserve all fields.
             (record.session.clone(), record.metadata.clone())
         };
@@ -3358,9 +3336,13 @@ impl DesktopState {
 
     /// Truncate a string at a char boundary, never splitting a multi-byte char.
     fn safe_truncate(s: &str, max_bytes: usize) -> &str {
-        if s.len() <= max_bytes { return s; }
+        if s.len() <= max_bytes {
+            return s;
+        }
         let mut end = max_bytes;
-        while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
         &s[..end]
     }
 
@@ -3465,9 +3447,7 @@ impl DesktopState {
                 match wiki_store::read_raw_entry(&paths, raw_id) {
                     Ok((_entry, body)) => body,
                     Err(e) => {
-                        eprintln!(
-                            "[bind_source] inbox#{id} → raw#{raw_id} read failed: {e}"
-                        );
+                        eprintln!("[bind_source] inbox#{id} → raw#{raw_id} read failed: {e}");
                         return None;
                     }
                 }
@@ -3521,10 +3501,13 @@ impl DesktopState {
         mode: crate::ask_context::ContextMode,
     ) -> (String, Option<EnrichStatus>, Option<BgIngestPlan>) {
         // Quick check: does the message contain a URL?
-        let url = match message.split_whitespace()
+        let url = match message
+            .split_whitespace()
             .find(|w| w.starts_with("http://") || w.starts_with("https://"))
         {
-            Some(u) => u.trim_end_matches(|c: char| !c.is_ascii() || matches!(c, '.' | ',' | ')' | ']')).to_string(),
+            Some(u) => u
+                .trim_end_matches(|c: char| !c.is_ascii() || matches!(c, '.' | ',' | ')' | ']'))
+                .to_string(),
             None => return (message, None, None),
         };
 
@@ -3540,7 +3523,10 @@ impl DesktopState {
             force: false,
         })
         .await;
-        eprintln!("[enrich_url] simple fetch outcome: {}", simple_outcome.as_display());
+        eprintln!(
+            "[enrich_url] simple fetch outcome: {}",
+            simple_outcome.as_display()
+        );
 
         if let crate::url_ingest::IngestOutcome::Ingested {
             ref entry,
@@ -3567,8 +3553,7 @@ impl DesktopState {
             // than a fresh "saved" banner.
             let status = match decision {
                 crate::url_ingest::IngestDecision::RefreshedContent {
-                    previous_raw_id,
-                    ..
+                    previous_raw_id, ..
                 } => EnrichStatus::Reused {
                     title: title.clone(),
                     raw_id: entry.id,
@@ -3600,19 +3585,18 @@ impl DesktopState {
             // A1: same `format_enriched_source` delegation as the
             // fresh-ingest arm; keeps the FollowUp / SourceFirst /
             // Combine framings consistent across both paths.
-            let (enriched, title_for_status) =
-                match crate::url_ingest::load_reused_body(entry.id) {
-                    Some((reused_title, reused_body)) => (
-                        crate::ask_context::format_enriched_source(
-                            mode,
-                            &reused_title,
-                            Self::safe_truncate(&reused_body, 6000),
-                            &message,
-                        ),
-                        reused_title,
+            let (enriched, title_for_status) = match crate::url_ingest::load_reused_body(entry.id) {
+                Some((reused_title, reused_body)) => (
+                    crate::ask_context::format_enriched_source(
+                        mode,
+                        &reused_title,
+                        Self::safe_truncate(&reused_body, 6000),
+                        &message,
                     ),
-                    None => (message.clone(), entry.slug.clone()),
-                };
+                    reused_title,
+                ),
+                None => (message.clone(), entry.slug.clone()),
+            };
             return (
                 enriched,
                 Some(EnrichStatus::Reused {
@@ -3640,7 +3624,10 @@ impl DesktopState {
                 force: false,
             })
             .await;
-            eprintln!("[enrich_url] playwright outcome: {}", pw_outcome.as_display());
+            eprintln!(
+                "[enrich_url] playwright outcome: {}",
+                pw_outcome.as_display()
+            );
 
             match pw_outcome {
                 crate::url_ingest::IngestOutcome::Ingested {
@@ -3678,9 +3665,7 @@ impl DesktopState {
                     return (enriched, Some(status), None);
                 }
                 crate::url_ingest::IngestOutcome::ReusedExisting {
-                    entry,
-                    decision,
-                    ..
+                    entry, decision, ..
                 } => {
                     // Same pattern as the simple-fetch dedupe arm —
                     // load the prior body so the LLM still has
@@ -3743,11 +3728,7 @@ impl DesktopState {
                     );
                 }
                 crate::url_ingest::IngestOutcome::InvalidUrl { reason } => {
-                    return (
-                        message,
-                        Some(EnrichStatus::FetchFailed { reason }),
-                        None,
-                    );
+                    return (message, Some(EnrichStatus::FetchFailed { reason }), None);
                 }
                 // `IngestedInboxSuppressed` and `FallbackToText` can't
                 // happen on this path (no fallback requested, and a
@@ -3817,13 +3798,10 @@ impl DesktopState {
         // Resolve outside the read lock — wiki_store I/O is
         // synchronous but potentially slow (filesystem hit). If it
         // fails we log + degrade to pre-A2 behaviour.
-        let bound_body: Option<(
-            crate::ask_context::binding::SourceRef,
-            String,
-        )> = session_binding.as_ref().and_then(|b| {
-            Self::resolve_bound_source_body(&b.source)
-                .map(|body| (b.source.clone(), body))
-        });
+        let bound_body: Option<(crate::ask_context::binding::SourceRef, String)> =
+            session_binding.as_ref().and_then(|b| {
+                Self::resolve_bound_source_body(&b.source).map(|body| (b.source.clone(), body))
+            });
         if session_binding.is_some() && bound_body.is_none() {
             eprintln!(
                 "[bind_source] session {session_id} has binding but resolve failed; degrading to non-bound turn"
@@ -3834,12 +3812,12 @@ impl DesktopState {
         // keeps history + asks the LLM to dual-source). `FollowUp`
         // with a binding is upgraded to `SourceFirst` — the binding
         // is the whole point of this turn.
-        let effective_mode = if bound_body.is_some() && user_mode != crate::ask_context::ContextMode::Combine
-        {
-            crate::ask_context::ContextMode::SourceFirst
-        } else {
-            user_mode
-        };
+        let effective_mode =
+            if bound_body.is_some() && user_mode != crate::ask_context::ContextMode::Combine {
+                crate::ask_context::ContextMode::SourceFirst
+            } else {
+                user_mode
+            };
 
         // URL interception: fetch content for LLM context.
         // CRITICAL: only the original URL goes into session history.
@@ -3879,12 +3857,12 @@ impl DesktopState {
             if bound_body.is_none() {
                 match enrich_status.as_ref() {
                     Some(EnrichStatus::Success { title, raw_id })
-                    | Some(EnrichStatus::Reused {
-                        title, raw_id, ..
-                    }) => Some(crate::ask_context::binding::SourceRef::Raw {
-                        id: *raw_id,
-                        title: title.clone(),
-                    }),
+                    | Some(EnrichStatus::Reused { title, raw_id, .. }) => {
+                        Some(crate::ask_context::binding::SourceRef::Raw {
+                            id: *raw_id,
+                            title: title.clone(),
+                        })
+                    }
                     _ => None,
                 }
             } else {
@@ -3971,11 +3949,10 @@ impl DesktopState {
             } else {
                 None
             };
-            let history_turns_included =
-                crate::ask_context::history_turns_after_packaging(
-                    effective_mode,
-                    &record.session.messages,
-                );
+            let history_turns_included = crate::ask_context::history_turns_after_packaging(
+                effective_mode,
+                &record.session.messages,
+            );
             let mut basis = crate::ask_context::ContextBasis::new(
                 effective_mode,
                 history_turns_included,
@@ -4052,16 +4029,15 @@ impl DesktopState {
             let sender_clone = sender.clone();
             let session_id_clone = session_id.clone();
             tokio::spawn(async move {
-                let outcome =
-                    crate::url_ingest::ingest_url(crate::url_ingest::IngestRequest {
-                        url: &plan.url,
-                        origin_tag: plan.origin_tag.clone(),
-                        prefer_playwright: Some(true),
-                        fetch_timeout: std::time::Duration::from_secs(60),
-                        allow_text_fallback: None,
-                        force: false,
-                    })
-                    .await;
+                let outcome = crate::url_ingest::ingest_url(crate::url_ingest::IngestRequest {
+                    url: &plan.url,
+                    origin_tag: plan.origin_tag.clone(),
+                    prefer_playwright: Some(true),
+                    fetch_timeout: std::time::Duration::from_secs(60),
+                    allow_text_fallback: None,
+                    force: false,
+                })
+                .await;
                 eprintln!("[enrich_url:bg] {}", outcome.as_display());
 
                 // Map the orchestrator outcome onto the side-channel
@@ -4076,8 +4052,7 @@ impl DesktopState {
                         title,
                         decision:
                             crate::url_ingest::IngestDecision::RefreshedContent {
-                                previous_raw_id,
-                                ..
+                                previous_raw_id, ..
                             },
                         ..
                     } => Some(EnrichStatus::Reused {
@@ -4085,18 +4060,18 @@ impl DesktopState {
                         raw_id: entry.id,
                         reason: format!("refreshed:prev={previous_raw_id}"),
                     }),
-                    crate::url_ingest::IngestOutcome::Ingested {
-                        entry, title, ..
-                    } => Some(EnrichStatus::Success {
-                        title,
-                        raw_id: entry.id,
-                    }),
-                    crate::url_ingest::IngestOutcome::IngestedInboxSuppressed {
-                        entry, ..
-                    } => Some(EnrichStatus::Success {
-                        title: entry.slug.clone(),
-                        raw_id: entry.id,
-                    }),
+                    crate::url_ingest::IngestOutcome::Ingested { entry, title, .. } => {
+                        Some(EnrichStatus::Success {
+                            title,
+                            raw_id: entry.id,
+                        })
+                    }
+                    crate::url_ingest::IngestOutcome::IngestedInboxSuppressed { entry, .. } => {
+                        Some(EnrichStatus::Success {
+                            title: entry.slug.clone(),
+                            raw_id: entry.id,
+                        })
+                    }
                     crate::url_ingest::IngestOutcome::ReusedExisting {
                         entry, decision, ..
                     } => Some(EnrichStatus::Reused {
@@ -4112,10 +4087,9 @@ impl DesktopState {
                             reason: error.to_string(),
                         })
                     }
-                    crate::url_ingest::IngestOutcome::PrerequisiteMissing {
-                        dep,
-                        hint,
-                    } => Some(EnrichStatus::PrerequisiteMissing { dep, hint }),
+                    crate::url_ingest::IngestOutcome::PrerequisiteMissing { dep, hint } => {
+                        Some(EnrichStatus::PrerequisiteMissing { dep, hint })
+                    }
                     crate::url_ingest::IngestOutcome::InvalidUrl { .. }
                     | crate::url_ingest::IngestOutcome::FallbackToText { .. } => None,
                 };
@@ -4160,11 +4134,7 @@ impl DesktopState {
         //   2. .claude/settings.json `direct_api_key` field (per-project key)
         //   3. managed auth (codex-openai)
         //   4. managed auth (qwen-code)
-        let runtime_client = resolve_runtime_credentials(
-            self,
-            &PathBuf::from(&project_path),
-        )
-        .await;
+        let runtime_client = resolve_runtime_credentials(self, &PathBuf::from(&project_path)).await;
 
         let state = self.clone();
         let turn_executor = Arc::clone(&self.turn_executor);
@@ -4176,15 +4146,12 @@ impl DesktopState {
         // 儿、整段落下" instead of real streaming. The new path below
         // speaks OpenAI ChatCompletions with `stream: true` directly
         // and broadcasts a `TextDelta` per incoming chunk.
-        let openai_compat_client: Option<DesktopManagedAuthRuntimeClient> =
-            match &runtime_client {
-                Ok(c)
-                    if c.provider_kind == DesktopManagedAuthProviderKind::OpenAiCompat =>
-                {
-                    Some(c.clone())
-                }
-                _ => None,
-            };
+        let openai_compat_client: Option<DesktopManagedAuthRuntimeClient> = match &runtime_client {
+            Ok(c) if c.provider_kind == DesktopManagedAuthProviderKind::OpenAiCompat => {
+                Some(c.clone())
+            }
+            _ => None,
+        };
 
         if let Some(oai_client) = openai_compat_client {
             // Resolve a human-friendly model_label up-front so session
@@ -4210,14 +4177,13 @@ impl DesktopState {
             let bound_prefix_for_openai: Option<String> = bound_body
                 .as_ref()
                 .map(|(s, b)| crate::ask_context::binding::format_bound_source(s, b));
-            let system_prompt_text_openai =
-                build_system_prompt_for_openai_compat(
-                    &project_path,
-                    &bound_prefix_for_openai,
-                    marker_for_openai,
-                    has_enrichment.then(|| enriched.as_str()),
-                    auto_bound_source.as_ref(),
-                );
+            let system_prompt_text_openai = build_system_prompt_for_openai_compat(
+                &project_path,
+                &bound_prefix_for_openai,
+                marker_for_openai,
+                has_enrichment.then(|| enriched.as_str()),
+                auto_bound_source.as_ref(),
+            );
 
             let http_client = self.http_client.clone();
             let state = self.clone();
@@ -4248,9 +4214,8 @@ impl DesktopState {
 
                 // Flatten messages: existing history + the newly
                 // appended user message.
-                let mut msgs = openai_compat_streaming::messages_from_runtime_session(
-                    &session_for_stream,
-                );
+                let mut msgs =
+                    openai_compat_streaming::messages_from_runtime_session(&session_for_stream);
                 msgs.push(openai_compat_streaming::OpenAiChatMessage {
                     role: "user".to_string(),
                     content: user_message_text,
@@ -4263,17 +4228,13 @@ impl DesktopState {
                 // the lock this cycle, we'll bump on the next tick.
                 let state_for_tick = state.clone();
                 let session_id_for_tick = session_id_for_stream.clone();
-                let on_stream_tick: Arc<dyn Fn() + Send + Sync> =
-                    Arc::new(move || {
-                        if let Ok(mut store) = state_for_tick.store.try_write() {
-                            if let Some(record) =
-                                store.sessions.get_mut(&session_id_for_tick)
-                            {
-                                record.metadata.updated_at =
-                                    unix_timestamp_millis();
-                            }
+                let on_stream_tick: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                    if let Ok(mut store) = state_for_tick.store.try_write() {
+                        if let Some(record) = store.sessions.get_mut(&session_id_for_tick) {
+                            record.metadata.updated_at = unix_timestamp_millis();
                         }
-                    });
+                    }
+                });
 
                 let config = openai_compat_streaming::StreamingTurnConfig {
                     base_url: oai_client.base_url.clone(),
@@ -4345,8 +4306,7 @@ impl DesktopState {
                 let project_path_buf = PathBuf::from(&project_path);
                 let claude_md_discovery =
                     system_prompt::find_claude_md_with_source(&project_path_buf);
-                let workspace_skills =
-                    system_prompt::find_workspace_skills(&project_path_buf);
+                let workspace_skills = system_prompt::find_workspace_skills(&project_path_buf);
                 if !workspace_skills.is_empty() {
                     eprintln!(
                         "[skills] loaded {} workspace skill(s) from {}/.claude/skills/",
@@ -4354,12 +4314,13 @@ impl DesktopState {
                         project_path_buf.display()
                     );
                 }
-                let mut system_prompt_text = system_prompt::build_system_prompt_with_source_and_skills(
-                    &project_path_buf,
-                    &tool_specs,
-                    claude_md_discovery.as_ref(),
-                    &workspace_skills,
-                );
+                let mut system_prompt_text =
+                    system_prompt::build_system_prompt_with_source_and_skills(
+                        &project_path_buf,
+                        &tool_specs,
+                        claude_md_discovery.as_ref(),
+                        &workspace_skills,
+                    );
 
                 // v2 bugfix: Inject URL-fetched content into the managed-auth
                 // system prompt. Previously only the Err(no-auth) fallback
@@ -4382,9 +4343,9 @@ impl DesktopState {
                         source.display_kind(),
                         source.binding_key()
                     );
-                    system_prompt_text.push_str(
-                        &crate::ask_context::binding::format_bound_source(source, body),
-                    );
+                    system_prompt_text.push_str(&crate::ask_context::binding::format_bound_source(
+                        source, body,
+                    ));
                 }
                 //
                 // A1: insert the mode-specific boundary marker BEFORE the
@@ -4392,9 +4353,7 @@ impl DesktopState {
                 // reset instruction; for Combine it's the "结合历史与新素材"
                 // dual-sourcing instruction. FollowUp emits no marker, so
                 // the text is appended verbatim as before.
-                if let Some(marker) =
-                    crate::ask_context::boundary_marker_for(effective_mode)
-                {
+                if let Some(marker) = crate::ask_context::boundary_marker_for(effective_mode) {
                     system_prompt_text.push_str(marker);
                 }
                 if has_enrichment {
@@ -4527,17 +4486,13 @@ impl DesktopState {
                 // the lock this cycle, we'll bump on the next tick.
                 let tick_state = state.clone();
                 let tick_session_id = session_id.clone();
-                let on_stream_tick: Arc<dyn Fn() + Send + Sync> =
-                    Arc::new(move || {
-                        if let Ok(mut store) = tick_state.store.try_write() {
-                            if let Some(record) =
-                                store.sessions.get_mut(&tick_session_id)
-                            {
-                                record.metadata.updated_at =
-                                    unix_timestamp_millis();
-                            }
+                let on_stream_tick: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                    if let Ok(mut store) = tick_state.store.try_write() {
+                        if let Some(record) = store.sessions.get_mut(&tick_session_id) {
+                            record.metadata.updated_at = unix_timestamp_millis();
                         }
-                    });
+                    }
+                });
 
                 let config = agentic_loop::AgenticLoopConfig {
                     bridge_base_url,
@@ -4577,11 +4532,8 @@ impl DesktopState {
                     // runs. If try_write fails, the startup reconciliation
                     // pass (see with_executor) will reset any stuck
                     // session state on the next launch.
-                    let mut guard = SessionCleanupGuard::new(
-                        state.clone(),
-                        session_id.clone(),
-                        sender.clone(),
-                    );
+                    let mut guard =
+                        SessionCleanupGuard::new(state.clone(), session_id.clone(), sender.clone());
 
                     let result = agentic_loop::run_agentic_loop(
                         session_for_loop,
@@ -4613,8 +4565,7 @@ impl DesktopState {
                 // What we *can* do is prepend the mode-specific
                 // boundary marker to `url_context` so at least the
                 // system-prompt instruction propagates.
-                let marker_for_fallback =
-                    crate::ask_context::boundary_marker_for(effective_mode);
+                let marker_for_fallback = crate::ask_context::boundary_marker_for(effective_mode);
                 // A2: prepend the bound source (if resolved) to the
                 // fallback url_context so the vendored turn executor
                 // sees it too. Ordering matches the agentic path:
@@ -4653,9 +4604,7 @@ impl DesktopState {
                 // turn executor, `url_context` is the sole carrier of
                 // system-prompt-adjacent framing — without this append
                 // the fallback path would drop Grounded Mode silently.
-                let fallback_url_context = if bound_body.is_none()
-                    && auto_bound_source.is_some()
-                {
+                let fallback_url_context = if bound_body.is_none() && auto_bound_source.is_some() {
                     let rules = crate::ask_context::binding::grounding_instruction_block();
                     Some(match fallback_url_context {
                         Some(ctx) => format!("{ctx}{rules}"),
@@ -4674,11 +4623,8 @@ impl DesktopState {
                 let guard_session_id = session_id.clone();
                 let guard_sender = sender.clone();
                 tokio::spawn(async move {
-                    let mut guard = SessionCleanupGuard::new(
-                        guard_state,
-                        guard_session_id,
-                        guard_sender,
-                    );
+                    let mut guard =
+                        SessionCleanupGuard::new(guard_state, guard_session_id, guard_sender);
 
                     // Pass original message to turn executor (not enriched).
                     // Enriched content travels inside the request struct so
@@ -5128,9 +5074,7 @@ impl DesktopState {
                 let store = self.store.read().await;
                 if let Some(record) = store.sessions.get(session_id) {
                     let mut session = record.session.clone();
-                    session
-                        .push_message(error_message)
-                        .unwrap_or_default();
+                    session.push_message(error_message).unwrap_or_default();
                     (session, DEFAULT_MODEL_LABEL.to_string())
                 } else {
                     return;
@@ -5178,10 +5122,7 @@ impl DesktopState {
         session_id: &str,
         _session: RuntimeSession,
         previous_message_count: usize,
-        result: Result<
-            (ConversationMessage, Option<String>),
-            String,
-        >,
+        result: Result<(ConversationMessage, Option<String>), String>,
         sender: broadcast::Sender<DesktopSessionEvent>,
         model_label_hint: String,
     ) {
@@ -5195,15 +5136,11 @@ impl DesktopState {
         let (assistant_msg, upstream_model, error_text) = match result {
             Ok((msg, model)) => (Some(msg), model, None),
             Err(error) => {
-                eprintln!(
-                    "[openai-compat-stream] session={session_id} turn failed: {error}"
-                );
+                eprintln!("[openai-compat-stream] session={session_id} turn failed: {error}");
                 let err_msg = ConversationMessage {
                     role: runtime::MessageRole::Assistant,
                     blocks: vec![runtime::ContentBlock::Text {
-                        text: format!(
-                            "Desktop runtime couldn't stream this turn.\n\n{error}"
-                        ),
+                        text: format!("Desktop runtime couldn't stream this turn.\n\n{error}"),
                     }],
                     usage: None,
                 };
@@ -5565,10 +5502,7 @@ impl DesktopState {
     /// * `desktop-server` main at startup for each persisted account
     /// * The QR-login background task, once it observes a Confirmed
     ///   status, so the user can chat with the new bot immediately
-    pub async fn spawn_wechat_monitor(
-        &self,
-        account_id: &str,
-    ) -> Result<(), String> {
+    pub async fn spawn_wechat_monitor(&self, account_id: &str) -> Result<(), String> {
         use wechat_ilink::{
             account::load_account,
             desktop_handler::DesktopAgentHandler,
@@ -5585,9 +5519,7 @@ impl DesktopState {
 
         let data = load_account(account_id)
             .map_err(|e| format!("load_account({account_id}) failed: {e}"))?
-            .ok_or_else(|| {
-                format!("account {account_id} listed but file is missing")
-            })?;
+            .ok_or_else(|| format!("account {account_id} listed but file is missing"))?;
 
         let token = data
             .token
@@ -5604,8 +5536,7 @@ impl DesktopState {
         // shutdown cascades. Falls back to a root token when the server
         // didn't inject one (tests / standalone use).
         let cancel = self.monitor_cancel_token().await;
-        let (status_tx, status_rx) =
-            tokio::sync::watch::channel(MonitorStatus::default());
+        let (status_tx, status_rx) = tokio::sync::watch::channel(MonitorStatus::default());
 
         let project_path = self.wechat_default_project_path.read().await.clone();
 
@@ -5635,19 +5566,14 @@ impl DesktopState {
             cancel: cancel.clone(),
         };
 
-        eprintln!(
-            "[wechat] spawning monitor for account={account_id} (via DesktopState)"
-        );
+        eprintln!("[wechat] spawning monitor for account={account_id} (via DesktopState)");
         tokio::spawn(async move {
             run_monitor(config, status_tx).await;
         });
 
         self.wechat_monitors.write().await.insert(
             account_id.to_string(),
-            WeChatMonitorHandle {
-                cancel,
-                status_rx,
-            },
+            WeChatMonitorHandle { cancel, status_rx },
         );
         Ok(())
     }
@@ -5665,16 +5591,12 @@ impl DesktopState {
             }
         };
         if ids.is_empty() {
-            eprintln!(
-                "[wechat] no accounts persisted yet — skipping monitor startup"
-            );
+            eprintln!("[wechat] no accounts persisted yet — skipping monitor startup");
             return;
         }
         for account_id in ids {
             if let Err(e) = self.spawn_wechat_monitor(&account_id).await {
-                eprintln!(
-                    "[wechat] could not spawn monitor for {account_id}: {e}"
-                );
+                eprintln!("[wechat] could not spawn monitor for {account_id}: {e}");
             }
         }
     }
@@ -5691,9 +5613,7 @@ impl DesktopState {
     /// List all persisted WeChat accounts with a summary suitable for
     /// the settings UI. Combines on-disk account data with the
     /// in-memory monitor state to compute a rough connection status.
-    pub async fn list_wechat_accounts_summary(
-        &self,
-    ) -> Vec<WeChatAccountInfo> {
+    pub async fn list_wechat_accounts_summary(&self) -> Vec<WeChatAccountInfo> {
         let ids = match wechat_ilink::account::list_account_ids() {
             Ok(ids) => ids,
             Err(e) => {
@@ -5724,10 +5644,7 @@ impl DesktopState {
             };
             out.push(WeChatAccountInfo {
                 id: id.clone(),
-                display_name: data
-                    .user_id
-                    .clone()
-                    .unwrap_or_else(|| id.clone()),
+                display_name: data.user_id.clone().unwrap_or_else(|| id.clone()),
                 base_url: data
                     .base_url
                     .clone()
@@ -5767,17 +5684,11 @@ impl DesktopState {
     // Channel B: Official WeChat Customer Service (kefu)
     // ===================================================================
 
-    pub async fn save_kefu_config(
-        &self,
-        config: wechat_kefu::KefuConfig,
-    ) -> Result<(), String> {
-        wechat_kefu::save_config(&config)
-            .map_err(|e| format!("save_config failed: {e}"))
+    pub async fn save_kefu_config(&self, config: wechat_kefu::KefuConfig) -> Result<(), String> {
+        wechat_kefu::save_config(&config).map_err(|e| format!("save_config failed: {e}"))
     }
 
-    pub async fn load_kefu_config(
-        &self,
-    ) -> Result<Option<wechat_kefu::KefuConfig>, String> {
+    pub async fn load_kefu_config(&self) -> Result<Option<wechat_kefu::KefuConfig>, String> {
         wechat_kefu::load_config().map_err(|e| format!("load_config failed: {e}"))
     }
 
@@ -5852,11 +5763,8 @@ impl DesktopState {
         let wiki_paths = wiki_store::WikiPaths::resolve(&wiki_root);
 
         let handler: Arc<dyn wechat_kefu::monitor::KefuMessageHandler> = Arc::new(
-            wechat_kefu::desktop_handler::KefuDesktopHandler::new(
-                self.clone(),
-                project_path,
-            )
-            .with_wiki_paths(wiki_paths),
+            wechat_kefu::desktop_handler::KefuDesktopHandler::new(self.clone(), project_path)
+                .with_wiki_paths(wiki_paths),
         );
 
         let monitor_config = wechat_kefu::monitor::KefuMonitorConfig {
@@ -5893,36 +5801,24 @@ impl DesktopState {
 
         wechat_kefu::KefuStatus {
             configured: config.is_some(),
-            account_created: config
-                .as_ref()
-                .and_then(|c| c.open_kfid.as_ref())
-                .is_some(),
+            account_created: config.as_ref().and_then(|c| c.open_kfid.as_ref()).is_some(),
             monitor_running: monitor_status
                 .as_ref()
                 .map(|s: &wechat_ilink::MonitorStatus| s.running)
                 .unwrap_or(false),
-            last_poll_unix_ms: monitor_status
-                .as_ref()
-                .and_then(|s| s.last_poll_unix_ms),
-            last_inbound_unix_ms: monitor_status
-                .as_ref()
-                .and_then(|s| s.last_inbound_unix_ms),
+            last_poll_unix_ms: monitor_status.as_ref().and_then(|s| s.last_poll_unix_ms),
+            last_inbound_unix_ms: monitor_status.as_ref().and_then(|s| s.last_inbound_unix_ms),
             consecutive_failures: monitor_status
                 .as_ref()
                 .map(|s| s.consecutive_failures)
                 .unwrap_or(0),
-            last_error: monitor_status
-                .as_ref()
-                .and_then(|s| s.last_error.clone()),
+            last_error: monitor_status.as_ref().and_then(|s| s.last_error.clone()),
             capabilities: wechat_kefu::KefuCapabilities::current(),
         }
     }
 
     /// Forward a callback event to the kefu monitor.
-    pub async fn dispatch_kefu_callback(
-        &self,
-        event: wechat_kefu::CallbackEvent,
-    ) -> bool {
+    pub async fn dispatch_kefu_callback(&self, event: wechat_kefu::CallbackEvent) -> bool {
         let tx = self.kefu_callback_tx.read().await;
         if let Some(sender) = tx.as_ref() {
             sender.send(event).await.is_ok()
@@ -5962,8 +5858,7 @@ impl DesktopState {
 
         // Batch-C §3: shutdown-cascaded child token (see monitor_cancel_token docs).
         let cancel = self.monitor_cancel_token().await;
-        let (mut pipeline, state_rx) =
-            wechat_kefu::pipeline::KefuPipeline::new(cancel.clone());
+        let (mut pipeline, state_rx) = wechat_kefu::pipeline::KefuPipeline::new(cancel.clone());
 
         if skip_cf {
             if let Some(token) = cf_token {
@@ -6002,9 +5897,7 @@ impl DesktopState {
     }
 
     /// Get current pipeline state.
-    pub async fn kefu_pipeline_status(
-        &self,
-    ) -> Option<wechat_kefu::PipelineState> {
+    pub async fn kefu_pipeline_status(&self) -> Option<wechat_kefu::PipelineState> {
         let guard = self.kefu_pipeline_state.read().await;
         guard.as_ref().map(|rx| rx.borrow().clone())
     }
@@ -6092,15 +5985,9 @@ impl DesktopState {
                     tokio::spawn(async move {
                         let mut guard = slot.lock().await;
                         guard.state = match status {
-                            IlinkLoginStatus::Wait => {
-                                wechat_ilink::PendingLoginState::Waiting
-                            }
-                            IlinkLoginStatus::Scanned => {
-                                wechat_ilink::PendingLoginState::Scanned
-                            }
-                            IlinkLoginStatus::Expired => {
-                                wechat_ilink::PendingLoginState::Expired
-                            }
+                            IlinkLoginStatus::Wait => wechat_ilink::PendingLoginState::Waiting,
+                            IlinkLoginStatus::Scanned => wechat_ilink::PendingLoginState::Scanned,
+                            IlinkLoginStatus::Expired => wechat_ilink::PendingLoginState::Expired,
                             IlinkLoginStatus::Confirmed => {
                                 // Placeholder — the real Confirmed
                                 // with account_id is written after
@@ -6188,10 +6075,7 @@ impl DesktopState {
     ///
     /// On each call we also garbage-collect slots that have exceeded
     /// the TTL so the map doesn't grow without bound.
-    pub async fn wechat_login_status(
-        &self,
-        handle: &str,
-    ) -> Option<WeChatLoginStatusSnapshot> {
+    pub async fn wechat_login_status(&self, handle: &str) -> Option<WeChatLoginStatusSnapshot> {
         let slot = {
             let map = self.pending_wechat_logins.read().await;
             map.get(handle).cloned()
@@ -6348,8 +6232,7 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
     // S2 codex_broker will populate from the managed Codex pool). The
     // canonical resolver below collapses to the legacy env-var credential
     // chain until S2 lands.
-    let resolved_model =
-        resolve_model_alias(runtime_config.model().unwrap_or(DEFAULT_MODEL_ID));
+    let resolved_model = resolve_model_alias(runtime_config.model().unwrap_or(DEFAULT_MODEL_ID));
     let model_label = humanize_model_label(&resolved_model);
     let mut system_prompt = match load_system_prompt(
         &cwd,
@@ -6463,15 +6346,28 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
         'providers: for root in &roots {
             let providers_path = root.join(".claw").join("providers.json");
             let Ok(raw) = fs::read_to_string(&providers_path) else {
-                eprintln!("[runtime:providers] {}: not found, skipping", providers_path.display());
+                eprintln!(
+                    "[runtime:providers] {}: not found, skipping",
+                    providers_path.display()
+                );
                 continue;
             };
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
-                eprintln!("[runtime:providers] {}: parse error, skipping", providers_path.display());
+                eprintln!(
+                    "[runtime:providers] {}: parse error, skipping",
+                    providers_path.display()
+                );
                 continue;
             };
-            let Some(active_id) = parsed.get("active").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
-                eprintln!("[runtime:providers] {}: no active provider set", providers_path.display());
+            let Some(active_id) = parsed
+                .get("active")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            else {
+                eprintln!(
+                    "[runtime:providers] {}: no active provider set",
+                    providers_path.display()
+                );
                 continue;
             };
             let Some(entry) = parsed.get("providers").and_then(|p| p.get(active_id)) else {
@@ -6497,12 +6393,14 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
                         "[runtime:providers] using OpenAiCompat provider {active_id:?} \
                          base_url={base_url:?} model={model:?}"
                     );
-                    let oai_client = OpenAiCompatClient::new(
-                        api_key.to_string(),
-                        OpenAiCompatConfig::openai(),
-                    )
-                    .with_base_url(base_url.to_string());
-                    let effective_model = if model.is_empty() { "moonshot-v1-auto".to_string() } else { model.to_string() };
+                    let oai_client =
+                        OpenAiCompatClient::new(api_key.to_string(), OpenAiCompatConfig::openai())
+                            .with_base_url(base_url.to_string());
+                    let effective_model = if model.is_empty() {
+                        "moonshot-v1-auto".to_string()
+                    } else {
+                        model.to_string()
+                    };
                     result = Some((ProviderClient::OpenAi(oai_client), effective_model));
                     break 'providers;
                 }
@@ -6516,11 +6414,14 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
                         "[runtime:providers] using Anthropic provider {active_id:?} \
                          base_url={effective_base:?} model={model:?}"
                     );
-                    let mut client = AnthropicClient::from_auth(
-                        AuthSource::ApiKey(api_key.to_string()),
-                    );
+                    let mut client =
+                        AnthropicClient::from_auth(AuthSource::ApiKey(api_key.to_string()));
                     client = client.with_base_url(effective_base.to_string());
-                    let effective_model = if model.is_empty() { "claude-sonnet-4-5".to_string() } else { model.to_string() };
+                    let effective_model = if model.is_empty() {
+                        "claude-sonnet-4-5".to_string()
+                    } else {
+                        model.to_string()
+                    };
                     result = Some((ProviderClient::Anthropic(client), effective_model));
                     break 'providers;
                 }
@@ -6538,41 +6439,57 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
     // Step 2: if providers.json gave us a client, use it directly.
     // Otherwise fall through to the optional private-cloud broker and
     // finally to the default auth chain.
-    let (default_auth, client_override, resolved_model) = if let Some((provider_client, provider_model)) = providers_override {
-        eprintln!("[runtime] using providers.json override for this turn (model={provider_model:?})");
-        (None, Some(provider_client), provider_model)
-    } else {
-        #[cfg(feature = "private-cloud")]
-        {
-            match codex_broker::global() {
-                Some(broker) => match broker.build_provider_client() {
-                    Ok(client) => {
-                        eprintln!(
+    let (default_auth, client_override, resolved_model) =
+        if let Some((provider_client, provider_model)) = providers_override {
+            eprintln!(
+                "[runtime] using providers.json override for this turn (model={provider_model:?})"
+            );
+            (None, Some(provider_client), provider_model)
+        } else {
+            #[cfg(feature = "private-cloud")]
+            {
+                match codex_broker::global() {
+                    Some(broker) => match broker.build_provider_client() {
+                        Ok(client) => {
+                            eprintln!(
                             "[runtime] using private-cloud broker for turn (model={resolved_model})"
                         );
-                        (None, Some(client), resolved_model)
-                    }
-                    Err(err) => {
-                        eprintln!(
-                            "[runtime] private-cloud broker has no usable account ({err}); \
+                            (None, Some(client), resolved_model)
+                        }
+                        Err(err) => {
+                            eprintln!(
+                                "[runtime] private-cloud broker has no usable account ({err}); \
                              falling back to env-var credential chain"
-                        );
-                        match default_auth_source(&resolved_model, &runtime_config) {
-                            Ok(auth) => (auth, None, resolved_model),
-                            Err(error) => {
-                                return fallback_turn_result(
-                                    session,
-                                    &request.message,
-                                    model_label.clone(),
-                                    format!(
-                                        "failed to resolve model authentication: {error}"
-                                    ),
-                                )
+                            );
+                            match default_auth_source(&resolved_model, &runtime_config) {
+                                Ok(auth) => (auth, None, resolved_model),
+                                Err(error) => {
+                                    return fallback_turn_result(
+                                        session,
+                                        &request.message,
+                                        model_label.clone(),
+                                        format!("failed to resolve model authentication: {error}"),
+                                    )
+                                }
                             }
                         }
-                    }
-                },
-                None => match default_auth_source(&resolved_model, &runtime_config) {
+                    },
+                    None => match default_auth_source(&resolved_model, &runtime_config) {
+                        Ok(auth) => (auth, None, resolved_model),
+                        Err(error) => {
+                            return fallback_turn_result(
+                                session,
+                                &request.message,
+                                model_label.clone(),
+                                format!("failed to resolve model authentication: {error}"),
+                            )
+                        }
+                    },
+                }
+            }
+            #[cfg(not(feature = "private-cloud"))]
+            {
+                match default_auth_source(&resolved_model, &runtime_config) {
                     Ok(auth) => (auth, None, resolved_model),
                     Err(error) => {
                         return fallback_turn_result(
@@ -6582,24 +6499,9 @@ fn execute_live_turn(session: RuntimeSession, request: DesktopTurnRequest) -> De
                             format!("failed to resolve model authentication: {error}"),
                         )
                     }
-                },
-            }
-        }
-        #[cfg(not(feature = "private-cloud"))]
-        {
-            match default_auth_source(&resolved_model, &runtime_config) {
-                Ok(auth) => (auth, None, resolved_model),
-                Err(error) => {
-                    return fallback_turn_result(
-                        session,
-                        &request.message,
-                        model_label.clone(),
-                        format!("failed to resolve model authentication: {error}"),
-                    )
                 }
             }
-        }
-    };
+        };
 
     // When using an OpenAI-compat provider (Kimi, DeepSeek, etc.),
     // strip tools from the request. These providers have varying
@@ -6852,16 +6754,17 @@ async fn resolve_runtime_credentials(
         if !providers_path.is_file() {
             continue;
         }
-        let Ok(raw) = fs::read_to_string(&providers_path) else { continue };
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+        let Ok(raw) = fs::read_to_string(&providers_path) else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
         let active_id = parsed.get("active").and_then(|v| v.as_str()).unwrap_or("");
         if active_id.is_empty() {
             continue;
         }
-        let Some(entry) = parsed
-            .get("providers")
-            .and_then(|p| p.get(active_id))
-        else {
+        let Some(entry) = parsed.get("providers").and_then(|p| p.get(active_id)) else {
             continue;
         };
         let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
@@ -6893,9 +6796,7 @@ async fn resolve_runtime_credentials(
             .unwrap_or(default_base)
             .to_string();
         if base_url.is_empty() {
-            eprintln!(
-                "[providers] skipping {active_id:?}: openai_compat requires base_url"
-            );
+            eprintln!("[providers] skipping {active_id:?}: openai_compat requires base_url");
             continue;
         }
         let model = entry
@@ -6950,9 +6851,7 @@ fn build_provider_client_from_entry(
             if entry.api_key.trim().is_empty() {
                 return Err("anthropic provider has empty api_key".to_string());
             }
-            let mut client = AnthropicClient::from_auth(AuthSource::ApiKey(
-                entry.api_key.clone(),
-            ));
+            let mut client = AnthropicClient::from_auth(AuthSource::ApiKey(entry.api_key.clone()));
             let configured_base = entry.effective_base_url();
             if !configured_base.is_empty() {
                 client = client.with_base_url(configured_base);
@@ -6967,11 +6866,9 @@ fn build_provider_client_from_entry(
             if entry.api_key.trim().is_empty() {
                 return Err("openai_compat provider has empty api_key".to_string());
             }
-            let client = OpenAiCompatClient::new(
-                entry.api_key.clone(),
-                OpenAiCompatConfig::openai(),
-            )
-            .with_base_url(base_url);
+            let client =
+                OpenAiCompatClient::new(entry.api_key.clone(), OpenAiCompatConfig::openai())
+                    .with_base_url(base_url);
             Ok(ProviderClient::OpenAi(client))
         }
     }
@@ -6985,9 +6882,7 @@ pub struct ProviderProbeResult {
     pub model_echo: Option<String>,
 }
 
-pub async fn probe_provider_entry(
-    entry: &providers_config::ProviderEntry,
-) -> ProviderProbeResult {
+pub async fn probe_provider_entry(entry: &providers_config::ProviderEntry) -> ProviderProbeResult {
     let started = std::time::Instant::now();
     let client = match build_provider_client_from_entry(entry) {
         Ok(c) => c,
@@ -7479,9 +7374,7 @@ fn build_system_prompt_for_openai_compat(
         parts.push(content.to_string());
     }
     if bound_prefix.is_none() && auto_bound_source.is_some() {
-        parts.push(
-            crate::ask_context::binding::grounding_instruction_block().to_string(),
-        );
+        parts.push(crate::ask_context::binding::grounding_instruction_block().to_string());
     }
     parts.join("\n\n")
 }
@@ -8280,13 +8173,17 @@ fn is_default_session_title(title: &str) -> bool {
     // and `" new conversation"` is 17 ASCII bytes, so both endpoints
     // land on UTF-8 char boundaries — anything in the middle (ASCII
     // or multi-byte) is safe to re-scan as chars.
-    let middle_bytes = match t.len().checked_sub("Ask ".len() + " new conversation".len())
+    let middle_bytes = match t
+        .len()
+        .checked_sub("Ask ".len() + " new conversation".len())
     {
         Some(n) if n > 0 => &t["Ask ".len()..t.len() - " new conversation".len()],
         _ => return false,
     };
     let mut chars = middle_bytes.chars();
-    let Some(sep) = chars.next() else { return false };
+    let Some(sep) = chars.next() else {
+        return false;
+    };
     if chars.next().is_some() {
         return false;
     }
@@ -8359,8 +8256,8 @@ mod tests {
         AppendDesktopMessageRequest, CreateDesktopDispatchItemRequest,
         CreateDesktopScheduledTaskRequest, CreateDesktopSessionRequest, DesktopDispatchPriority,
         DesktopDispatchStatus, DesktopLifecycleStatus, DesktopPersistence,
-        DesktopScheduledRunStatus, DesktopScheduledSchedule,
-        DesktopSessionBucket, DesktopState, DesktopStateError, DesktopTurnState,
+        DesktopScheduledRunStatus, DesktopScheduledSchedule, DesktopSessionBucket, DesktopState,
+        DesktopStateError, DesktopTurnState,
     };
     use tokio::time::{sleep, Duration};
 
@@ -8768,8 +8665,7 @@ mod tests {
             json.contains("\"foo-bar\""),
             "source.slug must round-trip: {json}"
         );
-        let decoded: super::SessionMetadata =
-            serde_json::from_str(&json).expect("decode");
+        let decoded: super::SessionMetadata = serde_json::from_str(&json).expect("decode");
         assert_eq!(decoded.source_binding, meta.source_binding);
     }
 
@@ -8851,13 +8747,19 @@ mod tests {
         // Both camelCase forms.
         for mode in ["default", "acceptEdits", "bypassPermissions", "plan"] {
             let result = state.set_permission_mode(&path_str, mode).await;
-            assert!(result.is_ok(), "camelCase {mode} should be accepted: {result:?}");
+            assert!(
+                result.is_ok(),
+                "camelCase {mode} should be accepted: {result:?}"
+            );
         }
 
         // Both snake_case forms (the new compatibility additions).
         for mode in ["accept_edits", "bypass_permissions"] {
             let result = state.set_permission_mode(&path_str, mode).await;
-            assert!(result.is_ok(), "snake_case {mode} should be accepted: {result:?}");
+            assert!(
+                result.is_ok(),
+                "snake_case {mode} should be accepted: {result:?}"
+            );
         }
 
         // Invalid still rejected.
@@ -8869,12 +8771,8 @@ mod tests {
 
     #[tokio::test]
     async fn session_lifecycle_defaults_and_transitions() {
-        let state = DesktopState::with_executor(
-            Arc::new(super::MockTurnExecutor),
-            None,
-            None,
-            None,
-        );
+        let state =
+            DesktopState::with_executor(Arc::new(super::MockTurnExecutor), None, None, None);
 
         // New sessions start as Todo, unflagged.
         let created = state
@@ -8934,30 +8832,20 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_call_before_init_returns_error() {
-        let state = DesktopState::with_executor(
-            Arc::new(super::MockTurnExecutor),
-            None,
-            None,
-            None,
-        );
+        let state =
+            DesktopState::with_executor(Arc::new(super::MockTurnExecutor), None, None, None);
         // Manager is None until ensure_mcp_initialized runs.
         let result = state
             .mcp_call_tool("mcp__foo__bar", serde_json::json!({}))
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("MCP manager not initialized"));
+        assert!(result.unwrap_err().contains("MCP manager not initialized"));
     }
 
     #[tokio::test]
     async fn mcp_init_with_empty_config_is_idempotent() {
-        let state = DesktopState::with_executor(
-            Arc::new(super::MockTurnExecutor),
-            None,
-            None,
-            None,
-        );
+        let state =
+            DesktopState::with_executor(Arc::new(super::MockTurnExecutor), None, None, None);
         // Use a temp dir with no .claw/settings.json → empty config.
         let tmp = std::env::temp_dir().join(format!(
             "mcp-empty-{}-{}",
@@ -9074,7 +8962,9 @@ mod tests {
         for i in 0..MESSAGE_COUNT {
             // Record the message append directly (bypass agentic loop
             // because it requires OAuth). Test raw store + persist path.
-            let message = format!("bench message {i} — lorem ipsum dolor sit amet consectetur adipiscing elit");
+            let message = format!(
+                "bench message {i} — lorem ipsum dolor sit amet consectetur adipiscing elit"
+            );
 
             let t_append = Instant::now();
             {
@@ -9274,7 +9164,10 @@ mod tests {
         let deleted = state.cleanup_empty_sessions(Some(&a.id)).await;
 
         assert!(!deleted.contains(&a.id), "except id must be preserved");
-        assert!(deleted.contains(&b.id), "other empty session should be deleted");
+        assert!(
+            deleted.contains(&b.id),
+            "other empty session should be deleted"
+        );
         let remaining: std::collections::HashSet<String> = state
             .list_sessions()
             .await
@@ -9332,12 +9225,7 @@ mod tests {
             SessionSourceBinding, SourceRef,
         };
 
-        let state = DesktopState::with_executor(
-            Arc::new(MockTurnExecutor),
-            None,
-            None,
-            None,
-        );
+        let state = DesktopState::with_executor(Arc::new(MockTurnExecutor), None, None, None);
         let created = state
             .create_session(CreateDesktopSessionRequest {
                 title: Some("bind test".into()),
@@ -9363,25 +9251,13 @@ mod tests {
             .source_binding
             .as_ref()
             .expect("binding populated after bind");
-        assert!(matches!(
-            binding.source,
-            SourceRef::Raw { id: 7, .. }
-        ));
+        assert!(matches!(binding.source, SourceRef::Raw { id: 7, .. }));
         assert_eq!(binding.binding_reason.as_deref(), Some("test"));
 
         // get_session reflects the binding — persistence check.
-        let detail = state
-            .get_session(&created.id)
-            .await
-            .expect("get works");
-        let persisted = detail
-            .source_binding
-            .as_ref()
-            .expect("persisted binding");
-        assert!(matches!(
-            persisted.source,
-            SourceRef::Raw { id: 7, .. }
-        ));
+        let detail = state.get_session(&created.id).await.expect("get works");
+        let persisted = detail.source_binding.as_ref().expect("persisted binding");
+        assert!(matches!(persisted.source, SourceRef::Raw { id: 7, .. }));
 
         // Second bind replaces the first — no stack of bindings.
         let rebound = state
@@ -9454,18 +9330,16 @@ mod tests {
     #[test]
     fn absorb_progress_serializes_with_flat_fields_and_snake_case_type() {
         use super::DesktopSessionEvent;
-        let ev = DesktopSessionEvent::AbsorbProgress(
-            wiki_maintainer::AbsorbProgressEvent {
-                task_id: "absorb-1713072000-a3f2".to_string(),
-                processed: 2,
-                total: 5,
-                current_entry_id: 3,
-                action: "create".to_string(),
-                page_slug: Some("transformer-architecture".to_string()),
-                page_title: Some("Transformer 架构".to_string()),
-                error: None,
-            },
-        );
+        let ev = DesktopSessionEvent::AbsorbProgress(wiki_maintainer::AbsorbProgressEvent {
+            task_id: "absorb-1713072000-a3f2".to_string(),
+            processed: 2,
+            total: 5,
+            current_entry_id: 3,
+            action: "create".to_string(),
+            page_slug: Some("transformer-architecture".to_string()),
+            page_title: Some("Transformer 架构".to_string()),
+            error: None,
+        });
         let json = serde_json::to_value(&ev).unwrap();
         // The `#[serde(tag = "type", rename_all = "snake_case")]` on
         // the enum + newtype-variant flattening should produce a flat
@@ -9505,18 +9379,16 @@ mod tests {
     #[test]
     fn absorb_progress_round_trip_via_serde_json() {
         use super::DesktopSessionEvent;
-        let original = DesktopSessionEvent::AbsorbProgress(
-            wiki_maintainer::AbsorbProgressEvent {
-                task_id: "absorb-roundtrip".to_string(),
-                processed: 0,
-                total: 0,
-                current_entry_id: 0,
-                action: "skip".to_string(),
-                page_slug: None,
-                page_title: None,
-                error: Some("无法读取 raw entry: EOF".to_string()),
-            },
-        );
+        let original = DesktopSessionEvent::AbsorbProgress(wiki_maintainer::AbsorbProgressEvent {
+            task_id: "absorb-roundtrip".to_string(),
+            processed: 0,
+            total: 0,
+            current_entry_id: 0,
+            action: "skip".to_string(),
+            page_slug: None,
+            page_title: None,
+            error: Some("无法读取 raw entry: EOF".to_string()),
+        });
         let json = serde_json::to_string(&original).unwrap();
         let parsed: DesktopSessionEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, original);
@@ -9541,18 +9413,16 @@ mod tests {
     #[test]
     fn event_name_returns_canonical_snake_case_for_new_variants() {
         use super::DesktopSessionEvent;
-        let progress = DesktopSessionEvent::AbsorbProgress(
-            wiki_maintainer::AbsorbProgressEvent {
-                task_id: "absorb-event-name".to_string(),
-                processed: 0,
-                total: 0,
-                current_entry_id: 0,
-                action: "create".to_string(),
-                page_slug: None,
-                page_title: None,
-                error: None,
-            },
-        );
+        let progress = DesktopSessionEvent::AbsorbProgress(wiki_maintainer::AbsorbProgressEvent {
+            task_id: "absorb-event-name".to_string(),
+            processed: 0,
+            total: 0,
+            current_entry_id: 0,
+            action: "create".to_string(),
+            page_slug: None,
+            page_title: None,
+            error: None,
+        });
         let complete = DesktopSessionEvent::AbsorbComplete {
             task_id: "absorb-1-a".to_string(),
             created: 0,

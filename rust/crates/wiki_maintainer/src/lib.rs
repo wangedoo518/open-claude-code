@@ -32,6 +32,7 @@ pub mod prompt;
 use api::{MessageRequest, MessageResponse, OutputContentBlock};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -119,10 +120,7 @@ pub type Result<T> = std::result::Result<T, MaintainerError>;
 /// into `MaintainerError::Broker(String)`.
 #[async_trait]
 pub trait BrokerSender: Send + Sync {
-    async fn chat_completion(
-        &self,
-        request: MessageRequest,
-    ) -> Result<MessageResponse>;
+    async fn chat_completion(&self, request: MessageRequest) -> Result<MessageResponse>;
 }
 
 /// Produce a `WikiPageProposal` for a single raw entry.
@@ -143,9 +141,8 @@ pub async fn propose_for_raw_entry(
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<WikiPageProposal> {
     // Step 1 — fetch the raw entry and its body text.
-    let (entry, body) = wiki_store::read_raw_entry(paths, raw_id).map_err(|e| {
-        MaintainerError::RawNotAvailable(format!("raw_id={raw_id}: {e}"))
-    })?;
+    let (entry, body) = wiki_store::read_raw_entry(paths, raw_id)
+        .map_err(|e| MaintainerError::RawNotAvailable(format!("raw_id={raw_id}: {e}")))?;
 
     // Step 2 — build the prompt.
     let request = prompt::build_concept_request(&entry, &body);
@@ -155,9 +152,7 @@ pub async fn propose_for_raw_entry(
 
     // Step 4 — pull the first assistant text block from the response.
     let raw_json = extract_first_text(&response).ok_or_else(|| {
-        MaintainerError::InvalidProposal(
-            "LLM response contained no text block".to_string(),
-        )
+        MaintainerError::InvalidProposal("LLM response contained no text block".to_string())
     })?;
 
     // Step 5 — parse as JSON and validate.
@@ -200,80 +195,169 @@ fn extract_first_text(response: &MessageResponse) -> Option<String> {
 fn parse_proposal(raw: &str, expected_raw_id: u32) -> Result<WikiPageProposal> {
     let payload = strip_code_fences(raw);
 
-    #[derive(Debug, Deserialize)]
-    struct Raw {
-        slug: String,
-        title: String,
-        summary: String,
-        body: String,
-        #[serde(default)]
-        source_raw_id: Option<u32>,
-        #[serde(default)]
-        conflict_with: Vec<String>,
-        #[serde(default)]
-        conflict_reason: Option<String>,
-    }
-
-    let parsed: Raw = serde_json::from_str(payload).map_err(|e| {
-        MaintainerError::BadJson {
-            reason: e.to_string(),
-            preview: payload.chars().take(512).collect(),
-        }
+    let parsed = parse_json_value(payload).map_err(|e| MaintainerError::BadJson {
+        reason: e.to_string(),
+        preview: payload.chars().take(512).collect(),
     })?;
 
-    if parsed.slug.trim().is_empty() {
-        return Err(MaintainerError::InvalidProposal(
-            "slug is empty".to_string(),
-        ));
-    }
-    if parsed.title.trim().is_empty() {
+    let slug = proposal_slug(&parsed, expected_raw_id);
+    let title = string_field(&parsed, "title");
+    let mut summary = string_field(&parsed, "summary");
+    let mut body = string_field(&parsed, "body");
+
+    if title.is_empty() {
         return Err(MaintainerError::InvalidProposal(
             "title is empty".to_string(),
         ));
     }
-    if parsed.body.trim().is_empty() {
-        return Err(MaintainerError::InvalidProposal(
-            "body is empty".to_string(),
-        ));
+    // Some OpenAI-compatible providers occasionally emit JSON null
+    // for low-confidence strings. Keep identity fields strict, but
+    // recover summary/body into a minimal useful proposal.
+    if summary.is_empty() {
+        summary = format!("uncertain: {title}");
     }
-    // Slug must be kebab-case ASCII to match wiki_store::slugify
-    // output. We don't sanitize here — the LLM is told to return a
-    // pre-sanitized slug, and invalid shapes are surfaced loudly.
-    if !parsed
-        .slug
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
+    if body.is_empty() {
+        body = summary.clone();
+    }
+    // Slug is recoverable: OpenAI-compatible providers sometimes omit
+    // it or emit null. Treat it as a filename derived from title/body,
+    // then keep the final value aligned with wiki_store validation.
+    if !is_valid_proposal_slug(&slug) {
         return Err(MaintainerError::InvalidProposal(format!(
             "slug contains invalid chars: {}",
-            parsed.slug
+            slug
         )));
     }
 
     Ok(WikiPageProposal {
-        slug: parsed.slug,
-        title: parsed.title,
-        summary: parsed.summary,
-        body: parsed.body,
+        slug,
+        title,
+        summary,
+        body,
         // Prefer the echoed source id, fall back to the caller's.
-        source_raw_id: parsed.source_raw_id.unwrap_or(expected_raw_id),
-        conflict_with: parsed
-            .conflict_with
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        conflict_reason: parsed
-            .conflict_reason
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
+        source_raw_id: source_raw_id_field(&parsed).unwrap_or(expected_raw_id),
+        conflict_with: string_list_field(&parsed, "conflict_with"),
+        conflict_reason: optional_string_field(&parsed, "conflict_reason"),
     })
 }
 
-/// Strip any leading/trailing ``` or ```json fences from an LLM
-/// response. Many models wrap their JSON in a code fence even when
-/// asked not to. This is a lossless text transform — if the payload
-/// has no fences it returns unchanged.
+/// Parse JSON from the model response. If the provider wraps the
+/// object in short prose, retry with the first object-shaped slice.
+fn parse_json_value(payload: &str) -> std::result::Result<Value, serde_json::Error> {
+    serde_json::from_str(payload).or_else(|_| {
+        if let Some(candidate) = json_object_candidate(payload) {
+            serde_json::from_str(candidate)
+        } else {
+            serde_json::from_str(payload)
+        }
+    })
+}
+
+fn json_object_candidate(payload: &str) -> Option<&str> {
+    let start = payload.find('{')?;
+    let end = payload.rfind('}')?;
+    (start <= end).then_some(&payload[start..=end])
+}
+
+fn proposal_slug(value: &Value, expected_raw_id: u32) -> String {
+    if let Some(slug) = normalize_explicit_proposal_slug(&string_field(value, "slug")) {
+        return slug;
+    }
+
+    for field in ["title", "summary", "body"] {
+        if let Some(slug) = slugify_proposal_text(&string_field(value, field)) {
+            return slug;
+        }
+    }
+
+    format!("raw-{expected_raw_id}")
+}
+
+fn normalize_explicit_proposal_slug(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if is_valid_proposal_slug(trimmed) {
+        return Some(trimmed.to_string());
+    }
+
+    let slug = wiki_store::slugify(trimmed);
+    if is_valid_proposal_slug(&slug) {
+        Some(slug)
+    } else {
+        None
+    }
+}
+
+fn slugify_proposal_text(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let slug = wiki_store::slugify(trimmed);
+    if is_valid_proposal_slug(&slug) {
+        Some(slug)
+    } else {
+        None
+    }
+}
+
+fn is_valid_proposal_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug.len() <= 64
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+fn string_field(value: &Value, field: &str) -> String {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn optional_string_field(value: &Value, field: &str) -> Option<String> {
+    let value = string_field(value, field);
+    (!value.is_empty()).then_some(value)
+}
+
+fn string_list_field(value: &Value, field: &str) -> Vec<String> {
+    match value.get(field) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+        Some(Value::String(item)) => {
+            let item = item.trim();
+            if item.is_empty() {
+                Vec::new()
+            } else {
+                vec![item.to_string()]
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn source_raw_id_field(value: &Value) -> Option<u32> {
+    match value.get("source_raw_id") {
+        Some(Value::Number(number)) => number.as_u64().and_then(|n| u32::try_from(n).ok()),
+        Some(Value::String(text)) => text.trim().parse::<u32>().ok(),
+        _ => None,
+    }
+}
+
+/// Strip any leading/trailing ``` or ```json fences from an LLM response.
 fn strip_code_fences(raw: &str) -> &str {
     let mut payload = raw.trim();
     // Leading ```json or ```
@@ -430,18 +514,13 @@ pub async fn create_new(
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<MaintainOutcome> {
     // Step 1: locate the inbox entry + its raw_id.
-    let entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
-    let entry = entries
-        .iter()
-        .find(|e| e.id == inbox_id)
-        .ok_or_else(|| {
-            MaintainerError::RawNotAvailable(format!("inbox entry not found: {inbox_id}"))
-        })?;
+    let entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let entry = entries.iter().find(|e| e.id == inbox_id).ok_or_else(|| {
+        MaintainerError::RawNotAvailable(format!("inbox entry not found: {inbox_id}"))
+    })?;
     let raw_id = entry.source_raw_id.ok_or_else(|| {
-        MaintainerError::InvalidProposal(format!(
-            "inbox entry {inbox_id} has no source_raw_id"
-        ))
+        MaintainerError::InvalidProposal(format!("inbox entry {inbox_id} has no source_raw_id"))
     })?;
 
     // Step 2: LLM proposal.
@@ -499,9 +578,7 @@ pub async fn create_new(
                 slug: proposal.slug.clone(),
                 title: Some(proposal.title.clone()),
             }],
-            display_title: wiki_store::provenance::display_title_wiki_page_applied(
-                &proposal.slug,
-            ),
+            display_title: wiki_store::provenance::display_title_wiki_page_applied(&proposal.slug),
             metadata: serde_json::json!({
                 "path": "create_new",
                 "title": proposal.title,
@@ -533,18 +610,13 @@ pub fn update_existing(
     target_page_slug: &str,
 ) -> Result<MaintainOutcome> {
     // Step 1: read the inbox entry (for source_raw_id) + raw body.
-    let entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
-    let entry = entries
-        .iter()
-        .find(|e| e.id == inbox_id)
-        .ok_or_else(|| {
-            MaintainerError::RawNotAvailable(format!("inbox entry not found: {inbox_id}"))
-        })?;
+    let entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let entry = entries.iter().find(|e| e.id == inbox_id).ok_or_else(|| {
+        MaintainerError::RawNotAvailable(format!("inbox entry not found: {inbox_id}"))
+    })?;
     let raw_id = entry.source_raw_id.ok_or_else(|| {
-        MaintainerError::InvalidProposal(format!(
-            "inbox entry {inbox_id} has no source_raw_id"
-        ))
+        MaintainerError::InvalidProposal(format!("inbox entry {inbox_id} has no source_raw_id"))
     })?;
 
     let (_raw_entry, raw_body) = wiki_store::read_raw_entry(paths, raw_id)
@@ -553,10 +625,10 @@ pub fn update_existing(
     // Step 2: load the target page (summary + body). Error propagates
     // if the slug doesn't exist — it's a user-controlled input and the
     // handler will surface the 404 equivalent.
-    let (summary, existing_body) = wiki_store::read_wiki_page(paths, target_page_slug)
-        .map_err(|e| MaintainerError::Store(format!(
-            "target page `{target_page_slug}` not found: {e}"
-        )))?;
+    let (summary, existing_body) =
+        wiki_store::read_wiki_page(paths, target_page_slug).map_err(|e| {
+            MaintainerError::Store(format!("target page `{target_page_slug}` not found: {e}"))
+        })?;
 
     // Step 3: append strategy — dated heading + raw body under it.
     // The date is ISO `YYYY-MM-DD` per the existing log format.
@@ -657,8 +729,8 @@ pub fn reject(
 ) -> Result<MaintainOutcome> {
     // Step 1: ensure the inbox entry exists so we fail fast if the
     // id is stale, rather than appending a log entry for a ghost.
-    let entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
     let entry_title = entries
         .iter()
         .find(|e| e.id == inbox_id)
@@ -698,9 +770,7 @@ pub fn reject(
             timestamp_ms: wiki_store::provenance::now_unix_ms(),
             upstream: vec![wiki_store::provenance::LineageRef::Inbox { id: inbox_id }],
             downstream: vec![],
-            display_title: wiki_store::provenance::display_title_inbox_rejected(
-                &entry_title,
-            ),
+            display_title: wiki_store::provenance::display_title_inbox_rejected(&entry_title),
             metadata: serde_json::json!({
                 "reason": reason,
             }),
@@ -821,23 +891,19 @@ pub async fn propose_update(
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<UpdateProposal> {
     // Step 1 — resolve inbox entry.
-    let entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
     let entry = entries.iter().find(|e| e.id == inbox_id).ok_or_else(|| {
         MaintainerError::RawNotAvailable(format!("inbox entry not found: {inbox_id}"))
     })?;
     let raw_id = entry.source_raw_id.ok_or_else(|| {
-        MaintainerError::InvalidProposal(format!(
-            "inbox entry {inbox_id} has no source_raw_id"
-        ))
+        MaintainerError::InvalidProposal(format!("inbox entry {inbox_id} has no source_raw_id"))
     })?;
 
     // Step 2 — read existing page (snapshot for concurrent-edit detection).
     let (target_summary, before_markdown) = wiki_store::read_wiki_page(paths, target_slug)
         .map_err(|e| {
-            MaintainerError::Store(format!(
-                "target page `{target_slug}` not found: {e}"
-            ))
+            MaintainerError::Store(format!("target page `{target_slug}` not found: {e}"))
         })?;
 
     // Step 3 — read raw body.
@@ -853,9 +919,7 @@ pub async fn propose_update(
     );
     let response = broker.chat_completion(request).await?;
     let raw_text = extract_first_text(&response).ok_or_else(|| {
-        MaintainerError::InvalidProposal(
-            "LLM merge response contained no text block".to_string(),
-        )
+        MaintainerError::InvalidProposal("LLM merge response contained no text block".to_string())
     })?;
 
     // Step 5 — parse `{after_markdown, summary}` JSON.
@@ -901,9 +965,7 @@ pub async fn propose_update(
                 slug: target_slug.to_string(),
                 title: Some(target_summary.title.clone()),
             }],
-            display_title: wiki_store::provenance::display_title_proposal_generated(
-                target_slug,
-            ),
+            display_title: wiki_store::provenance::display_title_proposal_generated(target_slug),
             metadata: serde_json::json!({
                 "summary": summary,
             }),
@@ -934,8 +996,8 @@ pub fn apply_update_proposal(
     inbox_id: u32,
 ) -> Result<MaintainOutcome> {
     // Step 1 — locate entry, validate that a pending proposal exists.
-    let entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
     let entry = entries
         .iter()
         .find(|e| e.id == inbox_id)
@@ -1041,9 +1103,7 @@ pub fn apply_update_proposal(
                 slug: target_slug.to_string(),
                 title: Some(existing_summary.title.clone()),
             }],
-            display_title: wiki_store::provenance::display_title_wiki_page_applied(
-                target_slug,
-            ),
+            display_title: wiki_store::provenance::display_title_wiki_page_applied(target_slug),
             metadata: serde_json::json!({
                 "path": "apply_update_proposal",
             }),
@@ -1061,10 +1121,7 @@ pub fn apply_update_proposal(
 ///
 /// Idempotent: calling cancel on an entry that has no pending
 /// proposal is a no-op (returns `Ok(())`).
-pub fn cancel_update_proposal(
-    paths: &wiki_store::WikiPaths,
-    inbox_id: u32,
-) -> Result<()> {
+pub fn cancel_update_proposal(paths: &wiki_store::WikiPaths, inbox_id: u32) -> Result<()> {
     wiki_store::update_inbox_proposal(
         paths,
         inbox_id,
@@ -1276,12 +1333,10 @@ pub async fn propose_combined_update(
     validate_combined_inputs(target_slug, inbox_ids)?;
 
     // Step 2 — resolve each inbox id to a Pending entry.
-    let all_entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
-    let by_id: HashMap<u32, wiki_store::InboxEntry> = all_entries
-        .into_iter()
-        .map(|e| (e.id, e))
-        .collect();
+    let all_entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let by_id: HashMap<u32, wiki_store::InboxEntry> =
+        all_entries.into_iter().map(|e| (e.id, e)).collect();
 
     let mut resolved: Vec<(wiki_store::InboxEntry, u32)> = Vec::with_capacity(inbox_ids.len());
     for &id in inbox_ids {
@@ -1295,9 +1350,7 @@ pub async fn propose_combined_update(
             )));
         }
         let raw_id = entry.source_raw_id.ok_or_else(|| {
-            MaintainerError::InvalidProposal(format!(
-                "inbox {id} missing source_raw_id"
-            ))
+            MaintainerError::InvalidProposal(format!("inbox {id} missing source_raw_id"))
         })?;
         resolved.push((entry, raw_id));
     }
@@ -1305,9 +1358,7 @@ pub async fn propose_combined_update(
     // Step 3 — read target page.
     let (target_summary, before_markdown) = wiki_store::read_wiki_page(paths, target_slug)
         .map_err(|e| {
-            MaintainerError::Store(format!(
-                "target page `{target_slug}` not found: {e}"
-            ))
+            MaintainerError::Store(format!("target page `{target_slug}` not found: {e}"))
         })?;
 
     // Step 4 — read each raw body, collecting (inbox_id, title, body).
@@ -1399,12 +1450,10 @@ pub fn apply_combined_proposal(
     // Stale state (missing id / non-pending / missing raw) fails with
     // outcome="stale_inbox" rather than erroring out, so the UI can
     // recover by re-fetching.
-    let all_entries = wiki_store::list_inbox_entries(paths)
-        .map_err(|e| MaintainerError::Store(e.to_string()))?;
-    let by_id: HashMap<u32, wiki_store::InboxEntry> = all_entries
-        .into_iter()
-        .map(|e| (e.id, e))
-        .collect();
+    let all_entries =
+        wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
+    let by_id: HashMap<u32, wiki_store::InboxEntry> =
+        all_entries.into_iter().map(|e| (e.id, e)).collect();
     for &id in inbox_ids {
         match by_id.get(&id) {
             None => {
@@ -1541,11 +1590,10 @@ pub fn apply_combined_proposal(
                 slug: target_slug.to_string(),
                 title: Some(existing_summary.title.clone()),
             }],
-            display_title:
-                wiki_store::provenance::display_title_combined_wiki_page_applied(
-                    applied.len(),
-                    target_slug,
-                ),
+            display_title: wiki_store::provenance::display_title_combined_wiki_page_applied(
+                applied.len(),
+                target_slug,
+            ),
             metadata: serde_json::json!({
                 "outcome": outcome,
                 "failed_ids": failed,
@@ -1578,12 +1626,11 @@ fn parse_merge_response(raw: &str) -> Result<(String, String)> {
         summary: String,
     }
 
-    let parsed: MergeResp = serde_json::from_str(payload).map_err(|e| {
-        MaintainerError::BadJson {
+    let parsed: MergeResp =
+        serde_json::from_str(payload).map_err(|e| MaintainerError::BadJson {
             reason: e.to_string(),
             preview: payload.chars().take(512).collect(),
-        }
-    })?;
+        })?;
 
     if parsed.after_markdown.trim().is_empty() {
         return Err(MaintainerError::InvalidProposal(
@@ -1670,7 +1717,7 @@ fn source_priority(source: &str) -> u8 {
         "url" => 2,
         "wechat-text" => 3,
         "pdf" | "docx" | "pptx" => 4,
-        "query" => 5,  // v2: crystallized query results
+        "query" => 5, // v2: crystallized query results
         "paste" => 6,
         "voice" => 7,
         _ => 8,
@@ -1679,7 +1726,11 @@ fn source_priority(source: &str) -> u8 {
 
 /// Compute confidence score for a wiki page based on evidence quality.
 /// Per 01-skill-engine.md §5.1 step 3g.
-pub fn compute_confidence(source_count: usize, newest_source_age_days: i64, has_conflict: bool) -> f32 {
+pub fn compute_confidence(
+    source_count: usize,
+    newest_source_age_days: i64,
+    has_conflict: bool,
+) -> f32 {
     if has_conflict {
         return 0.3; // contested
     }
@@ -1711,12 +1762,8 @@ fn determine_category(_proposal: &WikiPageProposal) -> String {
 /// `claude_md` is read from the wiki root's `schema/CLAUDE.md` — the
 /// human-curated maintainer-rules document. Absent file → empty head
 /// (absorb still proceeds with the 7 rules alone).
-fn build_absorb_system_prompt(
-    paths: &wiki_store::WikiPaths,
-    index_content: &str,
-) -> String {
-    let claude_md =
-        std::fs::read_to_string(&paths.schema_claude_md).unwrap_or_default();
+fn build_absorb_system_prompt(paths: &wiki_store::WikiPaths, index_content: &str) -> String {
+    let claude_md = std::fs::read_to_string(&paths.schema_claude_md).unwrap_or_default();
     let mut prompt = format!(
         "{claude_md}\n\n\
          ## 当前 Wiki 目录\n\n{index_content}\n\n\
@@ -1899,10 +1946,9 @@ pub async fn absorb_batch(
         // Missing index is non-fatal: absorb falls back to an empty
         // list and the maintainer creates pages from scratch — same
         // semantics as a fresh wiki root.
-        let index_content = std::fs::read_to_string(
-            paths.wiki.join(wiki_store::WIKI_INDEX_FILENAME),
-        )
-        .unwrap_or_default();
+        let index_content =
+            std::fs::read_to_string(paths.wiki.join(wiki_store::WIKI_INDEX_FILENAME))
+                .unwrap_or_default();
 
         // 3c: Build SKILL prompt (system with index + 7 rules, user
         //     with raw body) per §5.1 L704-713.
@@ -1924,7 +1970,10 @@ pub async fn absorb_batch(
                             let _ = progress_tx
                                 .send(AbsorbProgressEvent {
                                     task_id: task_id.clone(),
-                                    processed: result.created + result.updated + result.skipped + result.failed,
+                                    processed: result.created
+                                        + result.updated
+                                        + result.skipped
+                                        + result.failed,
                                     total,
                                     current_entry_id: *id,
                                     action: "skip".to_string(),
@@ -2218,7 +2267,7 @@ pub async fn absorb_batch(
                 .filter(|e| e.page_slug.as_deref() == Some(&proposal.slug) && e.action != "skip")
                 .count()
                 + 1; // +1 for the current write
-            // newest_source_age: 0 days since we just wrote it
+                     // newest_source_age: 0 days since we just wrote it
             let conf = compute_confidence(source_count, 0, false);
             let _ = wiki_store::update_page_confidence(paths, &proposal.slug, conf);
         }
@@ -2676,9 +2725,7 @@ fn score_page_against_inbox(
 
     // Signal 6: shared_raw_source (+50) — cheap: both inbox and
     // page know their source_raw_id in-memory. No extra I/O.
-    if let (Some(inbox_raw), Some(page_raw)) =
-        (inbox_entry.source_raw_id, page.source_raw_id)
-    {
+    if let (Some(inbox_raw), Some(page_raw)) = (inbox_entry.source_raw_id, page.source_raw_id) {
         if inbox_raw == page_raw {
             score += 50;
             reasons.push(CandidateReason {
@@ -2954,6 +3001,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_proposal_tolerates_null_optional_fields() {
+        let json = r#"{
+            "slug": "s",
+            "title": "T",
+            "summary": "S",
+            "body": "B",
+            "source_raw_id": null,
+            "conflict_with": null,
+            "conflict_reason": null
+        }"#;
+        let parsed = parse_proposal(json, 42).unwrap();
+        assert_eq!(parsed.source_raw_id, 42);
+        assert!(parsed.conflict_with.is_empty());
+        assert!(parsed.conflict_reason.is_none());
+    }
+
+    #[test]
+    fn parse_proposal_recovers_null_summary_and_body() {
+        let json = r#"{
+            "slug": "s",
+            "title": "T",
+            "summary": null,
+            "body": null
+        }"#;
+        let parsed = parse_proposal(json, 42).unwrap();
+        assert_eq!(parsed.summary, "uncertain: T");
+        assert_eq!(parsed.body, "uncertain: T");
+    }
+
+    #[test]
+    fn parse_proposal_extracts_json_from_preface() {
+        let text =
+            "Here is the JSON:\n{\"slug\":\"s\",\"title\":\"T\",\"summary\":\"S\",\"body\":\"B\"}";
+        let parsed = parse_proposal(text, 42).unwrap();
+        assert_eq!(parsed.slug, "s");
+    }
+
+    #[test]
+    fn parse_proposal_recovers_null_slug_from_title() {
+        let json = r#"{
+            "slug": null,
+            "title": "DeepSeek Chat Routing",
+            "summary": "S",
+            "body": "B"
+        }"#;
+        let parsed = parse_proposal(json, 42).unwrap();
+        assert_eq!(parsed.slug, "deepseek-chat-routing");
+    }
+
+    #[test]
     fn parse_proposal_accepts_conflict_signal() {
         let json = r#"{
             "slug": "transformer",
@@ -2974,7 +3071,8 @@ mod tests {
 
     #[test]
     fn parse_proposal_strips_json_fence() {
-        let json = "```json\n{\"slug\":\"a\",\"title\":\"T\",\"summary\":\"s\",\"body\":\"b\"}\n```";
+        let json =
+            "```json\n{\"slug\":\"a\",\"title\":\"T\",\"summary\":\"s\",\"body\":\"b\"}\n```";
         let parsed = parse_proposal(json, 1).unwrap();
         assert_eq!(parsed.slug, "a");
     }
@@ -2987,17 +3085,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_proposal_rejects_missing_slug() {
+    fn parse_proposal_recovers_empty_slug_from_title() {
         let json = r#"{"slug":"","title":"T","summary":"s","body":"b"}"#;
-        let err = parse_proposal(json, 1).unwrap_err();
-        assert!(matches!(err, MaintainerError::InvalidProposal(_)));
+        let parsed = parse_proposal(json, 1).unwrap();
+        assert_eq!(parsed.slug, "t");
     }
 
     #[test]
-    fn parse_proposal_rejects_invalid_slug_chars() {
+    fn parse_proposal_normalizes_invalid_slug_chars() {
         let json = r#"{"slug":"has space","title":"T","summary":"s","body":"b"}"#;
-        let err = parse_proposal(json, 1).unwrap_err();
-        assert!(matches!(err, MaintainerError::InvalidProposal(_)));
+        let parsed = parse_proposal(json, 1).unwrap();
+        assert_eq!(parsed.slug, "has-space");
+    }
+
+    #[test]
+    fn parse_proposal_recovers_missing_slug_field_from_title() {
+        let json = r#"{"title":"Claude API Overview","summary":"s","body":"b"}"#;
+        let parsed = parse_proposal(json, 1).unwrap();
+        assert_eq!(parsed.slug, "claude-api-overview");
     }
 
     #[test]
@@ -3041,10 +3146,7 @@ mod tests {
 
     #[async_trait]
     impl BrokerSender for MockBrokerSender {
-        async fn chat_completion(
-            &self,
-            _request: MessageRequest,
-        ) -> Result<MessageResponse> {
+        async fn chat_completion(&self, _request: MessageRequest) -> Result<MessageResponse> {
             Ok(sample_response(&self.canned))
         }
     }
@@ -3077,7 +3179,9 @@ mod tests {
         );
         let broker = MockBrokerSender { canned };
 
-        let proposal = propose_for_raw_entry(&paths, raw_id, &broker).await.unwrap();
+        let proposal = propose_for_raw_entry(&paths, raw_id, &broker)
+            .await
+            .unwrap();
         assert_eq!(proposal.slug, "llm-wiki");
         assert_eq!(proposal.title, "LLM Wiki");
         assert_eq!(proposal.source_raw_id, raw_id);
@@ -3092,7 +3196,9 @@ mod tests {
         let broker = MockBrokerSender {
             canned: "unused".to_string(),
         };
-        let err = propose_for_raw_entry(&paths, 999, &broker).await.unwrap_err();
+        let err = propose_for_raw_entry(&paths, 999, &broker)
+            .await
+            .unwrap_err();
         assert!(matches!(err, MaintainerError::RawNotAvailable(_)));
     }
 
@@ -3105,7 +3211,9 @@ mod tests {
         let broker = MockBrokerSender {
             canned: "this is not json".to_string(),
         };
-        let err = propose_for_raw_entry(&paths, raw_id, &broker).await.unwrap_err();
+        let err = propose_for_raw_entry(&paths, raw_id, &broker)
+            .await
+            .unwrap_err();
         assert!(matches!(err, MaintainerError::BadJson { .. }));
     }
 
@@ -3114,18 +3222,19 @@ mod tests {
         struct FailingBroker;
         #[async_trait]
         impl BrokerSender for FailingBroker {
-            async fn chat_completion(
-                &self,
-                _request: MessageRequest,
-            ) -> Result<MessageResponse> {
-                Err(MaintainerError::Broker("simulated network down".to_string()))
+            async fn chat_completion(&self, _request: MessageRequest) -> Result<MessageResponse> {
+                Err(MaintainerError::Broker(
+                    "simulated network down".to_string(),
+                ))
             }
         }
         let tmp = tempdir().unwrap();
         wiki_store::init_wiki(tmp.path()).unwrap();
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
         let raw_id = seed_raw(&paths, "body");
-        let err = propose_for_raw_entry(&paths, raw_id, &FailingBroker).await.unwrap_err();
+        let err = propose_for_raw_entry(&paths, raw_id, &FailingBroker)
+            .await
+            .unwrap_err();
         assert!(matches!(err, MaintainerError::Broker(_)));
     }
 
@@ -3147,10 +3256,7 @@ mod tests {
 
     #[async_trait]
     impl BrokerSender for SequentialBroker {
-        async fn chat_completion(
-            &self,
-            _request: MessageRequest,
-        ) -> Result<MessageResponse> {
+        async fn chat_completion(&self, _request: MessageRequest) -> Result<MessageResponse> {
             let mut lock = self.responses.lock().unwrap();
             let text = if lock.is_empty() {
                 // Fallback: return a generic proposal
@@ -3257,7 +3363,8 @@ mod tests {
         )
         .unwrap();
         let raw_id = seed_raw(&paths, "A new source contradicts the transformer page.");
-        let broker = SequentialBroker::new(vec![make_conflict_proposal_json(raw_id, "transformer")]);
+        let broker =
+            SequentialBroker::new(vec![make_conflict_proposal_json(raw_id, "transformer")]);
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
         let cancel = tokio_util::sync::CancellationToken::new();
 
@@ -3288,7 +3395,9 @@ mod tests {
             .expect("conflict inbox entry");
         assert_eq!(conflict.source_raw_id, Some(raw_id));
         assert!(conflict.description.contains("transformer"));
-        assert!(conflict.description.contains("raw contradicts the existing page"));
+        assert!(conflict
+            .description
+            .contains("raw contradicts the existing page"));
 
         rx.close();
         let event = rx.recv().await.expect("conflict progress event");
@@ -3386,11 +3495,7 @@ mod tests {
     /// fixed to `"paste"`; the §5.1 step-2 ordering test needs three
     /// distinct source kinds so the priority sort has something to
     /// disambiguate.
-    fn seed_raw_with_source(
-        paths: &wiki_store::WikiPaths,
-        body: &str,
-        source: &str,
-    ) -> u32 {
+    fn seed_raw_with_source(paths: &wiki_store::WikiPaths, body: &str, source: &str) -> u32 {
         let fm = wiki_store::RawFrontmatter::for_paste(source, None);
         wiki_store::write_raw_entry(paths, source, "test seed", body, &fm)
             .unwrap()
@@ -3474,8 +3579,7 @@ mod tests {
         let body_wechat = "WeChat-article body content: the forwarded article includes headline, author, and substantive body long enough to clear the non-paste source validation gate.";
         let id_paste = seed_raw_with_source(&paths, body_paste, "paste");
         let id_url = seed_raw_with_source(&paths, body_url, "url");
-        let id_wechat =
-            seed_raw_with_source(&paths, body_wechat, "wechat-article");
+        let id_wechat = seed_raw_with_source(&paths, body_wechat, "wechat-article");
 
         // SequentialBroker pops FIFO: canned[0] served first, [1] second, [2] third.
         // Label each response so we can map `entry_id → which canned it got`.
@@ -3548,13 +3652,7 @@ mod tests {
 
         // 16 unique proposals, one per raw.
         let canned: Vec<String> = (0..16)
-            .map(|i| {
-                make_proposal_json(
-                    &format!("page-{i:02}"),
-                    &format!("Page {i:02}"),
-                    ids[i],
-                )
-            })
+            .map(|i| make_proposal_json(&format!("page-{i:02}"), &format!("Page {i:02}"), ids[i]))
             .collect();
         let broker = SequentialBroker::new(canned);
 
@@ -3586,8 +3684,7 @@ mod tests {
 
         // _backlinks.json saved (even if every value is empty — each
         // page has no outbound links to the others).
-        let backlinks =
-            wiki_store::load_backlinks_index(&paths).expect("load_backlinks_index");
+        let backlinks = wiki_store::load_backlinks_index(&paths).expect("load_backlinks_index");
         // Backlinks map should be loadable (empty is fine — no page
         // in the fixture links to another).
         let _ = backlinks; // presence-of-file check is the real proof
@@ -3626,7 +3723,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.sources.is_empty(), "should have at least one source");
+        assert!(
+            !result.sources.is_empty(),
+            "should have at least one source"
+        );
         assert_eq!(result.sources[0].slug, "transformer");
 
         // Check that a chunk was sent
@@ -3693,7 +3793,10 @@ mod tests {
         let backlinks = wiki_store::BacklinksIndex::new();
         let score = compute_relevance("transformer", &page, &backlinks);
         // Should get +1.0 for exact match + keyword bonus.
-        assert!(score >= 1.0, "exact match score should be >= 1.0, got {score}");
+        assert!(
+            score >= 1.0,
+            "exact match score should be >= 1.0, got {score}"
+        );
     }
 
     #[test]
@@ -3772,7 +3875,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.failed, 1, "LLM failure should increment failed count");
+        assert_eq!(
+            result.failed, 1,
+            "LLM failure should increment failed count"
+        );
         assert_eq!(result.created, 0);
     }
 
@@ -3863,10 +3969,15 @@ mod tests {
 
         // Create a wiki page so query has something to find.
         wiki_store::write_wiki_page_in_category(
-            &paths, "concept", "test-topic", "Test Topic", "Summary",
+            &paths,
+            "concept",
+            "test-topic",
+            "Test Topic",
+            "Summary",
             "# Test\n\nThis is a long test page with enough content to be found by the query.",
             Some(1),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Use a broker that returns a long answer (> 200 chars).
         let long_answer = "x".repeat(250);
@@ -3892,9 +4003,15 @@ mod tests {
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
 
         wiki_store::write_wiki_page_in_category(
-            &paths, "concept", "short-test", "Short", "S",
-            "# Short page.", Some(1),
-        ).unwrap();
+            &paths,
+            "concept",
+            "short-test",
+            "Short",
+            "S",
+            "# Short page.",
+            Some(1),
+        )
+        .unwrap();
 
         // Broker returns a short answer (< 200 chars).
         let broker = MockBrokerSender {
@@ -3915,8 +4032,7 @@ mod tests {
     fn seed_raw_with_inbox(paths: &wiki_store::WikiPaths, body: &str) -> (u32, u32) {
         let raw_id = seed_raw(paths, body);
         let (raw_entry, _body) = wiki_store::read_raw_entry(paths, raw_id).unwrap();
-        let inbox_entry =
-            wiki_store::append_new_raw_task(paths, &raw_entry, "test-seed").unwrap();
+        let inbox_entry = wiki_store::append_new_raw_task(paths, &raw_entry, "test-seed").unwrap();
         (inbox_entry.id, raw_id)
     }
 
@@ -3997,7 +4113,10 @@ mod tests {
         // Page body now has both the original content and a dated update heading.
         let (_summary, body) = wiki_store::read_wiki_page(&paths, "attention").unwrap();
         assert!(body.contains("Original body."));
-        assert!(body.contains("## 更新 ["), "should have dated update heading");
+        assert!(
+            body.contains("## 更新 ["),
+            "should have dated update heading"
+        );
 
         // Inbox patched.
         let entries = wiki_store::list_inbox_entries(&paths).unwrap();
@@ -4049,7 +4168,10 @@ mod tests {
         // Log line appended.
         let log_path = wiki_store::wiki_log_path(&paths);
         let log = std::fs::read_to_string(&log_path).unwrap();
-        assert!(log.contains("reject-inbox"), "log should carry reject-inbox verb");
+        assert!(
+            log.contains("reject-inbox"),
+            "log should carry reject-inbox verb"
+        );
         assert!(log.contains(&format!("inbox/{inbox_id}")));
     }
 
@@ -4206,12 +4328,19 @@ mod tests {
         let entry = entries.iter().find(|e| e.id == inbox_id).unwrap();
         assert_eq!(entry.status, wiki_store::InboxStatus::Approved);
         assert_eq!(entry.proposal_status.as_deref(), Some("applied"));
-        assert!(entry.proposed_after_markdown.is_none(),
-            "proposed_after_markdown must be cleared on apply");
-        assert!(entry.before_markdown_snapshot.is_none(),
-            "before_markdown_snapshot must be cleared on apply");
-        assert_eq!(entry.proposal_summary.as_deref(), Some("追加 Extra 小节"),
-            "proposal_summary retained for audit");
+        assert!(
+            entry.proposed_after_markdown.is_none(),
+            "proposed_after_markdown must be cleared on apply"
+        );
+        assert!(
+            entry.before_markdown_snapshot.is_none(),
+            "before_markdown_snapshot must be cleared on apply"
+        );
+        assert_eq!(
+            entry.proposal_summary.as_deref(),
+            Some("追加 Extra 小节"),
+            "proposal_summary retained for audit"
+        );
         assert_eq!(entry.maintain_action.as_deref(), Some("update_existing"));
         assert_eq!(entry.target_page_slug.as_deref(), Some("dropout"));
         assert!(entry.resolved_at.is_some(), "resolved_at stamped on apply");
@@ -4242,7 +4371,9 @@ mod tests {
         let broker = MockBrokerSender {
             canned: canned_merge_response("# ReLU\n\nMerged.", "改写整段"),
         };
-        propose_update(&paths, inbox_id, "relu", &broker).await.unwrap();
+        propose_update(&paths, inbox_id, "relu", &broker)
+            .await
+            .unwrap();
 
         // Cancel — should clear the staged markdown but keep the inbox pending.
         cancel_update_proposal(&paths, inbox_id).unwrap();
@@ -4273,8 +4404,10 @@ mod tests {
         let err = apply_update_proposal(&paths, inbox_id).unwrap_err();
         match err {
             MaintainerError::InvalidProposal(msg) => {
-                assert!(msg.contains("no pending proposal"),
-                    "expected 'no pending proposal' in error, got: {msg}");
+                assert!(
+                    msg.contains("no pending proposal"),
+                    "expected 'no pending proposal' in error, got: {msg}"
+                );
             }
             other => panic!("expected InvalidProposal, got {other:?}"),
         }
@@ -4300,7 +4433,9 @@ mod tests {
         let broker = MockBrokerSender {
             canned: canned_merge_response("# Softmax\n\nMerged.", "改写"),
         };
-        propose_update(&paths, inbox_id, "softmax", &broker).await.unwrap();
+        propose_update(&paths, inbox_id, "softmax", &broker)
+            .await
+            .unwrap();
 
         // Simulate a concurrent external edit: overwrite the page body.
         wiki_store::write_wiki_page(
@@ -4329,15 +4464,7 @@ mod tests {
         wiki_store::init_wiki(tmp.path()).unwrap();
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
 
-        wiki_store::write_wiki_page(
-            &paths,
-            "loss",
-            "Loss",
-            "s",
-            "# Loss\n\nbody.",
-            None,
-        )
-        .unwrap();
+        wiki_store::write_wiki_page(&paths, "loss", "Loss", "s", "# Loss\n\nbody.", None).unwrap();
         let (inbox_id, _raw_id) = seed_raw_with_inbox(&paths, "body");
 
         let broker = MockBrokerSender {

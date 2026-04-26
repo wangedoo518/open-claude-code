@@ -240,10 +240,7 @@ mod tests {
         let snap = log.snapshot(None);
         assert_eq!(snap.len(), RECENT_LOG_CAPACITY);
         // Newest retained entry is the last one pushed.
-        assert_eq!(
-            snap[0].timestamp_ms,
-            RECENT_LOG_CAPACITY as u64 + 9
-        );
+        assert_eq!(snap[0].timestamp_ms, RECENT_LOG_CAPACITY as u64 + 9);
         // Oldest retained entry: we pushed 110 total, kept latest 100,
         // so the oldest kept has ts = 10.
         assert_eq!(snap[snap.len() - 1].timestamp_ms, 10);

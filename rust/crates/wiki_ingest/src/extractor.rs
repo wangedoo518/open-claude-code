@@ -155,11 +155,10 @@ fn extract_wechat(doc: &Html) -> Option<ExtractedArticle> {
 fn extract_generic(doc: &Html) -> ExtractedArticle {
     // Title hierarchy: <h1> in body > <title>
     let title = extract_title(doc);
-    let author = extract_meta(doc, "author").or_else(|| {
-        extract_meta_property(doc, "article:author")
-    });
-    let published = extract_meta_property(doc, "article:published_time")
-        .or_else(|| extract_meta(doc, "date"));
+    let author =
+        extract_meta(doc, "author").or_else(|| extract_meta_property(doc, "article:author"));
+    let published =
+        extract_meta_property(doc, "article:published_time").or_else(|| extract_meta(doc, "date"));
 
     // Candidate selectors, in order of increasing "gut trust" —
     // the more specific the selector, the less likely it picks up
@@ -381,10 +380,7 @@ mod tests {
             Some("Building personal knowledge bases")
         );
         assert_eq!(result.author.as_deref(), Some("Jane Researcher"));
-        assert_eq!(
-            result.published.as_deref(),
-            Some("2026-03-20T10:00:00Z")
-        );
+        assert_eq!(result.published.as_deref(), Some("2026-03-20T10:00:00Z"));
         // Article content present
         assert!(result.body_md.contains("RAG is not the only game"));
         assert!(result.body_md.contains("## Why wikis"));

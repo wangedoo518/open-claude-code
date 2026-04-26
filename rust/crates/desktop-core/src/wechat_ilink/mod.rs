@@ -27,9 +27,9 @@ pub mod pending_logins;
 pub mod types;
 
 pub use account::{
-    clear_account, list_account_ids, load_account, load_context_tokens,
-    load_openid_sessions, load_sync_buf, save_account, save_sync_buf,
-    upsert_context_token, upsert_openid_session, AccountError,
+    clear_account, list_account_ids, load_account, load_context_tokens, load_openid_sessions,
+    load_sync_buf, save_account, save_sync_buf, upsert_context_token, upsert_openid_session,
+    AccountError,
 };
 pub use client::{IlinkClient, IlinkError, SESSION_EXPIRED_ERRCODE};
 pub use dedupe::{DedupeResult, DedupeStore, WeChatEventKey};

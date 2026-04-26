@@ -200,16 +200,12 @@ impl BrokerSender for BrokerAdapter {
         let provider_result = try_providers_json_chat_completion(&request).await;
         match provider_result {
             Some(Ok(resp)) => Ok(resp),
-            Some(Err(api_err)) => {
-                Err(MaintainerError::Broker(format!(
-                    "providers.json fallback failed: {api_err}"
-                )))
-            }
-            None => {
-                Err(MaintainerError::Broker(
-                    "no codex account available and no providers.json fallback found".to_string(),
-                ))
-            }
+            Some(Err(api_err)) => Err(MaintainerError::Broker(format!(
+                "providers.json fallback failed: {api_err}"
+            ))),
+            None => Err(MaintainerError::Broker(
+                "no codex account available and no providers.json fallback found".to_string(),
+            )),
         }
     }
 }
@@ -225,13 +221,23 @@ async fn try_providers_json_chat_completion(
 
     for root in provider_config_candidate_roots() {
         let path = root.join(".claw").join("providers.json");
-        let Ok(raw) = std::fs::read_to_string(&path) else { continue };
-        let Some(parsed) = parse_provider_config_json(&raw) else { continue };
-        let Some(active_id) = parsed.get("active").and_then(|v| v.as_str()) else { continue };
-        let Some(entry) = parsed.get("providers").and_then(|p| p.get(active_id)) else { continue };
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Some(parsed) = parse_provider_config_json(&raw) else {
+            continue;
+        };
+        let Some(active_id) = parsed.get("active").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(entry) = parsed.get("providers").and_then(|p| p.get(active_id)) else {
+            continue;
+        };
         let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         let api_key = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
-        let Some(api_key) = resolve_provider_api_key(api_key) else { continue };
+        let Some(api_key) = resolve_provider_api_key(api_key) else {
+            continue;
+        };
         let base_url = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
         let model = entry.get("model").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -252,11 +258,8 @@ async fn try_providers_json_chat_completion(
                     "[maintainer-adapter] using providers.json OpenAiCompat \
                      {active_id:?} base_url={base_url:?} model={model:?}"
                 );
-                let client = OpenAiCompatClient::new(
-                    api_key.clone(),
-                    OpenAiCompatConfig::openai(),
-                )
-                .with_base_url(base_url.to_string());
+                let client = OpenAiCompatClient::new(api_key.clone(), OpenAiCompatConfig::openai())
+                    .with_base_url(base_url.to_string());
                 return Some(client.send_message(&req).await);
             }
             "anthropic" => {
@@ -269,10 +272,8 @@ async fn try_providers_json_chat_completion(
                     "[maintainer-adapter] using providers.json Anthropic \
                      {active_id:?} base_url={effective_base:?} model={model:?}"
                 );
-                let client = AnthropicClient::from_auth(
-                    AuthSource::ApiKey(api_key.clone()),
-                )
-                .with_base_url(effective_base.to_string());
+                let client = AnthropicClient::from_auth(AuthSource::ApiKey(api_key.clone()))
+                    .with_base_url(effective_base.to_string());
                 return Some(client.send_message(&req).await);
             }
             _ => continue,
@@ -327,7 +328,11 @@ mod tests {
     #[test]
     fn provider_config_candidate_roots_walk_up_from_nested_cwd() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let nested = temp.path().join("apps").join("desktop-shell").join("src-tauri");
+        let nested = temp
+            .path()
+            .join("apps")
+            .join("desktop-shell")
+            .join("src-tauri");
         std::fs::create_dir_all(&nested).expect("nested dirs");
 
         let roots = provider_config_candidate_roots_from(&nested);
@@ -346,7 +351,10 @@ mod tests {
         )
         .expect("UTF-8 BOM should not hide an otherwise valid providers.json");
 
-        assert_eq!(parsed.get("active").and_then(|v| v.as_str()), Some("deepseek"));
+        assert_eq!(
+            parsed.get("active").and_then(|v| v.as_str()),
+            Some("deepseek")
+        );
     }
 
     #[test]

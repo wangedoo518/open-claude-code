@@ -37,8 +37,8 @@ use super::types::WeixinMessage;
 
 use crate::{
     CreateDesktopSessionRequest, DesktopContentBlock, DesktopConversationMessage,
-    DesktopMessageRole, DesktopSessionDetail, DesktopSessionEvent, DesktopState,
-    DesktopStateError, DesktopTurnState,
+    DesktopMessageRole, DesktopSessionDetail, DesktopSessionEvent, DesktopState, DesktopStateError,
+    DesktopTurnState,
 };
 
 /// Maximum time we'll wait for an agentic turn to complete before giving up
@@ -130,10 +130,7 @@ impl DesktopAgentHandler {
 
     /// Find an existing desktop session for `openid`, or create a fresh one
     /// if none exists. Returns the session id.
-    async fn get_or_create_session(
-        &self,
-        openid: &str,
-    ) -> Result<String, MonitorError> {
+    async fn get_or_create_session(&self, openid: &str) -> Result<String, MonitorError> {
         // Fast path: in-memory cache hit
         {
             let map = self.mapping.lock().await;
@@ -156,16 +153,12 @@ impl DesktopAgentHandler {
         let detail = self.state.create_session(request).await;
         let session_id = detail.id.clone();
 
-        eprintln!(
-            "[wechat agent] created session {session_id} for openid={openid}"
-        );
+        eprintln!("[wechat agent] created session {session_id} for openid={openid}");
 
         // Persist + cache.
         let mut map = self.mapping.lock().await;
         map.insert(openid.to_string(), session_id.clone());
-        if let Err(e) =
-            account::upsert_openid_session(&self.account_id, openid, &session_id)
-        {
+        if let Err(e) = account::upsert_openid_session(&self.account_id, openid, &session_id) {
             eprintln!("[wechat agent] failed to persist mapping: {e}");
         }
 
@@ -175,11 +168,7 @@ impl DesktopAgentHandler {
     /// Run a full turn for a single inbound user message and return the
     /// concatenated assistant text reply, or an error string if anything
     /// goes wrong (busy session, timeout, etc.).
-    async fn run_turn(
-        &self,
-        session_id: &str,
-        user_text: &str,
-    ) -> Result<String, String> {
+    async fn run_turn(&self, session_id: &str, user_text: &str) -> Result<String, String> {
         // Subscribe FIRST so we don't miss the snapshot/messages emitted
         // while append_user_message is executing.
         let (_initial_snapshot, mut receiver) = match self.state.subscribe(session_id).await {
@@ -222,9 +211,7 @@ impl DesktopAgentHandler {
             let event = match timeout(remaining, receiver.recv()).await {
                 Ok(Ok(event)) => event,
                 Ok(Err(broadcast::error::RecvError::Lagged(skipped))) => {
-                    eprintln!(
-                        "[wechat agent] broadcast lagged, skipped {skipped} events"
-                    );
+                    eprintln!("[wechat agent] broadcast lagged, skipped {skipped} events");
                     continue;
                 }
                 Ok(Err(broadcast::error::RecvError::Closed)) => {
@@ -255,9 +242,7 @@ impl DesktopAgentHandler {
                             if let Some(text) = latest_assistant_text(&session) {
                                 return Ok(text);
                             }
-                            return Err(
-                                "(agent did not produce a text reply)".to_string()
-                            );
+                            return Err("(agent did not produce a text reply)".to_string());
                         }
                         return Ok(collected_text.join("\n"));
                     }
@@ -361,15 +346,13 @@ impl MessageHandler for DesktopAgentHandler {
                 paths,
                 wiki_store::provenance::LineageEvent {
                     event_id: wiki_store::provenance::new_event_id(),
-                    event_type:
-                        wiki_store::provenance::LineageEventType::WeChatMessageReceived,
+                    event_type: wiki_store::provenance::LineageEventType::WeChatMessageReceived,
                     timestamp_ms: wiki_store::provenance::now_unix_ms(),
                     upstream: vec![],
                     downstream: vec![wechat_ref],
-                    display_title:
-                        wiki_store::provenance::display_title_wechat_message_received(
-                            &short_openid(&from_user_id),
-                        ),
+                    display_title: wiki_store::provenance::display_title_wechat_message_received(
+                        &short_openid(&from_user_id),
+                    ),
                     metadata: serde_json::json!({
                         "account_id": self.account_id,
                         "has_group": message.group_id.is_some(),
@@ -418,11 +401,7 @@ impl MessageHandler for DesktopAgentHandler {
                 let user_text_for_wiki = user_text.clone();
                 let from_user_id_for_wiki = from_user_id.clone();
                 let join = tokio::task::spawn_blocking(move || {
-                    ingest_wechat_text_to_wiki(
-                        &paths,
-                        &from_user_id_for_wiki,
-                        &user_text_for_wiki,
-                    )
+                    ingest_wechat_text_to_wiki(&paths, &from_user_id_for_wiki, &user_text_for_wiki)
                 })
                 .await;
                 if let Ok(reply) = join {
@@ -450,9 +429,7 @@ impl MessageHandler for DesktopAgentHandler {
                 let reply = build_text_reply(&from_user_id, &context_token, &reply_text);
                 match client.send_message(reply).await {
                     Ok(()) => {
-                        eprintln!(
-                            "[wechat agent] url ingest reply sent: openid={from_user_id}"
-                        );
+                        eprintln!("[wechat agent] url ingest reply sent: openid={from_user_id}");
                     }
                     Err(e) => {
                         eprintln!("[wechat agent] url ingest reply send failed: {e}");
@@ -671,7 +648,12 @@ fn ingest_wechat_text_to_wiki(
                         crate::url_ingest::IngestRequest {
                             url: &url_clone,
                             origin_tag: origin_clone,
-                            prefer_playwright: None,
+                            // WeChat article HTML usually carries the
+                            // server-rendered #js_content payload. Prefer
+                            // the faster HTTP extractor here; Playwright's
+                            // network-idle wait is brittle for public-account
+                            // pages and used to hit the outer 60s guard.
+                            prefer_playwright: Some(false),
                             fetch_timeout: std::time::Duration::from_secs(60),
                             allow_text_fallback: Some(crate::url_ingest::TextFallback {
                                 slug_seed: slug_clone,
@@ -718,17 +700,13 @@ fn ingest_wechat_text_to_wiki(
                         paths,
                         wiki_store::provenance::LineageEvent {
                             event_id: wiki_store::provenance::new_event_id(),
-                            event_type:
-                                wiki_store::provenance::LineageEventType::UrlIngested,
+                            event_type: wiki_store::provenance::LineageEventType::UrlIngested,
                             timestamp_ms: wiki_store::provenance::now_unix_ms(),
-                            upstream: vec![
-                                wiki_store::provenance::LineageRef::UrlSource {
-                                    canonical: url.clone(),
-                                },
-                            ],
+                            upstream: vec![wiki_store::provenance::LineageRef::UrlSource {
+                                canonical: url.clone(),
+                            }],
                             downstream: vec![],
-                            display_title:
-                                wiki_store::provenance::display_title_url_ingested(&url),
+                            display_title: wiki_store::provenance::display_title_url_ingested(&url),
                             metadata: serde_json::json!({
                                 "outcome": o.as_display(),
                                 "from_user_id_short": short_openid(from_user_id),
@@ -792,11 +770,19 @@ fn ilink_url_ingest_reply(outcome: &crate::url_ingest::IngestOutcome) -> String 
             entry,
             reason,
             ..
-        } => format!(
-            "⚠️ 我识别到了链接，但这次没能抓到文章正文。\n已先保存原始链接为素材 #{:05}，不会把裸链接交给模型回答。\n原因：{}\n你可以稍后重发，或直接把文章正文复制给我。",
-            entry.id,
-            reason
-        ),
+        } => {
+            let guidance = if reason.contains("timed out") || reason.contains("timeout") {
+                "这通常是微信公众号页面加载过慢或触发反爬导致，不是模型已经读到文章。可以稍后重发，或直接把文章正文复制给我。"
+            } else {
+                "可以稍后重发，或直接把文章正文复制给我。"
+            };
+            format!(
+                "⚠️ 我识别到了链接，但这次没能抓到文章正文。\n已先保存原始链接为素材 #{:05}，不会把裸链接交给模型回答。\n原因：{}\n{}\n如果要立刻处理，可以在「待整理」里点铅笔进入 Ask，补正文后继续整理。",
+                entry.id,
+                reason,
+                guidance
+            )
+        },
         crate::url_ingest::IngestOutcome::RejectedQuality { reason } => format!(
             "⚠️ 我识别到了链接，但抓到的内容没有通过质量检查：{}\n我不会基于这个裸链接回答。请稍后重发，或直接把文章正文复制给我。",
             reason
@@ -843,30 +829,21 @@ fn truncate_display(s: &str, max_chars: usize) -> String {
 /// outside the orchestrator is intentional — `url_ingest` is scoped
 /// to URL ingests and should not acquire responsibilities for
 /// plain-text paths.
-fn write_plain_text_raw(
-    paths: &wiki_store::WikiPaths,
-    from_user_id: &str,
-    user_text: &str,
-) {
+fn write_plain_text_raw(paths: &wiki_store::WikiPaths, from_user_id: &str, user_text: &str) {
     let source_tag = "wechat-text";
     let slug_seed = format!("WeChat · {}", short_openid(from_user_id));
     let frontmatter = wiki_store::RawFrontmatter::for_paste(source_tag, None);
-    let entry = match wiki_store::write_raw_entry(
-        paths,
-        source_tag,
-        &slug_seed,
-        user_text,
-        &frontmatter,
-    ) {
-        Ok(entry) => entry,
-        Err(err) => {
-            eprintln!(
-                "[wechat agent] wiki_store::write_raw_entry failed: {err} \
+    let entry =
+        match wiki_store::write_raw_entry(paths, source_tag, &slug_seed, user_text, &frontmatter) {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!(
+                    "[wechat agent] wiki_store::write_raw_entry failed: {err} \
                  (chat reply path still proceeds)"
-            );
-            return;
-        }
-    };
+                );
+                return;
+            }
+        };
 
     let origin = format!("WeChat user `{}`", short_openid(from_user_id));
     if let Err(err) = wiki_store::append_new_raw_task(paths, &entry, &origin) {
@@ -912,10 +889,7 @@ fn truncate_url(raw: &str) -> &str {
 
         if b == b'%' {
             // Possible percent-encoding: need exactly 2 hex digits after %
-            if i + 2 < len
-                && is_hex_digit(bytes[i + 1])
-                && is_hex_digit(bytes[i + 2])
-            {
+            if i + 2 < len && is_hex_digit(bytes[i + 1]) && is_hex_digit(bytes[i + 2]) {
                 i += 3; // skip %XX
                 continue;
             }
@@ -1044,10 +1018,7 @@ mod tests {
 
     #[test]
     fn truncate_url_trims_trailing_punctuation() {
-        assert_eq!(
-            truncate_url("https://example.com."),
-            "https://example.com"
-        );
+        assert_eq!(truncate_url("https://example.com."), "https://example.com");
     }
 
     // ── extract_first_url tests ───────────────────────────────────

@@ -155,10 +155,7 @@ fn extract_slide_text(xml: &str) -> String {
             Ok(Event::Text(ref e)) if in_text => {
                 let text = e.unescape().unwrap_or_default();
                 if !text.is_empty() {
-                    if !output.is_empty()
-                        && !output.ends_with('\n')
-                        && !output.ends_with(' ')
-                    {
+                    if !output.is_empty() && !output.ends_with('\n') && !output.ends_with(' ') {
                         output.push(' ');
                     }
                     output.push_str(&text);

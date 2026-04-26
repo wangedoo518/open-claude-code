@@ -38,7 +38,6 @@ import {
   FileText,
   Image as ImageIcon,
   AlertCircle,
-  Monitor,
   Code2,
   FileSearch,
 } from "lucide-react";
@@ -233,6 +232,9 @@ interface ComposerProps {
   binding?: SessionSourceBinding | null;
   /** A2 sprint — clear the session source binding. */
   onClearBinding?: () => void;
+  /** External draft injection, used by starter prompts and command UX. */
+  draftValue?: string | null;
+  onDraftConsumed?: () => void;
 }
 
 export function Composer({
@@ -240,7 +242,6 @@ export function Composer({
   onStop,
   isBusy = false,
   modelLabel,
-  environmentLabel = "Local",
   providers,
   onSwitchProvider,
   inputRef,
@@ -251,6 +252,8 @@ export function Composer({
   selectedSourceId,
   binding,
   onClearBinding,
+  draftValue,
+  onDraftConsumed,
 }: ComposerProps) {
   const permissionMode = useSettingsStore((state) => state.permissionMode);
   const setPermissionMode = useSettingsStore((state) => state.setPermissionMode);
@@ -287,15 +290,84 @@ export function Composer({
     return () => { mountedRef.current = false; };
   }, []);
   const permMenuRef = useRef<HTMLDivElement>(null);
+  const composerRootRef = useRef<HTMLDivElement>(null);
+  const refocusAfterSendRef = useRef(false);
   const rafRef = useRef<number>(0);
+  const focusTimerRef = useRef<number | null>(null);
+  const focusRafRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const focusTextareaIfReady = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || textarea.disabled) return false;
+
+    textarea.focus({ preventScroll: true });
+    const cursor = textarea.value.length;
+    try {
+      textarea.setSelectionRange(cursor, cursor);
+    } catch {
+      // Selection can fail for unusual IME/browser states; focus is enough.
+    }
+    return true;
+  }, [textareaRef]);
+
+  const scheduleTextareaFocus = useCallback(() => {
+    if (focusTimerRef.current !== null) {
+      window.clearTimeout(focusTimerRef.current);
+    }
+    focusTimerRef.current = window.setTimeout(() => {
+      focusTimerRef.current = null;
+      if (focusRafRef.current !== null) {
+        window.cancelAnimationFrame(focusRafRef.current);
+      }
+      focusRafRef.current = window.requestAnimationFrame(() => {
+        focusRafRef.current = null;
+        if (!mountedRef.current) return;
+        if (focusTextareaIfReady()) {
+          refocusAfterSendRef.current = false;
+        }
+      });
+    }, 0);
+  }, [focusTextareaIfReady]);
+
+  useEffect(() => {
+    if (!isBusy && refocusAfterSendRef.current) {
+      scheduleTextareaFocus();
+    }
+  }, [isBusy, scheduleTextareaFocus]);
+
+  useEffect(() => {
+    if (draftValue == null) return;
+    setValue(draftValue);
+    setOverrideMode(null);
+    const raf = requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.focus();
+        textarea.style.height = "auto";
+        textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px";
+        textarea.setSelectionRange(draftValue.length, draftValue.length);
+      }
+      onDraftConsumed?.();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [draftValue, onDraftConsumed, textareaRef]);
+
   // ── Slash command state ────────────────────────────────────────
-  const showSlashPalette = value.startsWith("/") && !isBusy;
-  const slashQuery = showSlashPalette ? value.slice(1) : "";
+  const [dismissedSlashValue, setDismissedSlashValue] = useState<string | null>(null);
+  const slashCandidateVisible = value.startsWith("/") && !isBusy;
+  const showSlashPalette = slashCandidateVisible && dismissedSlashValue !== value;
+  const slashQuery = slashCandidateVisible ? value.slice(1) : "";
+
+  useEffect(() => {
+    if (!value.startsWith("/") && dismissedSlashValue !== null) {
+      setDismissedSlashValue(null);
+    }
+  }, [dismissedSlashValue, value]);
 
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
+      setDismissedSlashValue(null);
       setValue("");
       switch (cmd.action) {
         case "clear":
@@ -315,12 +387,22 @@ export function Composer({
           break;
       }
     },
-    [onClear, onNewSession, onExportMarkdown, onSend]
+    [onClear, onNewSession, onExportMarkdown, onCompact, onSend]
   );
 
   const handleSlashClose = useCallback(() => {
-    // Just leave the text — user can keep typing
-  }, []);
+    setDismissedSlashValue(value);
+  }, [value]);
+
+  const handleSlashToggle = useCallback(() => {
+    if (showSlashPalette) {
+      setDismissedSlashValue(value);
+    } else {
+      setDismissedSlashValue(null);
+      setValue((current) => (current.startsWith("/") ? current : "/"));
+    }
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [showSlashPalette, textareaRef, value]);
 
   /** Clear the composer input, attachments, and reset textarea height. */
   const resetComposer = useCallback(() => {
@@ -569,10 +651,21 @@ export function Composer({
     // working (JS variadic dispatch). We reset `overrideMode` after
     // sending so the next turn is auto-classified fresh.
     const modeToSend = overrideMode ?? classification.mode;
+    refocusAfterSendRef.current = true;
     resetComposer();
     setOverrideMode(null);
     await onSend(finalMessage, { mode: modeToSend });
-  }, [value, attachments, isBusy, onSend, resetComposer, overrideMode, classification.mode]);
+    scheduleTextareaFocus();
+  }, [
+    value,
+    attachments,
+    isBusy,
+    onSend,
+    resetComposer,
+    overrideMode,
+    classification.mode,
+    scheduleTextareaFocus,
+  ]);
 
   const handleStop = useCallback(() => {
     onStop?.();
@@ -632,13 +725,26 @@ export function Composer({
 
   // Cleanup pending rAF on unmount
   useEffect(() => {
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      if (focusTimerRef.current !== null) {
+        window.clearTimeout(focusTimerRef.current);
+      }
+      if (focusRafRef.current !== null) {
+        window.cancelAnimationFrame(focusRafRef.current);
+      }
+    };
   }, []);
 
   const ModeIcon = modeConfig.icon;
 
   return (
-    <div className="relative border-t border-border/50 bg-background px-4 py-3">
+    <div
+      ref={composerRootRef}
+      className="ask-composer relative border-t border-border/50 bg-background px-4 py-3"
+      data-busy={isBusy || undefined}
+      data-dragging={isDragging || undefined}
+    >
       {/* Hidden file input for the paperclip button */}
       <input
         ref={fileInputRef}
@@ -655,7 +761,7 @@ export function Composer({
 
       {/* Attachment preview bar */}
       {(attachments.length > 0 || uploadError || convertingFile) && (
-        <div className="mb-2 flex items-center gap-2 overflow-x-auto">
+        <div className="ask-attachment-strip mb-2 flex items-center gap-2 overflow-x-auto">
           {attachments.map((att, i) => {
             const safeName = sanitizeFilename(att.filename);
             const isImage = att.kind === "image_base64";
@@ -757,7 +863,7 @@ export function Composer({
           feedback that the backend will try to enrich it. Empty string
           deliberately makes this render nothing (not a zero-height div). */}
       {detectedUrl && (
-        <div className="mb-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground">
+        <div className="ask-url-chip mb-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground">
           <span aria-hidden="true">🔗</span>
           <span className="truncate" title={detectedUrl}>
             识别：{detectedUrl.length > 60 ? `${detectedUrl.slice(0, 60)}…` : detectedUrl}
@@ -768,17 +874,18 @@ export function Composer({
       {/* Input area — CodePilot style: textarea with inline tools */}
       <div
         className={cn(
-          "relative overflow-hidden rounded-2xl border bg-card shadow-[0_1px_8px_rgba(0,0,0,0.03)] transition-colors",
+          "ask-composer-card relative overflow-visible rounded-2xl border bg-card shadow-[0_1px_8px_rgba(0,0,0,0.03)] transition-colors",
           isDragging
             ? "border-2 border-dashed border-primary/50 bg-primary/[0.03]"
             : "border-border focus-within:border-ring",
         )}
+        data-ready={value.trim() || attachments.length > 0 ? "true" : "false"}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
         {isDragging && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5">
+          <div className="ask-composer-drag-overlay pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5">
             <Paperclip className="size-5 text-primary" strokeWidth={1.6} />
             <span className="text-[13px] font-medium text-primary">拖放文件到这里</span>
           </div>
@@ -797,13 +904,12 @@ export function Composer({
                 ? "描述你的计划..."
                 : "问点什么…    Enter 发送 · Shift+Enter 换行 · / 命令"
           }
-          disabled={isBusy}
           rows={1}
-          className="max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-relaxed text-foreground outline-none transition-[height] duration-150 ease-out placeholder:text-muted-foreground/50 disabled:pointer-events-none disabled:opacity-50"
+          className="ask-composer-textarea max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-relaxed text-foreground outline-none transition-[height] duration-150 ease-out placeholder:text-muted-foreground/50"
         />
 
         {/* Inline toolbar inside the input card */}
-        <div className="flex items-center justify-between px-3 pb-2.5">
+        <div className="ask-composer-toolbar flex items-center justify-between px-3 pb-2.5">
           <div className="flex items-center gap-1">
             {/* Attach */}
             <Button
@@ -827,140 +933,127 @@ export function Composer({
               size="icon-sm"
               variant="ghost"
               className="text-muted-foreground hover:text-foreground"
-              onClick={() => { setValue("/"); textareaRef.current?.focus(); }}
+              onClick={handleSlashToggle}
               aria-label="命令"
             >
               <ChevronDown className="size-3.5 rotate-[-90deg]" />
             </Button>
 
-            {/* Separator + model label (selector is in bottom bar) */}
+            {/* Inline mode controls: keep capability, remove the extra bottom row. */}
             <div className="mx-1 h-4 w-px bg-border" />
-            <span className="text-[11px] text-muted-foreground/60">
-              {modelLabel || "AI"}
-            </span>
+            <div className="ask-composer-mode-group flex items-center rounded-md border border-border/50">
+              <button
+                type="button"
+                className={cn(
+                  "flex items-center gap-1 rounded-l-md px-2 py-1 text-[11px] transition-colors",
+                  !isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+                )}
+                onClick={() => setPlanMode(false)}
+              >
+                <Code2 className="size-3" />
+                代码
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "flex items-center gap-1 rounded-r-md px-2 py-1 text-[11px] transition-colors",
+                  isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+                )}
+                onClick={() => setPlanMode(true)}
+              >
+                <FileSearch className="size-3" />
+                计划
+              </button>
+            </div>
+
+            <div className="relative" ref={permMenuRef}>
+              <button
+                type="button"
+                className={cn(
+                  "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors hover:bg-accent",
+                  showPermissionMenu ? "bg-accent text-foreground" : "text-muted-foreground"
+                )}
+                style={modeConfig.color ? { color: modeConfig.color } : undefined}
+                onClick={() => setShowPermissionMenu((prev) => !prev)}
+              >
+                <ModeIcon className="size-3" />
+                <span>{modeConfig.label}</span>
+              </button>
+
+              {showPermissionMenu && (
+                <div className="ask-floating-menu absolute bottom-full left-0 mb-1 w-[240px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+                  <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    权限模式
+                  </div>
+                  {PERMISSION_MODES.map((mode) => {
+                    const Icon = mode.icon;
+                    const isActive = permissionMode === mode.value;
+                    return (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                          isActive ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                        )}
+                        onClick={() => { setPermissionMode(mode.value); setShowPermissionMenu(false); }}
+                      >
+                        <Icon className="size-3 shrink-0" style={mode.color ? { color: mode.color } : undefined} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] font-medium">{mode.label}</div>
+                          <div className="text-[10px] text-muted-foreground">{mode.desc}</div>
+                        </div>
+                        {isActive && <div className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: mode.color ?? "var(--claude-orange)" }} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <ResponseModeChip
+              mode={effectiveMode}
+              confidence={classification.confidence}
+              onChange={(next) => setOverrideMode(next === classification.mode ? null : next)}
+            />
           </div>
 
           {/* Send / Stop button */}
-          {isBusy ? (
-            <Button
-              size="icon-sm"
-              variant="destructive"
-              className="rounded-full transition-transform duration-150 active:scale-95"
-              onClick={handleStop}
-              aria-label="停止"
-            >
-              <Square className="size-3.5" />
-            </Button>
-          ) : (
-            <Button
-              size="icon-sm"
-              variant="default"
-              className={cn(
-                "rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
-                value.trim() || attachments.length > 0
-                  ? "shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
-                  : "bg-primary/40 pointer-events-none",
-              )}
-              onClick={() => void handleSend()}
-              disabled={!value.trim() && attachments.length === 0}
-              aria-label="发送"
-            >
-              <ArrowUp className="size-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Bottom mode bar — CodePilot style */}
-      <div className="mt-1.5 flex items-center gap-3">
-        {/* Code / Plan mode toggle — like CodePilot */}
-        <div className="flex items-center rounded-md border border-border/50">
-          <button
-            className={cn(
-              "flex items-center gap-1 rounded-l-md px-2 py-1 text-[11px] transition-colors",
-              !isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+          <div className="flex items-center gap-1.5">
+            <ModelSelector
+              currentLabel={modelLabel || "AI"}
+              providers={providers}
+              onSwitch={onSwitchProvider}
+            />
+            {isBusy ? (
+              <Button
+                size="icon-sm"
+                variant="destructive"
+                className="ask-composer-stop rounded-full transition-transform duration-150 active:scale-95"
+                onClick={handleStop}
+                aria-label="停止"
+              >
+                <Square className="size-3.5" />
+              </Button>
+            ) : (
+              <Button
+                size="icon-sm"
+                variant="default"
+                className={cn(
+                  "ask-composer-send rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
+                  value.trim() || attachments.length > 0
+                    ? "shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
+                    : "bg-primary/40 pointer-events-none",
+                )}
+                onClick={() => void handleSend()}
+                disabled={!value.trim() && attachments.length === 0}
+                aria-label="发送"
+              >
+                <ArrowUp className="size-4" />
+              </Button>
             )}
-            onClick={() => setPlanMode(false)}
-          >
-            <Code2 className="size-3" />
-            代码
-          </button>
-          <button
-            className={cn(
-              "flex items-center gap-1 rounded-r-md px-2 py-1 text-[11px] transition-colors",
-              isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
-            )}
-            onClick={() => setPlanMode(true)}
-          >
-            <FileSearch className="size-3" />
-            计划
-          </button>
+          </div>
         </div>
-
-        {/* Permission mode selector */}
-        <div className="relative" ref={permMenuRef}>
-          <button
-            className={cn(
-              "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors hover:bg-accent",
-              showPermissionMenu ? "bg-accent text-foreground" : "text-muted-foreground"
-            )}
-            style={modeConfig.color ? { color: modeConfig.color } : undefined}
-            onClick={() => setShowPermissionMenu((prev) => !prev)}
-          >
-            <ModeIcon className="size-3" />
-            <span>{modeConfig.label}</span>
-          </button>
-
-          {showPermissionMenu && (
-            <div className="absolute bottom-full left-0 mb-1 w-[240px] rounded-lg border border-border bg-popover p-1 shadow-lg">
-              <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                权限模式
-              </div>
-              {PERMISSION_MODES.map((mode) => {
-                const Icon = mode.icon;
-                const isActive = permissionMode === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                      isActive ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
-                    )}
-                    onClick={() => { setPermissionMode(mode.value); setShowPermissionMenu(false); }}
-                  >
-                    <Icon className="size-3 shrink-0" style={mode.color ? { color: mode.color } : undefined} />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-medium">{mode.label}</div>
-                      <div className="text-[10px] text-muted-foreground">{mode.desc}</div>
-                    </div>
-                    {isActive && <div className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: mode.color ?? "var(--claude-orange)" }} />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* A1 — context-mode chip (auto-detected, user-overridable). */}
-        <ResponseModeChip
-          mode={effectiveMode}
-          confidence={classification.confidence}
-          onChange={(next) => setOverrideMode(next === classification.mode ? null : next)}
-        />
-
-
-        {/* Model selector — in bottom bar so no overflow clip */}
-        <ModelSelector
-          currentLabel={modelLabel || "AI"}
-          providers={providers}
-          onSwitch={onSwitchProvider}
-        />
-
-        {/* Environment */}
-        <span className="text-[11px] text-muted-foreground/50">
-          <Monitor className="mr-0.5 inline size-3 align-[-2px]" />
-          {environmentLabel}
-        </span>
       </div>
     </div>
   );
@@ -993,7 +1086,7 @@ function ModelSelector({
 
   if (!providers || providers.length === 0 || !onSwitch) {
     return (
-      <span className="text-[11px] text-muted-foreground/60">
+      <span className="ask-model-pill">
         {currentLabel}
       </span>
     );
@@ -1003,7 +1096,7 @@ function ModelSelector({
     <div className="relative" ref={ref}>
       <button
         type="button"
-        className="flex items-center gap-0.5 text-[11px] text-muted-foreground/60 transition-colors hover:text-foreground"
+        className="ask-model-pill"
         onClick={() => setOpen(!open)}
       >
         {currentLabel}
@@ -1011,7 +1104,7 @@ function ModelSelector({
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+        <div className="ask-floating-menu absolute bottom-full left-0 z-50 mb-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-lg">
           <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             切换模型
           </div>

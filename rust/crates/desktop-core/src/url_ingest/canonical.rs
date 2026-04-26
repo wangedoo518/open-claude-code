@@ -279,10 +279,7 @@ mod tests {
         // never heard of. The rule is: strip known noise, keep
         // everything else.
         let out = canonicalize("https://example.com/post?custom_key=v");
-        assert!(
-            out.contains("custom_key=v"),
-            "unknown param dropped: {out}"
-        );
+        assert!(out.contains("custom_key=v"), "unknown param dropped: {out}");
     }
 
     #[test]
@@ -329,9 +326,7 @@ mod tests {
     #[test]
     fn idempotent() {
         // Running canonicalize twice must be a no-op.
-        let once = canonicalize(
-            "https://mp.weixin.qq.com/s/Abc?scene=1&utm_source=x&id=42",
-        );
+        let once = canonicalize("https://mp.weixin.qq.com/s/Abc?scene=1&utm_source=x&id=42");
         let twice = canonicalize(&once);
         assert_eq!(once, twice, "canonicalize is not idempotent");
     }

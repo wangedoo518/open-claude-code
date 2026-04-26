@@ -38,9 +38,7 @@ impl MessageHandler for EchoHandler {
         let context_token = match message.context_token.as_ref() {
             Some(t) if !t.is_empty() => t.clone(),
             _ => {
-                eprintln!(
-                    "[echo] inbound message missing context_token, cannot reply"
-                );
+                eprintln!("[echo] inbound message missing context_token, cannot reply");
                 return Ok(());
             }
         };
@@ -81,11 +79,7 @@ pub(crate) fn extract_first_text(message: &WeixinMessage) -> Option<String> {
 /// Build a `WeixinMessage` envelope for an outbound text reply. The caller
 /// is responsible for supplying the original message's `context_token` —
 /// reusing a stale token would break the conversation thread.
-pub(crate) fn build_text_reply(
-    to_user_id: &str,
-    context_token: &str,
-    text: &str,
-) -> WeixinMessage {
+pub(crate) fn build_text_reply(to_user_id: &str, context_token: &str, text: &str) -> WeixinMessage {
     use std::time::{SystemTime, UNIX_EPOCH};
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -196,10 +190,7 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].r#type, Some(message_item_type::TEXT));
         assert_eq!(
-            items[0]
-                .text_item
-                .as_ref()
-                .and_then(|t| t.text.as_deref()),
+            items[0].text_item.as_ref().and_then(|t| t.text.as_deref()),
             Some("hi back")
         );
     }

@@ -86,9 +86,7 @@ pub fn extract_docx(path: &Path) -> Result<IngestResult> {
     if trimmed.is_empty() {
         return Ok(IngestResult {
             title: title.clone(),
-            body: format!(
-                "# {title}\n\n_DOCX contained no extractable text._\n"
-            ),
+            body: format!("# {title}\n\n_DOCX contained no extractable text._\n"),
             source_url: None,
             source: "docx".to_string(),
         });
@@ -250,10 +248,11 @@ fn local_name(full: &[u8]) -> &[u8] {
 fn parse_heading_level(style_val: &str) -> Option<u8> {
     let lower = style_val.to_lowercase();
     // Common patterns: "Heading1", "heading1", "Heading 1", "heading 1"
-    let stripped = lower
-        .strip_prefix("heading")
-        .map(|rest| rest.trim())?;
-    stripped.parse::<u8>().ok().filter(|&n| (1..=6).contains(&n))
+    let stripped = lower.strip_prefix("heading").map(|rest| rest.trim())?;
+    stripped
+        .parse::<u8>()
+        .ok()
+        .filter(|&n| (1..=6).contains(&n))
 }
 
 fn title_from_path(path: &Path) -> String {

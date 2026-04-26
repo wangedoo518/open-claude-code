@@ -107,10 +107,7 @@ pub struct MonitorConfig {
 ///
 /// Designed to be invoked from `tokio::spawn` and lived as a background task.
 /// Returns when the cancellation token fires.
-pub async fn run_monitor(
-    config: MonitorConfig,
-    status_tx: watch::Sender<MonitorStatus>,
-) {
+pub async fn run_monitor(config: MonitorConfig, status_tx: watch::Sender<MonitorStatus>) {
     let MonitorConfig {
         account_id,
         client,
@@ -166,9 +163,8 @@ pub async fn run_monitor(
                 }
 
                 // Surface API-layer errors (`ret`/`errcode`).
-                let api_err =
-                    matches!(resp.ret, Some(n) if n != 0)
-                        || matches!(resp.errcode, Some(n) if n != 0);
+                let api_err = matches!(resp.ret, Some(n) if n != 0)
+                    || matches!(resp.errcode, Some(n) if n != 0);
                 if api_err {
                     let is_session_expired = matches!(
                         resp.errcode,
@@ -240,9 +236,7 @@ pub async fn run_monitor(
                 if let Some(new_cursor) = resp.get_updates_buf {
                     if !new_cursor.is_empty() && new_cursor != cursor {
                         if let Err(e) = account::save_sync_buf(&account_id, &new_cursor) {
-                            eprintln!(
-                                "[wechat monitor] failed to persist cursor: {e}"
-                            );
+                            eprintln!("[wechat monitor] failed to persist cursor: {e}");
                         }
                         cursor = new_cursor;
                     }
@@ -252,9 +246,7 @@ pub async fn run_monitor(
                 for msg in messages {
                     let from = msg.from_user_id.clone().unwrap_or_default();
                     let summary = describe_message(&msg);
-                    eprintln!(
-                        "[wechat monitor] inbound from={from} summary={summary}"
-                    );
+                    eprintln!("[wechat monitor] inbound from={from} summary={summary}");
 
                     let now = unix_ms();
                     let _ = status_tx.send(MonitorStatus {
@@ -394,9 +386,7 @@ mod tests {
         let msg = WeixinMessage {
             item_list: Some(vec![MessageItem {
                 r#type: Some(message_item_type::TEXT),
-                text_item: Some(TextItem {
-                    text: Some(long),
-                }),
+                text_item: Some(TextItem { text: Some(long) }),
                 ..Default::default()
             }]),
             ..Default::default()

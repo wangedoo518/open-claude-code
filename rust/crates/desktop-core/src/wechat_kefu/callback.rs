@@ -42,11 +42,7 @@ pub struct KefuCallback {
 }
 
 impl KefuCallback {
-    pub fn new(
-        token: &str,
-        encoding_aes_key: &str,
-        corpid: &str,
-    ) -> Result<Self, CallbackError> {
+    pub fn new(token: &str, encoding_aes_key: &str, corpid: &str) -> Result<Self, CallbackError> {
         // EncodingAESKey is 43-char unpadded base64. WeChat generates keys
         // with non-canonical trailing bits (e.g. ending in 'h' where only
         // A/E/I/M/Q/U/Y/c/g/k/o/s/w/0/4/8 are canonical). Rust's base64
@@ -54,14 +50,14 @@ impl KefuCallback {
         // engine that ignores trailing padding bits.
         let key_str = encoding_aes_key.trim();
         let decoded = {
-            use base64::engine::{GeneralPurpose, GeneralPurposeConfig, DecodePaddingMode};
+            use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
             let lenient_config = GeneralPurposeConfig::new()
                 .with_decode_padding_mode(DecodePaddingMode::Indifferent)
                 .with_decode_allow_trailing_bits(true);
             let engine = GeneralPurpose::new(&base64::alphabet::STANDARD, lenient_config);
-            engine
-                .decode(key_str.as_bytes())
-                .map_err(|e| CallbackError::BadKey(format!("base64 decode failed: {e} (len={})", key_str.len())))?
+            engine.decode(key_str.as_bytes()).map_err(|e| {
+                CallbackError::BadKey(format!("base64 decode failed: {e} (len={})", key_str.len()))
+            })?
         };
 
         if decoded.len() != 32 {
@@ -137,7 +133,10 @@ impl KefuCallback {
         let plaintext = self.decrypt_aes_cbc(&encrypt_content)?;
         let content = self.extract_content(&plaintext)?;
 
-        eprintln!("[kefu callback] decrypted content: {}", &content[..200.min(content.len())]);
+        eprintln!(
+            "[kefu callback] decrypted content: {}",
+            &content[..200.min(content.len())]
+        );
         parse_callback_content(&content)
     }
 
@@ -196,17 +195,12 @@ impl KefuCallback {
     /// [16 bytes random][4 bytes msg_len (big-endian)][msg_content][corpid]
     fn extract_content(&self, plaintext: &[u8]) -> Result<String, CallbackError> {
         if plaintext.len() < 20 {
-            return Err(CallbackError::Decryption(
-                "plaintext too short".into(),
-            ));
+            return Err(CallbackError::Decryption("plaintext too short".into()));
         }
 
-        let msg_len = u32::from_be_bytes([
-            plaintext[16],
-            plaintext[17],
-            plaintext[18],
-            plaintext[19],
-        ]) as usize;
+        let msg_len =
+            u32::from_be_bytes([plaintext[16], plaintext[17], plaintext[18], plaintext[19]])
+                as usize;
 
         if 20 + msg_len > plaintext.len() {
             return Err(CallbackError::Decryption(format!(
@@ -223,9 +217,9 @@ impl KefuCallback {
 
 /// AES-256-ECB decrypt a single 16-byte block.
 fn aes_ecb_decrypt_block(key: &[u8; 32], block: &[u8]) -> Result<Vec<u8>, CallbackError> {
-    use aes_gcm::aes::Aes256;
-    use aes_gcm::aes::cipher::{BlockDecrypt, KeyInit};
     use aes_gcm::aead::generic_array::GenericArray;
+    use aes_gcm::aes::cipher::{BlockDecrypt, KeyInit};
+    use aes_gcm::aes::Aes256;
 
     let cipher = Aes256::new(GenericArray::from_slice(key));
     let mut output = GenericArray::clone_from_slice(block);
@@ -338,7 +332,10 @@ fn parse_callback_content(content: &str) -> Result<CallbackEvent, CallbackError>
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
-                    let scene = json.get("Scene").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let scene = json
+                        .get("Scene")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     return Ok(CallbackEvent::EnterSession {
                         welcome_code,
                         scene,
@@ -372,8 +369,7 @@ fn parse_callback_content(content: &str) -> Result<CallbackEvent, CallbackError>
     if let Some(event_type) = extract_xml_field(content, "Event") {
         match event_type.as_str() {
             "enter_session" => {
-                let welcome_code =
-                    extract_xml_field(content, "WelcomeCode").unwrap_or_default();
+                let welcome_code = extract_xml_field(content, "WelcomeCode").unwrap_or_default();
                 let scene = extract_xml_field(content, "Scene");
                 return Ok(CallbackEvent::EnterSession {
                     welcome_code,

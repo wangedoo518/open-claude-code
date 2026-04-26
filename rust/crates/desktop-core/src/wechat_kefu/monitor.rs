@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, watch};
-use tokio_util::sync::CancellationToken;
 use super::callback::CallbackEvent;
 use super::client::KefuClient;
 use crate::wechat_ilink::MonitorStatus;
+use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 /// Fallback polling interval when no callback event arrives.
 /// Must be long (30s+) to avoid errcode=45009 rate limiting
@@ -24,12 +24,7 @@ const SYNC_MSG_LIMIT: u32 = 100;
 /// Message handler trait for kefu messages.
 #[async_trait::async_trait]
 pub trait KefuMessageHandler: Send + Sync {
-    async fn on_message(
-        &self,
-        client: &KefuClient,
-        msg: &serde_json::Value,
-        open_kfid: &str,
-    );
+    async fn on_message(&self, client: &KefuClient, msg: &serde_json::Value, open_kfid: &str);
 }
 
 /// Configuration for the kefu monitor.
@@ -42,10 +37,7 @@ pub struct KefuMonitorConfig {
 }
 
 /// Run the dual-mode kefu monitor until cancelled.
-pub async fn run_kefu_monitor(
-    config: KefuMonitorConfig,
-    status_tx: watch::Sender<MonitorStatus>,
-) {
+pub async fn run_kefu_monitor(config: KefuMonitorConfig, status_tx: watch::Sender<MonitorStatus>) {
     let KefuMonitorConfig {
         client,
         open_kfid,

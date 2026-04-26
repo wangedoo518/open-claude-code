@@ -1123,9 +1123,8 @@ fn load_qwen_store() -> Result<StoredQwenProfileStore, String> {
                 path.display()
             )
         })?;
-        String::from_utf8(bytes).map_err(|e| {
-            format!("Qwen account store contained invalid UTF-8 after decrypt: {e}")
-        })?
+        String::from_utf8(bytes)
+            .map_err(|e| format!("Qwen account store contained invalid UTF-8 after decrypt: {e}"))?
     } else {
         // Legacy plaintext file. Read as-is; it will be re-saved encrypted
         // on the next save_qwen_store call (transparent migration).

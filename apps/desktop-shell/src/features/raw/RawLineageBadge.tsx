@@ -18,16 +18,14 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { ArrowRight, Inbox as InboxIcon } from "lucide-react";
 
 import { InfoTooltip } from "@/components/ui/info-tooltip";
-import { cn } from "@/lib/utils";
 import {
   displayTitleFor,
   formatRelativeTime,
   refLabel,
-  toneFor,
-  TONE_CLASSES,
 } from "@/features/wiki/lineage-format";
 
 // Worker A's canonical wrapper + wire type.
@@ -41,9 +39,11 @@ import {
 
 export interface RawLineageBadgeProps {
   rawId: number;
+  onOrganize?: () => void;
 }
 
-export function RawLineageBadge({ rawId }: RawLineageBadgeProps) {
+export function RawLineageBadge({ rawId, onOrganize }: RawLineageBadgeProps) {
+  const navigate = useNavigate();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["raw", "lineage", rawId] as const,
     queryFn: () => fetchRawLineage(rawId),
@@ -78,12 +78,25 @@ export function RawLineageBadge({ rawId }: RawLineageBadgeProps) {
   // ── No downstream: muted "无下游" pill. ────────────────────────
   if (events.length === 0) {
     return (
-      <span
-        className="shrink-0 rounded-full bg-muted/30 px-1.5 py-0.5 text-muted-foreground/60"
-        style={{ fontSize: 10 }}
-        title="此素材尚未产生任何下游事件"
-      >
-        无下游
+      <span className="raw-lineage-wrap">
+        <span
+          className="raw-lineage-pill raw-lineage-pill--idle"
+          title="此素材尚未产生任何下游事件"
+        >
+          未关联
+        </span>
+        {onOrganize && (
+          <button
+            type="button"
+            className="raw-lineage-organize"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOrganize();
+            }}
+          >
+            ✦ AI 整理
+          </button>
+        )}
       </span>
     );
   }
@@ -100,7 +113,7 @@ export function RawLineageBadge({ rawId }: RawLineageBadgeProps) {
   // ── Single event summary ────────────────────────────────────────
   if (events.length === 1) {
     const ev = events[0];
-    return renderSingle(ev, appliedEvent, inboxEvent);
+    return renderSingle(ev, appliedEvent, inboxEvent, navigate);
   }
 
   // ── Multi-event: a single summary pill + InfoTooltip w/ full list.
@@ -113,15 +126,17 @@ export function RawLineageBadge({ rawId }: RawLineageBadgeProps) {
 
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-0.5"
+      className="raw-lineage-wrap"
       style={{ fontSize: 10 }}
     >
       <span
-        className={cn(
-          "rounded-full px-1.5 py-0.5",
-          TONE_CLASSES[toneFor(appliedEvent?.event_type ?? "inbox_appended")]
-            .pill,
-        )}
+        className={`raw-lineage-pill ${
+          appliedEvent
+            ? "raw-lineage-pill--applied"
+            : inboxEvent
+              ? "raw-lineage-pill--pending"
+              : "raw-lineage-pill--neutral"
+        }`}
       >
         {summary}
       </span>
@@ -160,17 +175,12 @@ function renderSingle(
   ev: LineageEvent,
   appliedEvent: LineageEvent | undefined,
   inboxEvent: LineageEvent | undefined,
+  navigate: ReturnType<typeof useNavigate>,
 ) {
-  const tone = toneFor(ev.event_type);
-  const toneCls = TONE_CLASSES[tone];
-
   if (appliedEvent && appliedEvent === ev) {
     return (
       <span
-        className={cn(
-          "inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5",
-          toneCls.pill,
-        )}
+        className="raw-lineage-pill raw-lineage-pill--applied"
         style={{ fontSize: 10 }}
         title={displayTitleFor(ev)}
       >
@@ -181,28 +191,34 @@ function renderSingle(
   }
 
   if (inboxEvent && inboxEvent === ev) {
+    const inboxRef =
+      findRef(ev.downstream, "inbox") ?? findRef(ev.upstream, "inbox");
+    const inboxId = inboxRef?.kind === "inbox" ? inboxRef.id : null;
     return (
-      <span
-        className={cn(
-          "inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5",
-          toneCls.pill,
-        )}
+      <button
+        type="button"
+        className="raw-lineage-pill raw-lineage-pill--pending raw-lineage-pill--button"
         style={{ fontSize: 10 }}
         title={displayTitleFor(ev)}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (inboxId != null) {
+            navigate(`/inbox?task=${inboxId}`);
+          } else {
+            navigate("/inbox");
+          }
+        }}
       >
         <InboxIcon className="size-2.5" aria-hidden />
         {summarizeInbox(ev)}
-      </span>
+      </button>
     );
   }
 
   // Fallback: just the display title.
   return (
     <span
-      className={cn(
-        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5",
-        toneCls.pill,
-      )}
+      className="raw-lineage-pill raw-lineage-pill--neutral"
       style={{ fontSize: 10 }}
     >
       {displayTitleFor(ev)}
@@ -225,12 +241,8 @@ function summarizeApplied(ev: LineageEvent): string {
 }
 
 function summarizeInbox(ev: LineageEvent): string {
-  const inboxRef =
-    findRef(ev.downstream, "inbox") ?? findRef(ev.upstream, "inbox");
-  if (inboxRef && inboxRef.kind === "inbox") {
-    return `已入队 inbox #${inboxRef.id}`;
-  }
-  return "已入队";
+  void ev;
+  return "待整理";
 }
 
 function findRef(

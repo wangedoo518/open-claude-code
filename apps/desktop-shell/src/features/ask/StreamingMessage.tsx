@@ -38,6 +38,14 @@ interface StreamingMessageProps {
   isComplete?: boolean;
 }
 
+function getRevealStep(remaining: number): number {
+  // Large SSE chunks should feel like text is being laid down, not pasted.
+  // Keep the step adaptive so tiny chunks stay responsive while 10k+ bursts
+  // catch up in under a second without a single-frame flash.
+  const adaptiveStep = Math.ceil(remaining * 0.055);
+  return Math.min(220, Math.max(28, adaptiveStep));
+}
+
 export const StreamingMessage = memo(function StreamingMessage({
   content,
   thinkingContent,
@@ -89,21 +97,22 @@ export const StreamingMessage = memo(function StreamingMessage({
       if (revealRafRef.current !== null) return;
       revealRafRef.current = requestAnimationFrame(() => {
         revealRafRef.current = null;
-        setDisplayContent((prev) => {
-          const target = targetContentRef.current;
-          if (!target.startsWith(prev) || target.length <= prev.length) {
-            displayContentRef.current = target;
-            return target;
-          }
+        const target = targetContentRef.current;
+        const prev = displayContentRef.current;
 
-          const remaining = target.length - prev.length;
-          const step = Math.min(remaining, Math.max(96, Math.ceil(remaining * 0.24)));
-          const next = target.slice(0, prev.length + step);
-          displayContentRef.current = next;
-          return next;
-        });
+        if (!target.startsWith(prev) || target.length <= prev.length) {
+          displayContentRef.current = target;
+          setDisplayContent(target);
+          return;
+        }
 
-        if (displayContentRef.current.length < targetContentRef.current.length) {
+        const remaining = target.length - prev.length;
+        const step = Math.min(remaining, getRevealStep(remaining));
+        const next = target.slice(0, prev.length + step);
+        displayContentRef.current = next;
+        setDisplayContent(next);
+
+        if (next.length < target.length) {
           revealNextFrame();
         }
       });

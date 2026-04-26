@@ -41,7 +41,10 @@ fn worker_script_path() -> std::path::PathBuf {
 /// Check if Playwright is available.
 pub async fn check_environment() -> Result<String, String> {
     let output = Command::new("python")
-        .args(["-c", "from playwright.sync_api import sync_playwright; print('ok')"])
+        .args([
+            "-c",
+            "from playwright.sync_api import sync_playwright; print('ok')",
+        ])
         .output()
         .await
         .map_err(|e| format!("Python not found: {e}"))?;
@@ -63,7 +66,6 @@ pub async fn check_environment() -> Result<String, String> {
 /// Fetch a WeChat article via Playwright and return as IngestResult.
 /// Fetch any URL via Playwright + defuddle. Works for WeChat and all other sites.
 pub async fn fetch_wechat_article(url: &str) -> Result<IngestResult, crate::IngestError> {
-
     let worker = worker_script_path();
     let request = serde_json::json!({ "url": url });
 
@@ -91,9 +93,7 @@ pub async fn fetch_wechat_article(url: &str) -> Result<IngestResult, crate::Inge
     let output = timeout(Duration::from_secs(TIMEOUT_SECS), child.wait_with_output())
         .await
         .map_err(|_| {
-            crate::IngestError::Parse(format!(
-                "WeChat fetch timed out after {TIMEOUT_SECS}s"
-            ))
+            crate::IngestError::Parse(format!("WeChat fetch timed out after {TIMEOUT_SECS}s"))
         })?
         .map_err(|e| crate::IngestError::Parse(format!("Process error: {e}")))?;
 
@@ -122,10 +122,24 @@ pub async fn fetch_wechat_article(url: &str) -> Result<IngestResult, crate::Inge
         )));
     }
 
-    let title = response.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let author = response.get("author").and_then(|v| v.as_str()).unwrap_or("");
-    let publish_time = response.get("publish_time").and_then(|v| v.as_str()).unwrap_or("");
-    let markdown = response.get("markdown").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let title = response
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let author = response
+        .get("author")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let publish_time = response
+        .get("publish_time")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let markdown = response
+        .get("markdown")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     // Build frontmatter-style body. Author / published lines stay raw
     // (single-line metadata, no HTML entities expected) but the article
@@ -143,7 +157,11 @@ pub async fn fetch_wechat_article(url: &str) -> Result<IngestResult, crate::Inge
     body.push_str(&cleaned_markdown);
 
     Ok(IngestResult {
-        title: if title.is_empty() { "WeChat Article".to_string() } else { title },
+        title: if title.is_empty() {
+            "WeChat Article".to_string()
+        } else {
+            title
+        },
         body,
         source_url: Some(url.to_string()),
         source: "wechat-article".to_string(),

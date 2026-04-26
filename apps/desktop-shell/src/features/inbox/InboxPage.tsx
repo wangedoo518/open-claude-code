@@ -17,17 +17,22 @@ import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/rea
 import {
   Loader2,
   Inbox as InboxIcon,
+  Check,
   CheckCircle2,
   XCircle,
   FileText,
+  FilePlus2,
+  GitMerge,
   ArrowRight,
   Sparkles,
   Save,
   CheckSquare,
   CheckSquare2,
+  Pencil,
   Square,
   X,
   HelpCircle,
+  type LucideIcon,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -123,8 +128,215 @@ function translateStatus(status: string): string {
   return map[status] ?? status;
 }
 
+const INBOX_MERGE_COLOR = "#2A6BB8";
+const INBOX_CREATE_COLOR = "#1D9E75";
+
+type InboxVisualAction = "merge" | "create";
+
+function getVisualAction(entry: IntelligentEntry): InboxVisualAction {
+  const action = entry.intelligence.recommended_action;
+  if (action === "update_existing" || action === "open_diff_preview") {
+    return "merge";
+  }
+  return "create";
+}
+
+function getTargetLabel(entry: IntelligentEntry): string {
+  return (
+    entry.intelligence.target_candidate?.slug ??
+    entry.target_page_slug ??
+    entry.proposed_title ??
+    entry.proposed_wiki_slug ??
+    entry.title
+  );
+  /*
+    <div className="inbox-redesign-page">
+      <div className="inbox-redesign-shell">
+        <header className="inbox-redesign-hero">
+          <div className="inbox-redesign-hero-copy">
+            <div className="inbox-redesign-kicker">INBOX · 待整理</div>
+            <h1 className="inbox-redesign-title">
+              有 <span>{pendingEntries.length}</span> 条等你判断
+            </h1>
+            <p className="inbox-redesign-subtitle">
+              微信新内容由 Maintainer 自动审阅，分类后等你最终决定 · 预计需 {estimatedMinutes} 分钟
+            </p>
+          </div>
+          <div className="inbox-redesign-hero-actions">
+            <button
+              type="button"
+              onClick={handleToggleBatchMode}
+              className="inbox-redesign-secondary-button"
+            >
+              {batchMode ? (
+                <CheckSquare2 className="size-3.5" aria-hidden />
+              ) : (
+                <Square className="size-3.5" aria-hidden />
+              )}
+              批量编辑
+            </button>
+            <button
+              type="button"
+              className="inbox-redesign-primary-button"
+              onClick={() => void handleAcceptEntries(pendingEntries)}
+              disabled={pendingEntries.length === 0}
+            >
+              <Sparkles className="size-3.5" aria-hidden />
+              一键接受全部
+              <ArrowRight className="inbox-redesign-button-arrow size-3.5" aria-hidden />
+            </button>
+          </div>
+        </header>
+
+        <section className="inbox-redesign-metrics" aria-label="待整理概览">
+          <InboxMetricCard
+            icon={FilePlus2}
+            iconClassName="inbox-redesign-metric-icon--create"
+            value={createEntries.length}
+            label="建议新建页"
+          />
+          <InboxMetricCard
+            icon={GitMerge}
+            iconClassName="inbox-redesign-metric-icon--merge"
+            value={mergeEntries.length}
+            label="建议合并到已有页"
+          />
+          <InboxMetricCard
+            icon={CheckCircle2}
+            iconClassName="inbox-redesign-metric-icon--done"
+            value={processedTodayCount}
+            label="今日已处理"
+          />
+        </section>
+
+        {focusState === "missing" && (
+          <div className="inbox-redesign-banner">
+            <DeepLinkNotFoundBanner
+              message="这个任务不存在或已被处理"
+              detail={<>task {selectedIdLabel}</>}
+              onClear={() => setSelectedId(null)}
+            />
+          </div>
+        )}
+
+        {batchMode && (
+          <div className="inbox-redesign-batch-toolbar">
+            <BatchActionsToolbar
+              selectedIds={selectedIdList}
+              totalPending={listQuery.data?.pending_count ?? 0}
+              onClearSelection={clearBatchSelection}
+              onResolved={({ succeededIds, failedIds }) => {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  for (const id of succeededIds) next.delete(id);
+                  return next;
+                });
+                void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+                if (failedIds.length === 0) {
+                  setBatchMode(false);
+                }
+              }}
+              mergeTargetSlug={mergeTargetSlug}
+              onMergeClick={() => setCombinedOpen(true)}
+            />
+          </div>
+        )}
+
+        <InboxRedesignList
+          entries={intelligentEntries}
+          isLoading={listQuery.isLoading}
+          error={listQuery.error}
+          selectedId={selectedId}
+          onSelect={(id) => setSelectedId(id)}
+          onAccept={handleQuickAccept}
+          onReject={handleQuickReject}
+          onAcceptEntries={handleAcceptEntries}
+          batchMode={batchMode}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelected}
+          onBulkSelect={bulkSelect}
+          sharedTargetCounts={sharedTargetCounts}
+        />
+      </div>
+
+      {mergeTargetSlug && combinedOpen && selectedIds.size >= 2 && (
+        <CombinedPreviewDialog
+          open={combinedOpen}
+          onOpenChange={setCombinedOpen}
+          targetSlug={mergeTargetSlug}
+          inboxIds={selectedIdList}
+          titles={combinedTitles}
+          sourceRawIds={combinedSourceRawIds}
+          scores={combinedScores}
+          onApplied={handleCombinedApplied}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    entry.intelligence.target_candidate?.slug ??
+    entry.target_page_slug ??
+    entry.proposed_title ??
+    entry.proposed_wiki_slug ??
+    entry.title
+  );
+  */
+}
+
+function formatRelativeTime(value: string | null | undefined): string {
+  if (!value) return "刚刚";
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "刚刚";
+  const diffMs = Math.max(0, Date.now() - timestamp);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diffMs < minute) return "刚刚";
+  if (diffMs < hour) return `${Math.floor(diffMs / minute)} 分钟前`;
+  if (diffMs < day) return `${Math.floor(diffMs / hour)} 小时前`;
+  if (diffMs < 30 * day) return `${Math.floor(diffMs / day)} 天前`;
+  return `${Math.floor(diffMs / (30 * day))} 个月前`;
+}
+
+function isToday(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
+}
+
+function getSourceLabel(entry: IntelligentEntry): string {
+  const text = `${entry.title} ${entry.description}`.toLowerCase();
+  if (text.includes("http") || text.includes("url") || text.includes("链接")) {
+    return "微信链接";
+  }
+  return "微信文章";
+}
+
+function isUrlLikeTitle(title: string): boolean {
+  return /^https?:\/\//i.test(title) || /^[a-z0-9-]+(\.[a-z0-9-]+)+/i.test(title);
+}
+
+function pendingByScore(entries: IntelligentEntry[]): IntelligentEntry[] {
+  return entries
+    .filter((entry) => entry.status === "pending")
+    .slice()
+    .sort((a, b) => {
+      const scoreDelta = b.intelligence.score - a.intelligence.score;
+      if (scoreDelta !== 0) return scoreDelta;
+      return b.id - a.id;
+    });
+}
+
 export function InboxPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   // URL is the source of truth for the focused task. The hook handles
   // lazy init from ?task=N, reverse-sync on external URL changes
@@ -392,6 +604,224 @@ export function InboxPage() {
     [queryClient],
   );
 
+  const pendingEntries = useMemo(
+    () => pendingByScore(intelligentEntries),
+    [intelligentEntries],
+  );
+
+  const mergeEntries = useMemo(
+    () => pendingEntries.filter((entry) => getVisualAction(entry) === "merge"),
+    [pendingEntries],
+  );
+
+  const createEntries = useMemo(
+    () => pendingEntries.filter((entry) => getVisualAction(entry) === "create"),
+    [pendingEntries],
+  );
+
+  const processedTodayCount = useMemo(
+    () =>
+      intelligentEntries.filter(
+        (entry) => entry.status !== "pending" && isToday(entry.resolved_at),
+      ).length,
+    [intelligentEntries],
+  );
+
+  const estimatedMinutes = Math.max(1, Math.ceil(pendingEntries.length * 7 / 60));
+
+  const quickAcceptEntry = useCallback(async (entry: IntelligentEntry) => {
+    const action = entry.intelligence.recommended_action;
+    const targetSlug =
+      entry.intelligence.target_candidate?.slug ?? entry.target_page_slug ?? null;
+
+    if (action === "open_diff_preview" && entry.proposal_status === "pending") {
+      await applyProposal(entry.id);
+      return;
+    }
+
+    if ((action === "update_existing" || action === "open_diff_preview") && targetSlug) {
+      await maintainInboxEntry(entry.id, {
+        action: "update_existing",
+        target_page_slug: targetSlug,
+      });
+      return;
+    }
+
+    await maintainInboxEntry(entry.id, { action: "create_new" });
+  }, []);
+
+  const handleQuickAccept = useCallback(
+    async (entry: IntelligentEntry) => {
+      try {
+        await quickAcceptEntry(entry);
+      } finally {
+        void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+      }
+    },
+    [queryClient, quickAcceptEntry],
+  );
+
+  const handleQuickReject = useCallback(
+    async (entry: IntelligentEntry) => {
+      await resolveInboxEntry(entry.id, "reject");
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+    },
+    [queryClient],
+  );
+
+  const handleAcceptEntries = useCallback(
+    async (items: IntelligentEntry[]) => {
+      if (items.length === 0) return;
+      for (const entry of items) {
+        try {
+          await quickAcceptEntry(entry);
+        } catch (error) {
+          console.warn("Failed to accept inbox entry", entry.id, error);
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+    },
+    [queryClient, quickAcceptEntry],
+  );
+
+  const handleOpenEntryInAsk = useCallback(
+    (entry: IntelligentEntry) => {
+      const href = buildAskBindUrl({
+        kind: "inbox",
+        id: entry.id,
+        title: entry.title,
+      });
+      navigate(href.replace(/^#/, ""));
+    },
+    [navigate],
+  );
+
+  return (
+    <div className="inbox-redesign-page">
+      <div className="inbox-redesign-shell">
+        <header className="inbox-redesign-hero">
+          <div className="inbox-redesign-hero-copy">
+            <div className="inbox-redesign-kicker">INBOX · 待整理</div>
+            <h1 className="inbox-redesign-title">
+              有 <span>{pendingEntries.length}</span> 条等你判断
+            </h1>
+            <p className="inbox-redesign-subtitle">
+              微信新内容由 Maintainer 自动审阅，分类后等你最终决定 · 预计需 {estimatedMinutes} 分钟
+            </p>
+          </div>
+          <div className="inbox-redesign-hero-actions">
+            <button
+              type="button"
+              onClick={handleToggleBatchMode}
+              className="inbox-redesign-secondary-button"
+            >
+              {batchMode ? (
+                <CheckSquare2 className="size-3.5" aria-hidden />
+              ) : (
+                <Square className="size-3.5" aria-hidden />
+              )}
+              批量编辑
+            </button>
+            <button
+              type="button"
+              className="inbox-redesign-primary-button"
+              onClick={() => void handleAcceptEntries(pendingEntries)}
+              disabled={pendingEntries.length === 0}
+            >
+              <Sparkles className="size-3.5" aria-hidden />
+              一键接受全部
+              <ArrowRight className="inbox-redesign-button-arrow size-3.5" aria-hidden />
+            </button>
+          </div>
+        </header>
+
+        <section className="inbox-redesign-metrics" aria-label="待整理概览">
+          <InboxMetricCard
+            icon={FilePlus2}
+            iconClassName="inbox-redesign-metric-icon--create"
+            value={createEntries.length}
+            label="建议新建页"
+          />
+          <InboxMetricCard
+            icon={GitMerge}
+            iconClassName="inbox-redesign-metric-icon--merge"
+            value={mergeEntries.length}
+            label="建议合并到已有页"
+          />
+          <InboxMetricCard
+            icon={CheckCircle2}
+            iconClassName="inbox-redesign-metric-icon--done"
+            value={processedTodayCount}
+            label="今日已处理"
+          />
+        </section>
+
+        {focusState === "missing" && (
+          <div className="inbox-redesign-banner">
+            <DeepLinkNotFoundBanner
+              message="这个任务不存在或已被处理"
+              detail={<>task {selectedIdLabel}</>}
+              onClear={() => setSelectedId(null)}
+            />
+          </div>
+        )}
+
+        {batchMode && (
+          <div className="inbox-redesign-batch-toolbar">
+            <BatchActionsToolbar
+              selectedIds={selectedIdList}
+              totalPending={listQuery.data?.pending_count ?? 0}
+              onClearSelection={clearBatchSelection}
+              onResolved={({ succeededIds, failedIds }) => {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  for (const id of succeededIds) next.delete(id);
+                  return next;
+                });
+                void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+                if (failedIds.length === 0) {
+                  setBatchMode(false);
+                }
+              }}
+              mergeTargetSlug={mergeTargetSlug}
+              onMergeClick={() => setCombinedOpen(true)}
+            />
+          </div>
+        )}
+
+        <InboxRedesignList
+          entries={intelligentEntries}
+          isLoading={listQuery.isLoading}
+          error={listQuery.error}
+          selectedId={selectedId}
+          onSelect={(id) => setSelectedId(id)}
+          onAccept={handleQuickAccept}
+          onReject={handleQuickReject}
+          onEdit={handleOpenEntryInAsk}
+          onAcceptEntries={handleAcceptEntries}
+          batchMode={batchMode}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelected}
+          onBulkSelect={bulkSelect}
+          sharedTargetCounts={sharedTargetCounts}
+        />
+      </div>
+
+      {mergeTargetSlug && combinedOpen && selectedIds.size >= 2 && (
+        <CombinedPreviewDialog
+          open={combinedOpen}
+          onOpenChange={setCombinedOpen}
+          targetSlug={mergeTargetSlug}
+          inboxIds={selectedIdList}
+          titles={combinedTitles}
+          sourceRawIds={combinedSourceRawIds}
+          scores={combinedScores}
+          onApplied={handleCombinedApplied}
+        />
+      )}
+    </div>
+  );
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Page head */}
@@ -503,8 +933,8 @@ export function InboxPage() {
             />
           ) : focusState === "focused" && selectedEntry ? (
             <EntryDetail
-              key={selectedEntry.id}
-              entry={selectedEntry}
+              key={selectedEntry!.id}
+              entry={selectedEntry!}
               selectedIdLabel={selectedIdLabel}
               onClearFocus={() => setSelectedId(null)}
             />
@@ -540,7 +970,7 @@ export function InboxPage() {
         <CombinedPreviewDialog
           open={combinedOpen}
           onOpenChange={setCombinedOpen}
-          targetSlug={mergeTargetSlug}
+          targetSlug={mergeTargetSlug ?? ""}
           inboxIds={selectedIdList}
           titles={combinedTitles}
           sourceRawIds={combinedSourceRawIds}
@@ -549,6 +979,349 @@ export function InboxPage() {
         />
       )}
     </div>
+  );
+}
+
+function InboxMetricCard({
+  icon: Icon,
+  iconClassName,
+  value,
+  label,
+}: {
+  icon: LucideIcon;
+  iconClassName: string;
+  value: number;
+  label: string;
+}) {
+  return (
+    <article className="inbox-redesign-metric-card">
+      <div className={`inbox-redesign-metric-icon ${iconClassName}`}>
+        <Icon className="size-4" strokeWidth={1.8} aria-hidden />
+      </div>
+      <div>
+        <div className="inbox-redesign-metric-value">{value}</div>
+        <div className="inbox-redesign-metric-label">{label}</div>
+      </div>
+    </article>
+  );
+}
+
+function InboxRedesignList({
+  entries,
+  isLoading,
+  error,
+  selectedId,
+  onSelect,
+  onAccept,
+  onReject,
+  onEdit,
+  onAcceptEntries,
+  batchMode,
+  selectedIds,
+  onToggleSelect,
+  onBulkSelect,
+}: {
+  entries: IntelligentEntry[];
+  isLoading: boolean;
+  error: Error | null;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  onAccept: (entry: IntelligentEntry) => void | Promise<void>;
+  onReject: (entry: IntelligentEntry) => void | Promise<void>;
+  onEdit: (entry: IntelligentEntry) => void;
+  onAcceptEntries: (entries: IntelligentEntry[]) => void | Promise<void>;
+  batchMode: boolean;
+  selectedIds: Set<number>;
+  onToggleSelect: (id: number) => void;
+  onBulkSelect: (ids: number[], on: boolean) => void;
+  sharedTargetCounts: Map<string, number>;
+}) {
+  const pendingEntries = useMemo(() => pendingByScore(entries), [entries]);
+  const mergeEntries = useMemo(
+    () => pendingEntries.filter((entry) => getVisualAction(entry) === "merge"),
+    [pendingEntries],
+  );
+  const createEntries = useMemo(
+    () => pendingEntries.filter((entry) => getVisualAction(entry) === "create"),
+    [pendingEntries],
+  );
+
+  if (isLoading) {
+    return (
+      <div className="inbox-redesign-state">
+        <Loader2 className="mx-auto mb-2 size-4 animate-spin" />
+        正在载入待整理内容…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="inbox-redesign-error">
+        加载待整理内容失败：{error.message}
+      </div>
+    );
+  }
+
+  if (pendingEntries.length === 0) {
+    return (
+      <div className="inbox-redesign-empty">
+        <EmptyState
+          size="full"
+          icon={InboxIcon}
+          title="暂时没有待整理内容"
+          description="微信、网页链接或手动加入的素材，经过 Maintainer 审阅后会出现在这里。"
+          primaryAction={{
+            label: "打开素材库",
+            onClick: () => {
+              window.location.hash = "#/raw";
+            },
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="inbox-redesign-list">
+      <InboxRedesignGroup
+        title="建议合并到已有页"
+        count={mergeEntries.length}
+        priority="优先处理"
+        color={INBOX_MERGE_COLOR}
+        entries={mergeEntries}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        onAccept={onAccept}
+        onReject={onReject}
+        onEdit={onEdit}
+        onAcceptEntries={onAcceptEntries}
+        batchMode={batchMode}
+        selectedIds={selectedIds}
+        onToggleSelect={onToggleSelect}
+        onBulkSelect={onBulkSelect}
+      />
+      <InboxRedesignGroup
+        title="建议新建页"
+        count={createEntries.length}
+        color={INBOX_CREATE_COLOR}
+        entries={createEntries}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        onAccept={onAccept}
+        onReject={onReject}
+        onEdit={onEdit}
+        onAcceptEntries={onAcceptEntries}
+        batchMode={batchMode}
+        selectedIds={selectedIds}
+        onToggleSelect={onToggleSelect}
+        onBulkSelect={onBulkSelect}
+      />
+    </div>
+  );
+}
+
+function InboxRedesignGroup({
+  title,
+  count,
+  priority,
+  color,
+  entries,
+  selectedId,
+  onSelect,
+  onAccept,
+  onReject,
+  onEdit,
+  onAcceptEntries,
+  batchMode,
+  selectedIds,
+  onToggleSelect,
+  onBulkSelect,
+}: {
+  title: string;
+  count: number;
+  priority?: string;
+  color: string;
+  entries: IntelligentEntry[];
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  onAccept: (entry: IntelligentEntry) => void | Promise<void>;
+  onReject: (entry: IntelligentEntry) => void | Promise<void>;
+  onEdit: (entry: IntelligentEntry) => void;
+  onAcceptEntries: (entries: IntelligentEntry[]) => void | Promise<void>;
+  batchMode: boolean;
+  selectedIds: Set<number>;
+  onToggleSelect: (id: number) => void;
+  onBulkSelect: (ids: number[], on: boolean) => void;
+}) {
+  if (entries.length === 0) return null;
+
+  const ids = entries.map((entry) => entry.id);
+  const selectedInGroup = ids.filter((id) => selectedIds.has(id));
+  const allSelected = selectedInGroup.length === ids.length;
+
+  return (
+    <section className="inbox-redesign-group">
+      <div className="inbox-redesign-group-header">
+        <div className="inbox-redesign-group-title">
+          <span
+            className="inbox-redesign-group-stripe"
+            style={{ backgroundColor: color }}
+            aria-hidden
+          />
+          <span>{title}</span>
+          <span className="inbox-redesign-group-count">· {count} 条</span>
+          {priority && (
+            <span className="inbox-redesign-group-priority">· {priority}</span>
+          )}
+        </div>
+        <div className="inbox-redesign-group-actions">
+          {batchMode && (
+            <button
+              type="button"
+              className="inbox-redesign-group-select"
+              onClick={() => onBulkSelect(ids, !allSelected)}
+            >
+              {allSelected ? "取消选择" : "选择本组"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="inbox-redesign-group-accept"
+            onClick={() => void onAcceptEntries(entries)}
+          >
+            全部接受
+          </button>
+        </div>
+      </div>
+
+      <div className="inbox-redesign-rows">
+        {entries.map((entry, index) => (
+          <InboxRedesignRow
+            key={entry.id}
+            entry={entry}
+            active={entry.id === selectedId}
+            color={color}
+            batchMode={batchMode}
+            selected={selectedIds.has(entry.id)}
+            index={index}
+            onSelect={() => onSelect(entry.id)}
+            onToggleSelect={() => onToggleSelect(entry.id)}
+            onAccept={() => void onAccept(entry)}
+            onEdit={() => onEdit(entry)}
+            onReject={() => void onReject(entry)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InboxRedesignRow({
+  entry,
+  active,
+  color,
+  batchMode,
+  selected,
+  index,
+  onSelect,
+  onToggleSelect,
+  onAccept,
+  onEdit,
+  onReject,
+}: {
+  entry: IntelligentEntry;
+  active: boolean;
+  color: string;
+  batchMode: boolean;
+  selected: boolean;
+  index: number;
+  onSelect: () => void;
+  onToggleSelect: () => void;
+  onAccept: () => void;
+  onEdit: () => void;
+  onReject: () => void;
+}) {
+  const visualAction = getVisualAction(entry);
+  const actionText = visualAction === "merge" ? "合并到" : "新建页";
+  const target = getTargetLabel(entry);
+  const targetColor = visualAction === "merge" ? INBOX_MERGE_COLOR : INBOX_CREATE_COLOR;
+  const titleClassName = isUrlLikeTitle(entry.title)
+    ? "inbox-redesign-row-title inbox-redesign-row-title--url"
+    : "inbox-redesign-row-title";
+
+  return (
+    <article
+      id={`inbox-task-${entry.id}`}
+      className={`inbox-redesign-row ${active ? "is-active" : ""}`}
+      style={{ animationDelay: `${Math.min(index * 30, 360)}ms` }}
+      onClick={onSelect}
+    >
+      <span
+        className="inbox-redesign-row-stripe"
+        style={{ backgroundColor: color }}
+        aria-hidden
+      />
+      {batchMode && (
+        <label
+          className="inbox-redesign-row-check"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelect}
+            aria-label={`选择 ${entry.title}`}
+          />
+        </label>
+      )}
+
+      <div className="inbox-redesign-row-main">
+        <div className={titleClassName} title={entry.title}>
+          {entry.title}
+        </div>
+        <div className="inbox-redesign-row-meta">
+          <span>{actionText} →</span>
+          <span className="inbox-redesign-row-target" style={{ color: targetColor }}>
+            “{target}”
+          </span>
+          <span>·</span>
+          <span>{formatRelativeTime(entry.created_at)}</span>
+          <span>·</span>
+          <span>{getSourceLabel(entry)}</span>
+        </div>
+      </div>
+
+      <div className="inbox-redesign-row-actions" onClick={(event) => event.stopPropagation()}>
+        <button
+          type="button"
+          className="inbox-redesign-row-action inbox-redesign-row-action--accept"
+          onClick={onAccept}
+          aria-label="接受"
+          title="接受"
+        >
+          <Check className="size-3.5" aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="inbox-redesign-row-action inbox-redesign-row-action--edit"
+          onClick={onEdit}
+          aria-label="进入 Ask 撰写"
+          title="进入 Ask 撰写"
+        >
+          <Pencil className="size-3.5" aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="inbox-redesign-row-action inbox-redesign-row-action--reject"
+          onClick={onReject}
+          aria-label="忽略"
+          title="忽略"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+    </article>
   );
 }
 

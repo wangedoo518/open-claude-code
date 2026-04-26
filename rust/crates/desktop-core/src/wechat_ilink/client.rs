@@ -236,8 +236,7 @@ impl IlinkClient {
 
 impl Default for IlinkClient {
     fn default() -> Self {
-        Self::new(DEFAULT_BASE_URL, "")
-            .expect("DEFAULT_BASE_URL is a valid HTTPS URL")
+        Self::new(DEFAULT_BASE_URL, "").expect("DEFAULT_BASE_URL is a valid HTTPS URL")
     }
 }
 

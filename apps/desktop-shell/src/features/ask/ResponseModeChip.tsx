@@ -121,7 +121,7 @@ export function ResponseModeChip({
         </button>
 
         {open && clickable && (
-          <div className="absolute bottom-full left-0 z-50 mb-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+          <div className="ask-floating-menu absolute bottom-full left-0 z-50 mb-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-lg">
             <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               上下文模式
             </div>

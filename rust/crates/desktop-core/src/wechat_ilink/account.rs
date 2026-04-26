@@ -155,8 +155,7 @@ pub fn list_account_ids() -> Result<Vec<String>, AccountError> {
         return Ok(Vec::new());
     }
     let raw = fs::read_to_string(&path)?;
-    let parsed: Vec<String> =
-        serde_json::from_str(&raw).unwrap_or_default();
+    let parsed: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
     Ok(parsed
         .into_iter()
         .filter(|s| !s.trim().is_empty())
@@ -292,8 +291,7 @@ pub fn load_context_tokens(account_id: &str) -> Result<HashMap<String, String>, 
         return Ok(HashMap::new());
     }
     let raw = fs::read_to_string(&path)?;
-    let parsed: HashMap<String, String> =
-        serde_json::from_str(&raw).unwrap_or_default();
+    let parsed: HashMap<String, String> = serde_json::from_str(&raw).unwrap_or_default();
     Ok(parsed)
 }
 
@@ -451,10 +449,7 @@ mod tests {
         let raw = "09cf1cc91c42@im.bot";
         let normalized = normalize_account_id(raw);
         assert_eq!(normalized, "09cf1cc91c42-im-bot");
-        assert_eq!(
-            denormalize_account_id(&normalized),
-            Some(raw.to_string())
-        );
+        assert_eq!(denormalize_account_id(&normalized), Some(raw.to_string()));
     }
 
     #[test]
@@ -611,10 +606,7 @@ mod tests {
 
         let loaded = load_openid_sessions(id).unwrap();
         assert_eq!(loaded.len(), 2);
-        assert_eq!(
-            loaded.get("alice@im.wechat").unwrap(),
-            "desktop-session-99"
-        );
+        assert_eq!(loaded.get("alice@im.wechat").unwrap(), "desktop-session-99");
         assert_eq!(loaded.get("bob@im.wechat").unwrap(), "desktop-session-2");
     }
 

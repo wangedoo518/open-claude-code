@@ -15,17 +15,15 @@ export function SettingGroup({
   className,
 }: SettingGroupProps) {
   return (
-    <div className={cn("rounded-lg border border-border p-4", className)}>
-      <div className="mb-3">
-        <h3 className="text-subhead font-semibold text-foreground">{title}</h3>
+    <section className={cn("settings-lite-section", className)}>
+      <div className="settings-lite-section-head">
+        <h3 className="settings-lite-section-title">{title}</h3>
         {description && (
-          <p className="mt-0.5 text-caption text-muted-foreground">
-            {description}
-          </p>
+          <p className="settings-lite-section-desc">{description}</p>
         )}
       </div>
-      <div className="space-y-3">{children}</div>
-    </div>
+      <div className="settings-lite-section-body">{children}</div>
+    </section>
   );
 }
 
@@ -45,17 +43,17 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-4 py-1",
+        "settings-lite-row",
         className
       )}
     >
-      <div className="flex-1">
-        <div className="text-body-sm text-foreground">{label}</div>
+      <div className="settings-lite-row-copy">
+        <div className="settings-lite-row-label">{label}</div>
         {description && (
-          <div className="text-caption text-muted-foreground">{description}</div>
+          <div className="settings-lite-row-desc">{description}</div>
         )}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="settings-lite-row-control">{children}</div>
     </div>
   );
 }

@@ -34,10 +34,8 @@ impl Default for PatrolConfig {
 pub fn detect_orphans(paths: &WikiPaths) -> Vec<PatrolIssue> {
     let all_pages = wiki_store::list_all_wiki_pages(paths).unwrap_or_default();
     let backlinks: BacklinksIndex = wiki_store::load_backlinks_index(paths).unwrap_or_default();
-    let index_content = std::fs::read_to_string(
-        paths.wiki.join(wiki_store::WIKI_INDEX_FILENAME),
-    )
-    .unwrap_or_default();
+    let index_content = std::fs::read_to_string(paths.wiki.join(wiki_store::WIKI_INDEX_FILENAME))
+        .unwrap_or_default();
 
     // Reuse the unified orphan predicate from wiki_store so /api/wiki/stats
     // and /api/wiki/patrol never disagree on what counts as an orphan.
@@ -48,8 +46,7 @@ pub fn detect_orphans(paths: &WikiPaths) -> Vec<PatrolIssue> {
                 kind: PatrolIssueKind::Orphan,
                 page_slug: page.slug.clone(),
                 description: "该页面无任何入链, 且不被 index.md 引用".to_string(),
-                suggested_action: "添加至相关 topic 页面的引用, 或标记为 deprecated"
-                    .to_string(),
+                suggested_action: "添加至相关 topic 页面的引用, 或标记为 deprecated".to_string(),
             });
         }
     }
@@ -71,9 +68,7 @@ pub fn detect_stale(paths: &WikiPaths, threshold_days: u32) -> Vec<PatrolIssue> 
             issues.push(PatrolIssue {
                 kind: PatrolIssueKind::Stale,
                 page_slug: page.slug.clone(),
-                description: format!(
-                    "页面创建于 {page_date}, 超过 {threshold_days} 天未验证"
-                ),
+                description: format!("页面创建于 {page_date}, 超过 {threshold_days} 天未验证"),
                 suggested_action: "重新验证页面内容时效性".to_string(),
             });
         }
@@ -464,7 +459,13 @@ mod tests {
     #[test]
     fn orphans_page_with_backlink_is_not_orphan() {
         let (_tmp, paths) = init_and_paths();
-        create_page(&paths, "concept", "page-a", "A", "See [B](concepts/page-b.md)");
+        create_page(
+            &paths,
+            "concept",
+            "page-a",
+            "A",
+            "See [B](concepts/page-b.md)",
+        );
         create_page(&paths, "concept", "page-b", "B", "Content");
         // Build backlinks so page-b has inbound from page-a.
         let idx = wiki_store::build_backlinks_index(&paths).unwrap();
@@ -661,16 +662,23 @@ mod tests {
         // Set confidence = 0.9 on a just-created page.
         wiki_store::update_page_confidence(&paths, "fresh-high", 0.9).unwrap();
         // Add a recent absorb log entry.
-        wiki_store::append_absorb_log(&paths, wiki_store::AbsorbLogEntry {
-            entry_id: 1,
-            timestamp: wiki_store::now_iso8601(),
-            action: "create".to_string(),
-            page_slug: Some("fresh-high".to_string()),
-            page_title: Some("Fresh High".to_string()),
-            page_category: Some("concept".to_string()),
-        }).unwrap();
+        wiki_store::append_absorb_log(
+            &paths,
+            wiki_store::AbsorbLogEntry {
+                entry_id: 1,
+                timestamp: wiki_store::now_iso8601(),
+                action: "create".to_string(),
+                page_slug: Some("fresh-high".to_string()),
+                page_title: Some("Fresh High".to_string()),
+                page_category: Some("concept".to_string()),
+            },
+        )
+        .unwrap();
         let issues = detect_confidence_decay(&paths);
-        assert!(issues.is_empty(), "recent high-confidence page should not decay");
+        assert!(
+            issues.is_empty(),
+            "recent high-confidence page should not decay"
+        );
     }
 
     // ── detect_uncrystallized ───────────────────────────────────
@@ -688,7 +696,13 @@ mod tests {
     fn uncrystallized_with_query_entries_ok() {
         let (_tmp, paths) = init_and_paths();
         for i in 0..6 {
-            create_page(&paths, "concept", &format!("page-{i}"), &format!("Page {i}"), "Content content content.");
+            create_page(
+                &paths,
+                "concept",
+                &format!("page-{i}"),
+                &format!("Page {i}"),
+                "Content content content.",
+            );
         }
         // Add a query raw entry → crystallization is working.
         let fm = wiki_store::RawFrontmatter::for_paste("query", None);
@@ -701,7 +715,13 @@ mod tests {
     fn uncrystallized_no_query_entries_flagged() {
         let (_tmp, paths) = init_and_paths();
         for i in 0..6 {
-            create_page(&paths, "concept", &format!("page-{i}"), &format!("Page {i}"), "Content content content.");
+            create_page(
+                &paths,
+                "concept",
+                &format!("page-{i}"),
+                &format!("Page {i}"),
+                "Content content content.",
+            );
         }
         // No query raw entries → flag.
         let issues = detect_uncrystallized(&paths, 30);
@@ -712,8 +732,20 @@ mod tests {
     #[test]
     fn quality_samples_prioritize_maintainer_pages_needing_review() {
         let (_tmp, paths) = init_and_paths();
-        create_page(&paths, "concept", "higher", "Higher", "Enough content for a page.");
-        create_page(&paths, "concept", "lower", "Lower", "Enough content for another page.");
+        create_page(
+            &paths,
+            "concept",
+            "higher",
+            "Higher",
+            "Enough content for a page.",
+        );
+        create_page(
+            &paths,
+            "concept",
+            "lower",
+            "Lower",
+            "Enough content for another page.",
+        );
         wiki_store::update_page_confidence(&paths, "higher", 0.8).unwrap();
         wiki_store::update_page_confidence(&paths, "lower", 0.2).unwrap();
         wiki_store::write_wiki_page_in_category(
@@ -737,7 +769,13 @@ mod tests {
     #[test]
     fn full_patrol_includes_quality_samples() {
         let (_tmp, paths) = init_and_paths();
-        create_page(&paths, "concept", "sampled", "Sampled", "Enough content for sampling.");
+        create_page(
+            &paths,
+            "concept",
+            "sampled",
+            "Sampled",
+            "Enough content for sampling.",
+        );
         wiki_store::update_page_confidence(&paths, "sampled", 0.7).unwrap();
 
         let report = run_full_patrol(&paths, &PatrolConfig::default());
@@ -768,7 +806,13 @@ mod tests {
     fn stats_and_patrol_orphans_agree() {
         let (_tmp, paths) = init_and_paths();
         // Seed a mix: one orphan, one page referenced by another, one in index.
-        create_page(&paths, "concept", "orphan-page", "Orphan", "Lonely page with no links.");
+        create_page(
+            &paths,
+            "concept",
+            "orphan-page",
+            "Orphan",
+            "Lonely page with no links.",
+        );
         create_page(&paths, "concept", "referenced", "Referenced", "Some body.");
         create_page(
             &paths,

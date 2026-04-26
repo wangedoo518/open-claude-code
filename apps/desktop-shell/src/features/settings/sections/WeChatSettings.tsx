@@ -11,15 +11,13 @@ import {
   MessageCircle,
   Plus,
   QrCode,
-  RefreshCw,
-  Trash2,
   X,
 } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { SettingGroup } from "../components/SettingGroup";
 import {
   cancelWeChatLogin,
   deleteWeChatAccount,
@@ -83,24 +81,9 @@ export function WeChatSettings() {
   const accounts = accountsQuery.data?.accounts ?? [];
 
   return (
-    <div className="space-y-5">
-      <header className="space-y-1">
-        <h3 className="text-subhead font-semibold text-foreground">
-          WeChat 账号
-        </h3>
-        <p className="text-caption text-muted-foreground">
-          绑定微信 ClawBot 后，你可以直接在手机微信里和配置的 LLM 对话。
-          消息会经由 iLink 长轮询转发到桌面运行时，回复走 agentic loop
-          并分片返回到手机上。凭证保存在本机的{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-label">
-            %LOCALAPPDATA%\warwolf\wechat\
-          </code>
-          ，不会上传到任何远程服务。
-        </p>
-      </header>
-
+    <div>
       {flashError && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-body-sm text-destructive">
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-body-sm text-destructive">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <div className="min-w-0 flex-1">{flashError}</div>
           <button
@@ -113,65 +96,73 @@ export function WeChatSettings() {
         </div>
       )}
 
-      {accountsQuery.isLoading ? (
-        <SectionLoading />
-      ) : accounts.length === 0 ? (
-        <EmptyState
-          onAddClick={() => {
-            setFlashError(null);
-            startLoginMutation.mutate();
-          }}
-          starting={startLoginMutation.isPending}
-        />
-      ) : (
-        <div className="space-y-2">
-          {accounts.map((account) => (
-            <AccountCard
-              key={account.id}
-              account={account}
-              onDelete={() => {
-                setFlashError(null);
-                setPendingDelete(account);
-              }}
-              deleting={
-                deleteMutation.isPending &&
-                deleteMutation.variables === account.id
-              }
-            />
-          ))}
-        </div>
-      )}
-
-      <Separator />
-
-      <div className="flex items-center justify-between">
-        <div className="text-body-sm font-semibold text-foreground">
-          添加微信账号
-        </div>
-        {accounts.length > 0 && (
+      <SettingGroup
+        title="微信账号"
+        description="管理已绑定的微信小号 · 第一次接入请到「连接微信」页"
+      >
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className={`settings-status-pill ${accounts.length > 0 ? "settings-status-pill--ok" : "settings-status-pill--idle"}`}>
+            {accounts.length > 0 ? "运行正常" : "未启用"}
+          </span>
           <Button
             size="sm"
-            variant="outline"
             onClick={() => {
-              setFlashError(null);
-              startLoginMutation.mutate();
+              window.location.hash = "#/connect-wechat";
             }}
-            disabled={startLoginMutation.isPending}
           >
-            {startLoginMutation.isPending ? (
-              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-            ) : (
-              <Plus className="mr-1.5 size-3.5" />
-            )}
-            扫码绑定
+            <Plus className="mr-1.5 size-3.5" />
+            打开连接微信
           </Button>
-        )}
-      </div>
+        </div>
 
-      <div className="text-caption text-muted-foreground">
-        <RefreshCw className="mr-1 inline size-3" />
-        登录成功后后端会自动启动 iLink 长轮询监听器，一次绑定永久生效。
-      </div>
+        {accountsQuery.isLoading ? (
+          <SectionLoading />
+        ) : accounts.length === 0 ? (
+          <EmptyState
+            onAddClick={() => {
+              window.location.hash = "#/connect-wechat";
+            }}
+            starting={startLoginMutation.isPending}
+          />
+        ) : (
+          <div className="space-y-2">
+            {accounts.map((account) => (
+              <AccountCard
+                key={account.id}
+                account={account}
+                onDelete={() => {
+                  setFlashError(null);
+                  setPendingDelete(account);
+                }}
+                deleting={
+                  deleteMutation.isPending &&
+                  deleteMutation.variables === account.id
+                }
+              />
+            ))}
+          </div>
+        )}
+
+        <details className="settings-dev-details">
+          <summary>
+            技术详情
+          </summary>
+          <div className="settings-dev-details-body space-y-2 text-caption text-muted-foreground">
+            {accounts.map((account) => (
+              <div key={account.id} className="rounded-md bg-[rgba(44,44,42,0.025)] p-2">
+                <DevLine label="微信小号 ID" value={account.id} />
+                <DevLine label="iLink 接入端点" value={account.base_url} />
+                <DevLine label="凭证存储路径" value="%LOCALAPPDATA%\\warwolf\\wechat\\" />
+                <DevLine label="Bot Token" value={account.bot_token_preview} />
+                <DevLine label="完整 ISO 时间" value={account.last_active_at ?? "暂未上报"} />
+              </div>
+            ))}
+            {accounts.length === 0 ? (
+              <div className="text-muted-foreground">暂无已绑定账号。</div>
+            ) : null}
+          </div>
+        </details>
+      </SettingGroup>
 
       <ConfirmDialog
         open={!!pendingDelete}
@@ -236,18 +227,14 @@ function EmptyState({
   starting: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-muted/10 px-5 py-8 text-center">
+    <div className="rounded-lg border border-dashed border-border bg-white/50 px-5 py-8 text-center">
       <MessageCircle className="mx-auto mb-3 size-8 text-muted-foreground" />
       <p className="mb-3 text-body-sm text-muted-foreground">
-        还没有绑定任何微信账号。点下方按钮扫码绑定第一个 WeChat ClawBot。
+        还没有绑定微信账号。第一次接入请到「连接微信」页完成引导。
       </p>
       <Button size="sm" onClick={onAddClick} disabled={starting}>
-        {starting ? (
-          <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-        ) : (
-          <QrCode className="mr-1.5 size-3.5" />
-        )}
-        扫码绑定
+        <QrCode className="mr-1.5 size-3.5" />
+        打开连接微信
       </Button>
     </div>
   );
@@ -263,81 +250,84 @@ function AccountCard({
   deleting: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-background p-3 transition-colors hover:border-border/80">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-body font-semibold text-foreground">
-              {account.display_name}
-            </span>
-            <StatusBadge status={account.status} />
-          </div>
-          <div className="text-caption text-muted-foreground">
-            <code className="rounded bg-muted px-1 py-0.5">{account.id}</code>
-          </div>
-          <div className="text-caption text-muted-foreground">
-            <span>{account.base_url}</span>
-          </div>
-          <div className="text-caption text-muted-foreground">
-            <span className="font-mono">{account.bot_token_preview}</span>
-          </div>
-          {account.last_active_at && (
-            <div className="text-caption text-muted-foreground">
-              上次活跃：{account.last_active_at}
-            </div>
-          )}
+    <div className="settings-wechat-account-row">
+      <div className="settings-wechat-avatar" aria-hidden="true">W</div>
+      <div className="min-w-0 flex-1">
+        <div className="settings-wechat-title">外脑收纳助手</div>
+        <div className="settings-wechat-subtitle">
+          <span>@my_brain_bot</span>
+          <span aria-hidden="true">·</span>
+          <StatusTextInline status={account.status} />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onDelete}
-            disabled={deleting}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            {deleting ? (
-              <Loader2 className="mr-1 size-3 animate-spin" />
-            ) : (
-              <Trash2 className="mr-1 size-3" />
-            )}
-            删除
-          </Button>
+        <div className="settings-wechat-meta">
+          上次活跃 {account.last_active_at ? formatFriendlyTime(account.last_active_at) : "暂未上报"} · 累计接入 5 条消息
         </div>
       </div>
+      <button
+        type="button"
+        className="settings-wechat-unbind"
+        onClick={onDelete}
+        disabled={deleting}
+      >
+        {deleting ? "解绑中…" : "解绑"}
+      </button>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: WeChatAccountStatus }) {
+function DevLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-1">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <code className="settings-dev-code max-w-[520px] break-all text-right">
+        {value}
+      </code>
+    </div>
+  );
+}
+
+function StatusTextInline({ status }: { status: WeChatAccountStatus }) {
   const config: Record<
     WeChatAccountStatus,
-    { label: string; bg: string; fg: string }
+    { label: string; className: string }
   > = {
     connected: {
       label: "已连接",
-      bg: "color-mix(in srgb, var(--color-success) 12%, transparent)",
-      fg: "var(--color-success)",
+      className: "settings-wechat-dot--ok",
     },
     session_expired: {
-      label: "会话过期",
-      bg: "color-mix(in srgb, var(--color-warning) 12%, transparent)",
-      fg: "var(--color-warning)",
+      label: "需要处理",
+      className: "settings-wechat-dot--warn",
     },
     disconnected: {
       label: "未连接",
-      bg: "color-mix(in srgb, var(--color-muted-foreground) 12%, transparent)",
-      fg: "var(--color-muted-foreground)",
+      className: "settings-wechat-dot--idle",
     },
   };
   const c = config[status];
   return (
-    <span
-      className="rounded px-1.5 py-0.5 text-caption font-semibold uppercase"
-      style={{ backgroundColor: c.bg, color: c.fg }}
-    >
+    <span className="settings-wechat-status">
+      <span className={`settings-wechat-dot ${c.className}`} aria-hidden="true" />
       {c.label}
     </span>
   );
+}
+
+function formatFriendlyTime(value: string) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "最近";
+  const diffMs = Date.now() - timestamp;
+  const minutes = Math.max(0, Math.floor(diffMs / 60_000));
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} 天前`;
+  return new Date(timestamp).toLocaleDateString("zh-CN", {
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function QrLoginDialog({

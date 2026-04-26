@@ -68,13 +68,13 @@ pub(crate) async fn start_wechat_login_handler(
         .start_wechat_login(base_url)
         .await
         .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("start_wechat_login failed: {e}"),
-                }),
-            )
-        })?;
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("start_wechat_login failed: {e}"),
+            }),
+        )
+    })?;
     Ok(Json(serde_json::json!({
         "handle": handle,
         "qr_image_base64": qr_image_content,

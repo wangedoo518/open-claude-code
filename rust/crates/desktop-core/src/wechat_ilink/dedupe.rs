@@ -263,8 +263,7 @@ impl DedupeStore {
         // Append the new row. We skip a full compaction unless the
         // 24 h window has elapsed; callers should not pay a full
         // rewrite cost on every inbound message.
-        let needs_compaction =
-            now.saturating_sub(guard.last_compact_ms) > COMPACT_INTERVAL_MS;
+        let needs_compaction = now.saturating_sub(guard.last_compact_ms) > COMPACT_INTERVAL_MS;
         let path = guard.path.clone();
         if needs_compaction {
             let snapshot: Vec<ProcessedEntry> = guard.map.values().cloned().collect();
@@ -360,9 +359,8 @@ fn rewrite_file(path: &Path, entries: &[ProcessedEntry]) -> std::io::Result<()> 
     {
         let mut file = File::create(&tmp)?;
         for entry in entries {
-            let line = serde_json::to_string(entry).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-            })?;
+            let line = serde_json::to_string(entry)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             file.write_all(line.as_bytes())?;
             file.write_all(b"\n")?;
         }
@@ -442,8 +440,14 @@ mod tests {
             store.mark_processed(&key_with_id("m2"));
         }
         let store = DedupeStore::load(path);
-        assert!(matches!(store.check(&key_with_id("m1")), DedupeResult::Hit { .. }));
-        assert!(matches!(store.check(&key_with_id("m2")), DedupeResult::Hit { .. }));
+        assert!(matches!(
+            store.check(&key_with_id("m1")),
+            DedupeResult::Hit { .. }
+        ));
+        assert!(matches!(
+            store.check(&key_with_id("m2")),
+            DedupeResult::Hit { .. }
+        ));
     }
 
     #[test]

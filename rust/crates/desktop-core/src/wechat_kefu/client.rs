@@ -117,10 +117,7 @@ impl KefuClient {
         Ok(resp.account_list)
     }
 
-    pub async fn get_contact_url(
-        &self,
-        open_kfid: &str,
-    ) -> Result<String, KefuClientError> {
+    pub async fn get_contact_url(&self, open_kfid: &str) -> Result<String, KefuClientError> {
         let token = self.access_token().await?;
         let req = wxkefu_rs::account::AddContactWayRequest {
             open_kfid: open_kfid.to_string(),
@@ -143,9 +140,8 @@ impl KefuClient {
         limit: u32,
     ) -> Result<SyncMsgResult, KefuClientError> {
         let access_token = self.access_token().await?;
-        let url = format!(
-            "https://qyapi.weixin.qq.com/cgi-bin/kf/sync_msg?access_token={access_token}"
-        );
+        let url =
+            format!("https://qyapi.weixin.qq.com/cgi-bin/kf/sync_msg?access_token={access_token}");
         let mut body = serde_json::json!({ "limit": limit, "voice_format": 0 });
         if !cursor.is_empty() {
             body["cursor"] = serde_json::Value::String(cursor.to_string());
@@ -164,21 +160,29 @@ impl KefuClient {
             .bytes()
             .await
             .map_err(|e| KefuClientError::Api(format!("sync_msg body: {e}")))?;
-        let parsed: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|e| {
-                KefuClientError::Api(format!("sync_msg json: {e}"))
-            })?;
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| KefuClientError::Api(format!("sync_msg json: {e}")))?;
         let errcode = parsed.get("errcode").and_then(|v| v.as_i64()).unwrap_or(-1);
         if errcode != 0 {
-            let errmsg = parsed.get("errmsg").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let errmsg = parsed
+                .get("errmsg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             return Err(KefuClientError::Api(format!(
                 "sync_msg errcode={errcode}: {errmsg}"
             )));
         }
         Ok(SyncMsgResult {
-            next_cursor: parsed.get("next_cursor").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            next_cursor: parsed
+                .get("next_cursor")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             has_more: parsed.get("has_more").and_then(|v| v.as_u64()).unwrap_or(0) != 0,
-            msg_list: parsed.get("msg_list").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+            msg_list: parsed
+                .get("msg_list")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
         })
     }
 
@@ -189,9 +193,8 @@ impl KefuClient {
         text: &str,
     ) -> Result<(), KefuClientError> {
         let access_token = self.access_token().await?;
-        let url = format!(
-            "https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg?access_token={access_token}"
-        );
+        let url =
+            format!("https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg?access_token={access_token}");
         let body = serde_json::json!({
             "touser": to,
             "open_kfid": open_kfid,

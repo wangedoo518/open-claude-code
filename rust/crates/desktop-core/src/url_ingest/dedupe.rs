@@ -285,10 +285,8 @@ pub fn decide(
                         // Still load inbox for symmetry with reuse
                         // branches — the caller may want to cascade
                         // the refresh into a fresh NewRaw task.
-                        let existing_inbox =
-                            wiki_store::find_inbox_by_source_raw_id(paths, raw.id).map_err(
-                                |e| format!("find_inbox_by_source_raw_id failed: {e}"),
-                            )?;
+                        let existing_inbox = wiki_store::find_inbox_by_source_raw_id(paths, raw.id)
+                            .map_err(|e| format!("find_inbox_by_source_raw_id failed: {e}"))?;
                         return Ok(DedupeResult {
                             decision: IngestDecision::RefreshedContent {
                                 previous_raw_id: raw.id,
@@ -333,14 +331,10 @@ pub fn decide(
                 if let Some(match_raw) = wiki_store::find_raw_by_content_hash(paths, hash)
                     .map_err(|e| format!("find_raw_by_content_hash failed: {e}"))?
                 {
-                    let matching_url = match_raw
-                        .source_url
-                        .clone()
-                        .unwrap_or_default();
+                    let matching_url = match_raw.source_url.clone().unwrap_or_default();
                     let existing_inbox =
-                        wiki_store::find_inbox_by_source_raw_id(paths, match_raw.id).map_err(
-                            |e| format!("find_inbox_by_source_raw_id failed: {e}"),
-                        )?;
+                        wiki_store::find_inbox_by_source_raw_id(paths, match_raw.id)
+                            .map_err(|e| format!("find_inbox_by_source_raw_id failed: {e}"))?;
                     return Ok(DedupeResult {
                         decision: IngestDecision::ContentDuplicate {
                             matching_raw_id: match_raw.id,
@@ -432,8 +426,7 @@ mod tests {
     fn force_with_prior_carries_previous_id() {
         let (_tmp, paths) = fresh_paths();
         let raw = seed_raw(&paths, "forced", "https://example.com/force");
-        let result =
-            decide(&paths, "https://example.com/force", None, DedupeMode::Force).unwrap();
+        let result = decide(&paths, "https://example.com/force", None, DedupeMode::Force).unwrap();
         match result.decision {
             IngestDecision::ExplicitReingest { previous_raw_id } => {
                 assert_eq!(previous_raw_id, raw.id);
@@ -446,8 +439,13 @@ mod tests {
     #[test]
     fn default_with_no_prior_returns_created_new() {
         let (_tmp, paths) = fresh_paths();
-        let result =
-            decide(&paths, "https://example.com/fresh", None, DedupeMode::Default).unwrap();
+        let result = decide(
+            &paths,
+            "https://example.com/fresh",
+            None,
+            DedupeMode::Default,
+        )
+        .unwrap();
         assert!(matches!(result.decision, IngestDecision::CreatedNew));
         assert!(result.existing_raw.is_none());
         assert!(result.existing_inbox.is_none());
@@ -457,8 +455,13 @@ mod tests {
     fn default_with_raw_and_no_inbox_returns_reused_silent() {
         let (_tmp, paths) = fresh_paths();
         let _raw = seed_raw(&paths, "silent", "https://example.com/silent");
-        let result =
-            decide(&paths, "https://example.com/silent", None, DedupeMode::Default).unwrap();
+        let result = decide(
+            &paths,
+            "https://example.com/silent",
+            None,
+            DedupeMode::Default,
+        )
+        .unwrap();
         assert!(
             matches!(result.decision, IngestDecision::ReusedSilent { .. }),
             "got {:?}",
@@ -473,8 +476,13 @@ mod tests {
         let (_tmp, paths) = fresh_paths();
         let raw = seed_raw(&paths, "pending", "https://example.com/pending");
         let _ = wiki_store::append_new_raw_task(&paths, &raw, "test-origin").unwrap();
-        let result =
-            decide(&paths, "https://example.com/pending", None, DedupeMode::Default).unwrap();
+        let result = decide(
+            &paths,
+            "https://example.com/pending",
+            None,
+            DedupeMode::Default,
+        )
+        .unwrap();
         assert!(
             matches!(
                 result.decision,
@@ -499,8 +507,13 @@ mod tests {
         // string (`"approve"`) that `InboxStatus::from_action` accepts.
         let _ = wiki_store::resolve_inbox_entry(&paths, inbox.id, "approve").unwrap();
 
-        let result =
-            decide(&paths, "https://example.com/approved", None, DedupeMode::Default).unwrap();
+        let result = decide(
+            &paths,
+            "https://example.com/approved",
+            None,
+            DedupeMode::Default,
+        )
+        .unwrap();
         assert!(
             matches!(result.decision, IngestDecision::ReusedApproved { .. }),
             "got {:?}",
@@ -519,13 +532,15 @@ mod tests {
         let inbox = wiki_store::append_new_raw_task(&paths, &raw, "test-origin").unwrap();
         let _ = wiki_store::resolve_inbox_entry(&paths, inbox.id, "reject").unwrap();
 
-        let result =
-            decide(&paths, "https://example.com/rejected", None, DedupeMode::Default).unwrap();
+        let result = decide(
+            &paths,
+            "https://example.com/rejected",
+            None,
+            DedupeMode::Default,
+        )
+        .unwrap();
         assert!(
-            matches!(
-                result.decision,
-                IngestDecision::ReusedAfterReject { .. }
-            ),
+            matches!(result.decision, IngestDecision::ReusedAfterReject { .. }),
             "got {:?}",
             result.decision
         );
@@ -552,8 +567,13 @@ mod tests {
             Some(raw.id),
         )
         .unwrap();
-        let result =
-            decide(&paths, "https://example.com/conflict", None, DedupeMode::Default).unwrap();
+        let result = decide(
+            &paths,
+            "https://example.com/conflict",
+            None,
+            DedupeMode::Default,
+        )
+        .unwrap();
         // We should see ReusedWithPendingInbox since the Conflict
         // is Pending. This is fine — the orchestrator reuse shortcut
         // keys on "some pending task referenced this raw", not the
@@ -572,22 +592,10 @@ mod tests {
             previous_raw_id: 42,
         }
         .is_reuse());
-        assert!(IngestDecision::ReusedWithPendingInbox {
-            reason: "x".into(),
-        }
-        .is_reuse());
-        assert!(IngestDecision::ReusedApproved {
-            reason: "x".into(),
-        }
-        .is_reuse());
-        assert!(IngestDecision::ReusedAfterReject {
-            reason: "x".into(),
-        }
-        .is_reuse());
-        assert!(IngestDecision::ReusedSilent {
-            reason: "x".into(),
-        }
-        .is_reuse());
+        assert!(IngestDecision::ReusedWithPendingInbox { reason: "x".into() }.is_reuse());
+        assert!(IngestDecision::ReusedApproved { reason: "x".into() }.is_reuse());
+        assert!(IngestDecision::ReusedAfterReject { reason: "x".into() }.is_reuse());
+        assert!(IngestDecision::ReusedSilent { reason: "x".into() }.is_reuse());
         // M4: ContentDuplicate is a reuse; RefreshedContent is not.
         assert!(IngestDecision::ContentDuplicate {
             matching_raw_id: 7,
@@ -629,7 +637,9 @@ mod tests {
 
     #[test]
     fn explicit_reingest_reason_includes_previous_id() {
-        let d = IngestDecision::ExplicitReingest { previous_raw_id: 42 };
+        let d = IngestDecision::ExplicitReingest {
+            previous_raw_id: 42,
+        };
         assert_eq!(d.reason(), "explicit_reingest_of_00042");
         let d0 = IngestDecision::ExplicitReingest { previous_raw_id: 0 };
         assert_eq!(d0.reason(), "explicit_reingest_no_prior");
@@ -647,8 +657,7 @@ mod tests {
         let new_hash = "b".repeat(64);
         let raw = seed_raw_with_hash(&paths, "refreshed", url, &old_hash);
 
-        let result =
-            decide(&paths, url, Some(&new_hash), DedupeMode::Default).unwrap();
+        let result = decide(&paths, url, Some(&new_hash), DedupeMode::Default).unwrap();
         match result.decision {
             IngestDecision::RefreshedContent {
                 previous_raw_id,
@@ -701,16 +710,10 @@ mod tests {
         // matches a previously-ingested raw from a different URL.
         let (_tmp, paths) = fresh_paths();
         let hash = "e".repeat(64);
-        let prior = seed_raw_with_hash(
-            &paths,
-            "prior",
-            "https://first.example/article",
-            &hash,
-        );
+        let prior = seed_raw_with_hash(&paths, "prior", "https://first.example/article", &hash);
 
         let new_url = "https://second.example/same-article";
-        let result =
-            decide(&paths, new_url, Some(&hash), DedupeMode::Default).unwrap();
+        let result = decide(&paths, new_url, Some(&hash), DedupeMode::Default).unwrap();
         match result.decision {
             IngestDecision::ContentDuplicate {
                 matching_raw_id,
@@ -728,12 +731,7 @@ mod tests {
     fn default_url_miss_content_miss_returns_created_new() {
         // New URL + new hash = fully novel ingest.
         let (_tmp, paths) = fresh_paths();
-        let _prior = seed_raw_with_hash(
-            &paths,
-            "prior",
-            "https://a.example/",
-            &"f".repeat(64),
-        );
+        let _prior = seed_raw_with_hash(&paths, "prior", "https://a.example/", &"f".repeat(64));
 
         let result = decide(
             &paths,

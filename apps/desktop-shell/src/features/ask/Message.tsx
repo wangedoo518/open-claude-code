@@ -220,7 +220,7 @@ function SystemMessage({ content }: { content: string }) {
         )}
       </button>
       {expanded && (
-        <div className="mt-1 max-w-lg rounded-lg border border-border/20 bg-muted/10 p-3">
+        <div className="ask-system-detail mt-1 max-w-lg rounded-lg border border-border/20 bg-muted/10 p-3">
           <pre className="whitespace-pre-wrap text-center font-mono text-[11px] text-muted-foreground/60">
             {content}
           </pre>

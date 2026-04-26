@@ -10,7 +10,6 @@ import {
   Plug,
   Server,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
@@ -26,17 +25,17 @@ import type { DesktopCustomizeState } from "@/lib/tauri";
 /* ─── Constants ────────────────────────────────────────────────── */
 
 const TRANSPORTS: { value: McpTransport; label: string }[] = [
-  { value: "stdio", label: "Stdio (local)" },
-  { value: "sse", label: "SSE (remote)" },
-  { value: "http", label: "HTTP (REST)" },
-  { value: "ws", label: "WebSocket" },
-  { value: "sdk", label: "SDK (in-process)" },
+  { value: "stdio", label: "本机命令" },
+  { value: "sse", label: "远程连接" },
+  { value: "http", label: "网页服务" },
+  { value: "ws", label: "实时连接" },
+  { value: "sdk", label: "内置扩展" },
 ];
 
 const SCOPES: { value: McpScope; label: string }[] = [
-  { value: "local", label: "Local" },
-  { value: "user", label: "User" },
-  { value: "project", label: "Project" },
+  { value: "local", label: "本机" },
+  { value: "user", label: "当前用户" },
+  { value: "project", label: "当前知识库" },
 ];
 
 /* ─── Component ────────────────────────────────────────────────── */
@@ -53,8 +52,10 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
   const removeMcpServer = useSettingsStore((state) => state.removeMcpServer);
   const toggleMcpServer = useSettingsStore((state) => state.toggleMcpServer);
   const discoveredServers = customize?.mcp_servers ?? [];
+  const plugins = customize?.plugins ?? [];
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [resetConfirm, setResetConfirm] = useState<"settings" | "data" | null>(null);
 
   const handleAdd = (server: Omit<UserMcpServer, "id" | "enabled">) => {
     addMcpServer({
@@ -93,10 +94,36 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
     <div className="space-y-4">
       {/* User-configured servers */}
       <SettingGroup
-        title="工具插件 (MCP)"
-        description="通过 Model Context Protocol 接入外部工具。配置在本机，不会上传到远程。"
+        title="扩展工具"
+        description="让 AI 调用第三方工具 · 通过标准扩展协议接入"
       >
         <div className="space-y-2">
+          {plugins.map((plugin) => (
+            <div
+              key={plugin.id}
+              className="flex items-center gap-3 rounded-md border border-[rgba(44,44,42,0.12)] bg-white px-3 py-2"
+            >
+              <Plug
+                className="size-4 shrink-0"
+                style={{ color: plugin.enabled ? "var(--color-success)" : "var(--color-muted-foreground)" }}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-body font-medium">
+                  {plugin.name}
+                </div>
+                <div className="truncate text-label text-muted-foreground">
+                  {plugin.tool_count} 个工具 · {plugin.description || "本机扩展"}
+                </div>
+              </div>
+              <span className={`settings-status-pill ${plugin.enabled ? "settings-status-pill--ok" : "settings-status-pill--idle"}`}>
+                {plugin.enabled ? "运行正常" : "未启用"}
+              </span>
+              <button type="button" className="settings-text-link">
+                配置
+              </button>
+            </div>
+          ))}
+
           {userServers.map((server) =>
             editingId === server.id ? (
               <ServerForm
@@ -116,6 +143,38 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
             )
           )}
 
+          {discoveredServers.map((server) => (
+            <div
+              key={`${server.scope}-${server.name}-${server.target}`}
+              className="flex items-center gap-3 rounded-md border border-[rgba(44,44,42,0.12)] bg-white px-3 py-2"
+            >
+              <Plug
+                className="size-4 shrink-0"
+                style={{ color: "var(--color-success)" }}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-body font-medium">
+                  {server.name}
+                </div>
+                <div className="truncate text-label text-muted-foreground">
+                  {localizeScope(server.scope)} · {localizeTransport(server.transport)}
+                </div>
+              </div>
+              <span className="settings-status-pill settings-status-pill--ok">
+                运行正常
+              </span>
+              <button type="button" className="settings-text-link">
+                配置
+              </button>
+            </div>
+          ))}
+
+          {plugins.length === 0 && userServers.length === 0 && discoveredServers.length === 0 ? (
+            <div className="settings-empty-row">
+              还没有添加扩展工具
+            </div>
+          ) : null}
+
           {showAddForm ? (
             <ServerForm
               onSubmit={handleAdd}
@@ -133,59 +192,80 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
             </Button>
           )}
         </div>
-      </SettingGroup>
 
-      {/* Discovered servers from runtime */}
-      {discoveredServers.length > 0 && (
-        <SettingGroup
-          title="已检测到的插件"
-          description="从运行时配置文件中自动发现的插件（只读展示）"
-        >
-          <div className="space-y-2">
-            {discoveredServers.map((server) => (
-              <div
-                key={`${server.scope}-${server.name}-${server.target}`}
-                className="flex items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2"
-              >
-                <Plug
-                  className="size-4 shrink-0"
-                  style={{
-                    color: "var(--color-success)",
-                  }}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-body font-medium">
-                    {server.name}
-                  </div>
-                  <div className="truncate text-label text-muted-foreground">
-                    {server.target}
-                  </div>
+        {plugins.length > 0 || discoveredServers.length > 0 ? (
+          <details className="settings-dev-details">
+            <summary>开发者高级选项 · 扩展工具原始连接信息</summary>
+            <div className="settings-dev-details-body space-y-2 text-caption text-muted-foreground">
+              {plugins.map((plugin) => (
+                <div key={`${plugin.id}-dev`}>
+                  {plugin.name} · <code className="settings-dev-code">{plugin.id}</code>{" "}
+                  <code className="settings-dev-code">{plugin.kind}</code>{" "}
+                  <code className="settings-dev-code">{plugin.root_path ?? "未上报路径"}</code>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Badge variant="secondary" className="text-caption">
-                    {server.scope}
-                  </Badge>
-                  <Badge variant="outline" className="text-caption">
-                    {server.transport}
-                  </Badge>
+              ))}
+              {discoveredServers.map((server) => (
+                <div key={`${server.scope}-${server.name}-${server.target}-dev`}>
+                  {server.name} · <code className="settings-dev-code">{server.scope}</code>{" "}
+                  <code className="settings-dev-code">{server.transport}</code>{" "}
+                  <code className="settings-dev-code">{server.target}</code>
                 </div>
-              </div>
-            ))}
-          </div>
-        </SettingGroup>
-      )}
+              ))}
+            </div>
+          </details>
+        ) : null}
+      </SettingGroup>
 
       {/* Warnings */}
       {(error || (customize?.warnings.length ?? 0) > 0) && (
-        <SettingGroup title="警告">
+        <SettingGroup title="状态提醒">
           <div className="space-y-2 text-body-sm text-muted-foreground">
-            {error && <div>{error}</div>}
+            {error && <div className="settings-danger-panel">{error}</div>}
             {customize?.warnings.map((warning) => (
-              <div key={warning}>{warning}</div>
+              <div className="settings-danger-panel" key={warning}>{warning}</div>
             ))}
           </div>
         </SettingGroup>
       )}
+
+      <SettingGroup
+        title="危险操作"
+        description="这些操作会影响全局配置或本地数据，执行前必须二次确认。"
+      >
+        <div className="settings-danger-actions">
+          <button
+            type="button"
+            className="settings-danger-action"
+            onClick={() => setResetConfirm("settings")}
+          >
+            恢复默认设置
+          </button>
+          <button
+            type="button"
+            className="settings-danger-action"
+            onClick={() => setResetConfirm("data")}
+          >
+            重置所有数据
+          </button>
+        </div>
+      </SettingGroup>
+
+      <details className="settings-dev-details">
+        <summary>开发者高级选项 · 高级页原始配置</summary>
+        <div className="settings-dev-details-body space-y-2 text-caption text-muted-foreground">
+          <div>
+            扩展工具：<code className="settings-dev-code">{plugins.length}</code>
+            {" · "}
+            连接服务：<code className="settings-dev-code">{discoveredServers.length}</code>
+            {" · "}
+            本机自定义：<code className="settings-dev-code">{userServers.length}</code>
+          </div>
+          <div>
+            原始扩展协议名：
+            <code className="settings-dev-code">Model Context Protocol</code>
+          </div>
+        </div>
+      </details>
 
       <ConfirmDialog
         open={!!deleteConfirmId}
@@ -195,6 +275,24 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
         confirmLabel="删除"
         variant="destructive"
         onConfirm={confirmDelete}
+      />
+      <ConfirmDialog
+        open={resetConfirm === "settings"}
+        onOpenChange={(open) => { if (!open) setResetConfirm(null); }}
+        title="确认恢复默认设置？"
+        description="当前只会关闭这个确认框；完整恢复默认设置需要接入后端重置接口后再启用。"
+        confirmLabel="确认"
+        variant="destructive"
+        onConfirm={() => setResetConfirm(null)}
+      />
+      <ConfirmDialog
+        open={resetConfirm === "data"}
+        onOpenChange={(open) => { if (!open) setResetConfirm(null); }}
+        title="确认重置所有数据？"
+        description="这是高风险操作。当前不会删除本地知识库；完整删除需要接入后端安全重置接口后再启用。"
+        confirmLabel="确认"
+        variant="destructive"
+        onConfirm={() => setResetConfirm(null)}
       />
     </div>
   );
@@ -218,8 +316,8 @@ function UserServerCard({
       className={cn(
         "group flex items-center gap-3 rounded-md border px-3 py-2 transition-colors",
         server.enabled
-          ? "border-border bg-muted/20"
-          : "border-border/50 bg-muted/5 opacity-60"
+          ? "border-[rgba(44,44,42,0.12)] bg-white"
+          : "border-[rgba(44,44,42,0.08)] bg-white/50 opacity-60"
       )}
     >
       <Server
@@ -233,27 +331,15 @@ function UserServerCard({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-body font-medium">{server.name}</span>
-          {server.enabled && (
-            <span
-              className="inline-block size-1.5 rounded-full"
-              style={{
-                backgroundColor:
-                  "var(--color-success)",
-              }}
-            />
-          )}
         </div>
         <div className="truncate text-label text-muted-foreground">
-          {server.target}
+          {localizeScope(server.scope)} · {localizeTransport(server.transport)}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Badge variant="secondary" className="text-caption">
-          {server.scope}
-        </Badge>
-        <Badge variant="outline" className="text-caption">
-          {server.transport}
-        </Badge>
+        <span className={`settings-status-pill ${server.enabled ? "settings-status-pill--ok" : "settings-status-pill--idle"}`}>
+          {server.enabled ? "运行正常" : "未启用"}
+        </span>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
         <button
@@ -327,7 +413,7 @@ function ServerForm({
         {/* Name */}
         <div>
           <label className="mb-1 block text-label font-medium text-muted-foreground">
-            插件名称
+            扩展名称
           </label>
           <input
             type="text"
@@ -342,7 +428,7 @@ function ServerForm({
         <div className="flex gap-2">
           <div className="flex-1">
             <label className="mb-1 block text-label font-medium text-muted-foreground">
-              传输方式
+              连接方式
             </label>
             <select
               value={transport}
@@ -426,4 +512,34 @@ function ServerForm({
       </div>
     </div>
   );
+}
+
+function localizeTransport(transport: string) {
+  switch (transport) {
+    case "stdio":
+      return "本机命令";
+    case "sse":
+      return "远程连接";
+    case "http":
+      return "网页服务";
+    case "ws":
+      return "实时连接";
+    case "sdk":
+      return "内置扩展";
+    default:
+      return transport;
+  }
+}
+
+function localizeScope(scope: string) {
+  switch (scope) {
+    case "local":
+      return "本机";
+    case "user":
+      return "当前用户";
+    case "project":
+      return "当前知识库";
+    default:
+      return scope;
+  }
 }
