@@ -12,75 +12,67 @@ related:
 
 # Desktop Shell Known Issues
 
-This document records known issues from the Step 4 Ask tool-calling validation pass.
+This document records known issues from the Phase 5 + Phase 6 demo-stabilization pass.
 It is not a feature spec. It is the operational truth for demo readiness and follow-up work.
 
-## Step 4 Validation Summary
+## Phase 5 + 6 Validation Summary
 
 Date: 2026-04-27
 
 Scope:
 
-- OpenAI-compatible tool calling through DeepSeek Chat.
-- Safe-only tool exposure policy.
-- Multi-turn loop: user -> assistant tool_use -> tool_result -> assistant final answer.
-- Ask UI status visibility, tool cards, and persisted history restore.
+- OpenAI-compatible multi-turn tool calling through DeepSeek Chat.
+- Safe-only tool exposure policy for OpenAI-compatible providers.
+- Ask UI interrupt handling, elapsed timing, tool cards, and persisted history restore.
+- Settings disclosure for allowed and blocked tool capabilities.
 
 Overall status:
 
 - Backend tool-calling path is functional.
 - Safe-only tool whitelist is effective.
-- Product honesty is mostly correct for available tools.
-- Two UI/status issues remain high priority before external demo.
+- Pure writing and small-talk prompts stay text-only.
+- Write and shell requests are refused directly instead of probing with read/search tools.
+- Ask UI interrupt no longer crashes the page in the tested path.
+- Header elapsed timing now shows real completed duration and updates while active.
 
-## Blocking Before External Demo
+## Resolved In Phase 5 + 6
 
-### Esc interrupt can briefly crash the Ask UI
+### Esc interrupt error boundary crash
 
-Observed behavior:
+Previous behavior:
 
-- Pressing `Esc` while a long response is streaming produced the error boundary:
+- Pressing `Esc` while a long response was streaming could produce the error boundary:
   `Cannot read properties of undefined (reading 'messages')`.
-- After reload, the interrupted conversation was restored with a clean
-  `cancelled by user` message.
 
-Expected behavior:
+Current behavior:
 
-- Interrupt should stop the active turn without crashing the page.
-- Existing streamed content should remain visible.
-- The user should see a clear interrupted state and recovery actions.
+- Interrupting a streaming response keeps the page mounted.
+- The partial response remains visible with the stopped marker.
+- The composer becomes usable again and a new message can be sent.
 
-Priority: P0 for public demo, P1 for internal use.
+### Header elapsed time stuck at `0.0s`
 
-### Header elapsed time is stuck at `0.0s`
+Previous behavior:
 
-Observed behavior:
+- Long and multi-turn requests showed realistic token counts, but elapsed time could stay at `0.0s`.
 
-- Long and multi-turn requests showed realistic token counts, but elapsed time stayed at `0.0s`.
-- This happened for ordinary text, tool calls, multi-turn search, and long generation.
+Current behavior:
 
-Expected behavior:
+- Active turns update the elapsed time on a one-second interval.
+- Completed turns keep the final measured duration.
 
-- Active turns should show a live timer.
-- Completed turns should show elapsed time from the last user message to the final assistant or tool message.
+### Unsafe tool requests were not direct enough
 
-Priority: P1.
+Previous behavior:
 
-### Final synthesis after tools is not reliable enough
+- Requests such as editing `README.md` could lead the model to read/search first, then explain that writing was unavailable.
 
-Observed behavior:
+Current behavior:
 
-- Tool execution succeeds, but some search tasks stop after additional reading/extraction language instead of producing the requested concise final summary.
-- This was visible in weather and DeepSeek V4 summary prompts.
+- File write, shell execution, and agent orchestration requests are treated as policy-refusal prompts.
+- The model answers directly with the policy limitation and safe alternatives.
 
-Expected behavior:
-
-- Once tool results are available, the model should produce the requested final answer.
-- If a tool result is insufficient, the model should state that clearly instead of continuing to plan extraction.
-
-Priority: P1 before external demo.
-
-## Product And UX Limitations
+## Remaining Product And UX Limitations
 
 ### DeepSeek Reasoner does not support tools
 
@@ -98,47 +90,37 @@ Only the default safe read-only tools are exposed:
 
 Filesystem writes, shell execution, agent orchestration, and MCP-style tools are not exposed by default.
 
-### File write and shell tools require future opt-in UI
+### Tool capability management is read-only in Settings
 
 Current behavior:
 
-- `write_file`, `edit_file`, `bash`, `PowerShell`, and similar tools are filtered out.
-- The model should not execute write or shell actions on the OpenAI-compatible path.
+- Settings -> Advanced shows which tools are allowed or blocked.
+- The UI does not yet provide toggles for changing `ToolExposurePolicy`.
 
 Follow-up:
 
 - Add Settings UI for user-level `ToolExposurePolicy`.
-- Add clear safety copy before enabling write or shell tools.
+- Add explicit confirmation before enabling write or shell tools.
 
 ### MCP integration is not enabled on the OpenAI-compatible path
 
 MCP tools may be visible in developer settings, but they are not part of the default OpenAI-compatible tool exposure policy.
 
-### Model may overuse tools for pure writing tasks
+### Final synthesis quality still depends on provider behavior
 
-Observed behavior:
+The final synthesis turn now disables tools with `tool_choice=none` and injects a final-answer instruction.
+This materially improves stability, but provider output quality still depends on model behavior and source quality.
 
-- A pure long-form writing request triggered web/search tools before writing.
+### Blocking tool cancellation cannot kill a running blocking thread
 
-Expected behavior:
+Current behavior:
 
-- Pure composition should normally stay text-only unless the user asks for search, verification, or current information.
+- UI returns to an interrupted state quickly.
+- The underlying blocking tool task may continue in the background until the tool returns.
 
 Follow-up:
 
-- Tighten system prompt and tool-use instructions.
-- Consider an intent gate before exposing tools for a turn.
-
-### Write requests are safe but not direct enough
-
-Observed behavior:
-
-- A request to modify `README.md` did not write files and did not trigger permission prompts.
-- The model still read/searched files instead of immediately explaining that write tools are disabled in the current policy.
-
-Expected behavior:
-
-- The model should explain the limitation and offer safe alternatives.
+- Add cancellation support inside individual tools where practical.
 
 ## Build And Console Warnings
 
@@ -147,35 +129,39 @@ These warnings are known and do not currently block local use:
 - CSS parsing warnings from Tailwind arbitrary variants such as `ask:bind` and `composer:handleSend`.
 - Dynamic import chunk warning around desktop bootstrap code.
 - Bundle size warning for chunks larger than 500 KB.
+- Rust future-incompatibility warning from `redis v0.25.4`.
+- Existing Rust test warnings in `wiki_ingest` and `desktop-core` test modules.
 
 Follow-up:
 
 - Replace unsupported arbitrary CSS variants or isolate them.
 - Review manual chunking strategy for desktop bootstrap and large feature modules.
+- Track dependency upgrades for future-incompat warnings.
 
 ## Backlog
 
-- Fix `Esc` interrupt error boundary crash.
-- Fix Ask header elapsed timer aggregation.
-- Add final synthesis guard after tool results.
-- Add tool-use intent routing to reduce unnecessary searches.
-- Add Settings UI for `ToolExposurePolicy`.
-- Add user-facing copy for disabled write and shell tools.
-- Add stronger prompt guidance to prevent DSML/control-token leakage at the source.
+- Add user-editable `ToolExposurePolicy` controls in Settings.
 - Add automated end-to-end smoke for `user -> tool_use -> tool_result -> final answer`.
+- Add structured telemetry for prompt intent decisions and tool policy filtering.
+- Improve final synthesis prompting with provider-specific examples.
+- Add stronger prompt guidance to prevent DSML/control-token leakage at the source.
+- Add true cancellation for long-running network tools.
 
-## Step 4.8 Scenario Results
+## Phase 5 + 6 Scenario Results
 
 | Scenario | Expected | Result |
 | --- | --- | --- |
-| Ordinary text conversation | Text reply | Normal. Text reply rendered without tools. Elapsed displayed `0.0s`. |
-| Single tool call | One tool plus summary | Partial. Tools executed, but final one-sentence summary quality was weak. |
-| Multi-tool call | Multi-turn search/read/summarize | Partial. Multiple tools completed, but final requested two-paragraph synthesis was unreliable. |
-| Blocked write tool | No unsafe write | Normal for safety. No write executed and no permission prompt appeared. Copy needs improvement. |
-| User interrupt | Immediate stop | Abnormal. Page briefly hit an error boundary, then restored after reload. |
-| Long content generation | Complete streaming | Normal. Long response rendered, but tool overuse and elapsed issue were observed. |
-| Tool failure | Error result shown | Normal. Failed `WebFetch` rendered as a failed tool result and assistant explained the failure. |
-| Model switching | Accurate capability state | Skipped for actual switching. Only DeepSeek Chat was configured. Capability display was correct. |
-| History restore | Messages preserved | Normal. Reload restored conversation and cancelled state. |
-| DSML token check | No visible control token | Normal. No visible DSML/control token leak observed. |
-
+| Ordinary text conversation | Text reply plus real elapsed | Normal. Text reply rendered without tools; elapsed showed a non-zero final duration. |
+| Pure writing | Direct writing, no tools | Normal. Writing prompt used `tool_choice=none` and produced text directly. |
+| Search request | WebSearch/WebFetch plus summary | Normal. Safe tools were exposed and completed; final answer was produced. |
+| Blocked write tool | Direct policy refusal | Normal. No write executed, no permission prompt, and the answer explained the safety policy. |
+| Blocked shell execution | Direct policy refusal | Normal. No shell tool was exposed; answer suggested manual execution and pasting errors back. |
+| Multi-turn search/read/summarize | Tool loop plus final synthesis | Normal in smoke. Tools completed and final synthesis turn used `tool_choice=none`. |
+| User interrupt | Immediate stop, no crash | Normal in smoke. Partial content remained and a new message worked afterwards. |
+| Long content generation | Complete streaming | Normal in smoke; elapsed timer updated and then settled. |
+| Tool failure | Error result shown | Normal from Step 4.8 validation. Failed `WebFetch` rendered as a failed tool result and assistant explained the failure. |
+| Model switching | Accurate capability state | Limited validation. DeepSeek Chat capability display is correct; other providers were not configured locally. |
+| History restore | Messages preserved | Normal. Reload restored conversation state. |
+| DSML token check | No visible control token | Normal in smoke. No visible DSML/control token leak observed. |
+| Settings tool capability section | User-readable policy disclosure | Normal. Advanced settings show allowed and blocked tool categories. |
+| Active elapsed timer | 1s interval updates | Normal in smoke; completed turns retain final duration. |
