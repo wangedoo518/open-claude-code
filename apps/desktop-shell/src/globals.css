@@ -1261,6 +1261,66 @@
   transform: translateY(-1px);
 }
 
+.ask-chat-header-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.ask-chat-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #888780;
+  transition:
+    background-color 280ms cubic-bezier(0.2, 0, 0, 1),
+    box-shadow 280ms cubic-bezier(0.2, 0, 0, 1),
+    transform 280ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ask-chat-status-dot[data-tone="ok"] {
+  background: #1d9e75;
+}
+
+.ask-chat-status-dot[data-tone="working"] {
+  background: #d85a30;
+  animation: ask-status-pulse 1.6s cubic-bezier(0.2, 0, 0, 1) infinite;
+}
+
+.ask-chat-status-dot[data-tone="warn"] {
+  background: #ba7517;
+}
+
+.ask-chat-status-dot[data-tone="error"] {
+  background: #c44545;
+}
+
+.ask-chat-header-metrics {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  color: #888780;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes ask-status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(216, 90, 48, 0.28);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(216, 90, 48, 0);
+    transform: scale(1.06);
+  }
+}
+
 /* Claude Code-inspired transcript rhythm for Ask. */
 .ask-turn {
   width: min(100%, 680px);
@@ -2065,6 +2125,60 @@
   transform: translateX(68%);
 }
 
+.ask-composer[data-turn-state="sending"] .ask-composer-card,
+.ask-composer[data-turn-state="connecting"] .ask-composer-card,
+.ask-composer[data-turn-state="thinking"] .ask-composer-card,
+.ask-composer[data-turn-state="tool_planning"] .ask-composer-card,
+.ask-composer[data-turn-state="tool_running"] .ask-composer-card,
+.ask-composer[data-turn-state="tool_waiting"] .ask-composer-card,
+.ask-composer[data-turn-state="streaming"] .ask-composer-card {
+  border-color: rgba(44, 44, 42, 0.1);
+  background:
+    linear-gradient(180deg, rgba(44, 44, 42, 0.025), rgba(44, 44, 42, 0.015)),
+    var(--color-card);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 10px 24px rgba(44, 44, 42, 0.035);
+}
+
+.ask-composer[data-turn-state="waiting_permission"] .ask-composer-card {
+  border-color: rgba(186, 117, 23, 0.2);
+  background:
+    linear-gradient(180deg, rgba(186, 117, 23, 0.045), rgba(186, 117, 23, 0.02)),
+    var(--color-card);
+}
+
+.ask-composer[data-turn-state="failed_fatal"] .ask-composer-card {
+  border-color: rgba(196, 69, 69, 0.22);
+  background:
+    linear-gradient(180deg, rgba(196, 69, 69, 0.035), rgba(255, 255, 255, 0.82)),
+    var(--color-card);
+}
+
+.ask-composer[data-input-blocked="true"] .ask-composer-textarea {
+  cursor: not-allowed;
+  color: rgba(44, 44, 42, 0.54);
+}
+
+.ask-composer[data-turn-state="waiting_permission"] .ask-composer-textarea::placeholder {
+  color: #ba7517;
+}
+
+.ask-composer-state-meta {
+  color: #888780;
+  font-size: 11px;
+  white-space: nowrap;
+  transition: color 280ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ask-composer[data-turn-state="waiting_permission"] .ask-composer-state-meta {
+  color: #ba7517;
+}
+
+.ask-composer[data-turn-state="failed_fatal"] .ask-composer-state-meta {
+  color: #c44545;
+}
+
 .ask-composer-drag-overlay {
   background:
     radial-gradient(circle, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 16%, transparent), color-mix(in srgb, var(--color-card) 82%, transparent));
@@ -2157,9 +2271,82 @@
 }
 
 .ask-composer-stop {
+  background: #c44545 !important;
   box-shadow:
     0 10px 22px color-mix(in srgb, var(--color-error) 15%, transparent),
     inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+  animation: stopPulse 1.4s ease-in-out infinite;
+}
+
+.ask-composer-settings {
+  border-color: rgba(196, 69, 69, 0.22);
+  color: #c44545;
+}
+
+@keyframes stopPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(196, 69, 69, 0.4),
+      0 10px 22px rgba(196, 69, 69, 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 0 5px rgba(196, 69, 69, 0),
+      0 10px 22px rgba(196, 69, 69, 0.15);
+  }
+}
+
+.ask-interrupted-panel {
+  display: flex;
+  width: min(100%, 680px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px auto 4px;
+  border: 0.5px solid rgba(44, 44, 42, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px 12px;
+  animation: ask-disclose 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.ask-interrupted-primary,
+.ask-interrupted-secondary {
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  line-height: 1;
+  transition:
+    background-color 200ms cubic-bezier(0.2, 0, 0, 1),
+    border-color 200ms cubic-bezier(0.2, 0, 0, 1),
+    color 200ms cubic-bezier(0.2, 0, 0, 1),
+    transform 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ask-interrupted-primary {
+  background: #2c2c2a;
+  color: #fff;
+}
+
+.ask-interrupted-secondary {
+  border: 0.5px solid rgba(44, 44, 42, 0.12);
+  background: rgba(255, 255, 255, 0.64);
+  color: #5f5e5a;
+}
+
+.ask-interrupted-primary:hover,
+.ask-interrupted-secondary:hover {
+  transform: translateY(-1px);
+}
+
+.ask-interrupted-primary:hover {
+  background: #d85a30;
+}
+
+.ask-interrupted-secondary:hover {
+  border-color: rgba(44, 44, 42, 0.2);
+  color: #2c2c2a;
 }
 
 .ask-composer-bottom {

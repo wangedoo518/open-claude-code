@@ -64,6 +64,10 @@ import {
   type DesktopManagedAuthLoginSessionSnapshot,
 } from "@/lib/tauri";
 import { SubscriptionCodexPool } from "./private-cloud/SubscriptionCodexPool";
+import {
+  getModelCapability,
+  type ModelCapability,
+} from "@/features/ask/model-capabilities";
 
 const CODEX_PROVIDER_ID = "codex-openai";
 const QWEN_PROVIDER_ID = "qwen-code";
@@ -840,6 +844,8 @@ function ProviderCompactRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const capability = getModelCapability(provider.model, provider.kind);
+
   return (
     <div
       className="account-model-provider-row"
@@ -869,6 +875,7 @@ function ProviderCompactRow({
           {provider.model} · 输出上限 {provider.max_tokens} ·{" "}
           {provider.api_key_display ? "密钥已保存" : "未保存密钥"}
         </p>
+        <ProviderCapabilityTags capability={capability} />
       </div>
       <div className="account-model-provider-actions">
         <IconButton
@@ -889,6 +896,32 @@ function ProviderCompactRow({
           icon={deleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
         />
       </div>
+    </div>
+  );
+}
+
+function ProviderCapabilityTags({ capability }: { capability: ModelCapability }) {
+  const tags = [
+    capability.chat ? "文本" : null,
+    capability.tools ? "工具调用 ✓" : null,
+    capability.vision ? "视觉 ✓" : null,
+    capability.reasoning ? "推理 ✓" : null,
+  ].filter((tag): tag is string => tag !== null);
+
+  if (tags.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          className="rounded bg-[#E1F5EE] px-1.5 py-0.5 text-[10px] leading-none text-[#0F6E56]"
+        >
+          {tag}
+        </span>
+      ))}
     </div>
   );
 }

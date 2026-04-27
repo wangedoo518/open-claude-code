@@ -19,13 +19,20 @@ import {
 } from "lucide-react";
 import { Shimmer } from "./Shimmer";
 import { getToolMeta, isContextTool } from "./tool-meta";
-import { Message } from "./Message";
 import type { ConversationMessage } from "@/features/common/message-types";
 
 interface ToolActionsGroupProps {
   messages: ConversationMessage[];
   isStreaming?: boolean;
 }
+
+type PairedToolStatus = "running" | "done" | "error";
+
+type PairedToolEntry = {
+  toolUseMessage: ConversationMessage;
+  result: ConversationMessage | null;
+  status: PairedToolStatus;
+};
 
 function workVerb(toolName: string): string {
   const lower = toolName.toLowerCase();
@@ -42,27 +49,50 @@ function workVerb(toolName: string): string {
   return "调用工具";
 }
 
+function pairToolMessages(messages: ConversationMessage[]): PairedToolEntry[] {
+  const resultByToolUseId = new Map<string, ConversationMessage>();
+  for (const msg of messages) {
+    if (msg.type === "tool_result" && msg.toolResult?.toolUseId) {
+      resultByToolUseId.set(msg.toolResult.toolUseId, msg);
+    }
+  }
+
+  const entries: PairedToolEntry[] = [];
+  for (const msg of messages) {
+    if (msg.type !== "tool_use") continue;
+
+    const toolUseId = msg.toolUse?.toolUseId;
+    const result = toolUseId ? resultByToolUseId.get(toolUseId) ?? null : null;
+    const status: PairedToolStatus = !result
+      ? "running"
+      : result.toolResult?.isError
+        ? "error"
+        : "done";
+
+    entries.push({ toolUseMessage: msg, result, status });
+  }
+
+  return entries;
+}
+
 /** Compute summary stats from a tool group. */
-function summarize(messages: ConversationMessage[]) {
-  let toolCalls = 0;
+function summarize(entries: PairedToolEntry[]) {
   let completed = 0;
   let errors = 0;
   let contextCalls = 0;
   const toolNames: string[] = [];
 
-  for (const msg of messages) {
-    if (msg.type === "tool_use") {
-      toolCalls++;
-      const name = msg.toolUse?.toolName ?? "";
-      toolNames.push(name);
-      if (isContextTool(name)) contextCalls++;
-    }
-    if (msg.type === "tool_result") {
+  for (const entry of entries) {
+    const name = entry.toolUseMessage.toolUse?.toolName ?? "";
+    toolNames.push(name);
+    if (isContextTool(name)) contextCalls++;
+    if (entry.status !== "running") {
       completed++;
-      if (msg.toolResult?.isError) errors++;
+      if (entry.status === "error") errors++;
     }
   }
 
+  const toolCalls = entries.length;
   // If most tool calls are context-gathering, label the whole group as such
   const isContextGroup = contextCalls >= 3 && contextCalls >= toolCalls * 0.6;
   const running = toolCalls - completed;
@@ -77,7 +107,8 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const wasStreamingRef = useRef(isStreaming);
 
-  const stats = useMemo(() => summarize(messages), [messages]);
+  const entries = useMemo(() => pairToolMessages(messages), [messages]);
+  const stats = useMemo(() => summarize(entries), [entries]);
 
   // Auto-collapse when streaming ends
   useEffect(() => {
@@ -154,11 +185,184 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
       {/* Lazy-rendered children */}
       {expanded && (
         <div className="ask-tool-group-body">
-          {messages.map((msg) => (
-            <Message key={msg.id} message={msg} />
+          {entries.map((entry) => (
+            <PairedToolRow
+              key={entry.toolUseMessage.id}
+              entry={entry}
+            />
           ))}
         </div>
       )}
     </div>
   );
 });
+
+function PairedToolRow({ entry }: { entry: PairedToolEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  const { toolUseMessage, result, status } = entry;
+  const toolName = toolUseMessage.toolUse?.toolName ?? "Tool";
+  const toolInput = toolUseMessage.toolUse?.toolInput ?? "";
+  const output = result?.toolResult?.output ?? "";
+  const lines = output.split("\n");
+  const lineCount = output ? lines.length : 0;
+  const { icon: ToolIcon, label, color } = getToolMeta(toolName);
+
+  const parsedInput = useMemo(() => {
+    try {
+      return JSON.parse(toolInput) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }, [toolInput]);
+
+  const inputPreview = useMemo(
+    () => previewToolInput(parsedInput, toolInput),
+    [parsedInput, toolInput],
+  );
+  const outputPreview = output ? lines[0]?.slice(0, 80) : "";
+
+  const rowClass =
+    status === "running"
+      ? "ask-tool-row ask-tool-row--running"
+      : status === "error"
+        ? "ask-tool-row ask-tool-row--error"
+        : "ask-tool-row ask-tool-row--completed";
+
+  return (
+    <div className="ask-tool-log">
+      <button
+        type="button"
+        className={rowClass}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded ? (
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground/70" />
+        ) : (
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground/70" />
+        )}
+        {status === "error" ? (
+          <AlertCircle className="size-3.5 shrink-0" style={{ color: "var(--color-error)" }} />
+        ) : (
+          <ToolIcon className="size-3.5 shrink-0" style={{ color }} />
+        )}
+        <span className="ask-tool-name" style={{ color }}>{label}</span>
+        <PairedStatusBadge status={status} />
+        {status !== "running" && lineCount > 3 && (
+          <span className="rounded bg-muted/50 px-1 py-0.5 text-[10px] text-muted-foreground/70">
+            {lineCount} 行
+          </span>
+        )}
+        <span className="ask-tool-preview">
+          {outputPreview || inputPreview}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="ask-tool-detail max-h-[400px] overflow-auto">
+          <div className="border-b border-border/20 px-3 py-2">
+            <div className="mb-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              Input
+            </div>
+            {parsedInput ? (
+              <StructuredPreview params={parsedInput} />
+            ) : (
+              <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/80">
+                {toolInput}
+              </pre>
+            )}
+          </div>
+
+          {result ? (
+            <div className="px-3 py-2">
+              <div className="mb-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Result
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/80">
+                {output}
+              </pre>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-3 py-2 text-[11px] text-muted-foreground/70">
+              <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
+              <span>等待工具结果…</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PairedStatusBadge({ status }: { status: PairedToolStatus }) {
+  if (status === "running") {
+    return (
+      <span className="ask-tool-status text-[color:var(--deeptutor-primary)]">
+        <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
+        执行中
+      </span>
+    );
+  }
+  if (status === "error") {
+    return (
+      <span className="ask-tool-status text-[color:var(--color-error)]">
+        <AlertCircle className="size-3" />
+        失败
+      </span>
+    );
+  }
+  return (
+    <span className="ask-tool-status text-[color:var(--color-success)]">
+      <CheckCircle2 className="size-3" />
+      完成
+    </span>
+  );
+}
+
+function previewToolInput(
+  parsedInput: Record<string, unknown> | null,
+  toolInput: string,
+): string {
+  if (parsedInput) {
+    if ("command" in parsedInput) return String(parsedInput.command);
+    if ("file_path" in parsedInput) return String(parsedInput.file_path);
+    if ("pattern" in parsedInput) {
+      const path = parsedInput.path ? ` in ${parsedInput.path}` : "";
+      return `${parsedInput.pattern}${path}`;
+    }
+    if ("description" in parsedInput && "prompt" in parsedInput) {
+      const type = parsedInput.subagent_type ? `[${parsedInput.subagent_type}] ` : "";
+      return `${type}${parsedInput.description}`;
+    }
+    if ("query" in parsedInput) return String(parsedInput.query);
+    if ("url" in parsedInput) return String(parsedInput.url);
+    if ("old_string" in parsedInput && "new_string" in parsedInput) {
+      return `${String(parsedInput.old_string).slice(0, 30)} ↙ ${String(parsedInput.new_string).slice(0, 30)}`;
+    }
+    if ("content" in parsedInput && "file_path" in parsedInput) {
+      return String(parsedInput.file_path);
+    }
+    if ("content" in parsedInput) return String(parsedInput.content).slice(0, 60);
+    if ("skill" in parsedInput) return String(parsedInput.skill);
+  }
+  return toolInput.slice(0, 100);
+}
+
+function StructuredPreview({ params }: { params: Record<string, unknown> }) {
+  return (
+    <div className="divide-y divide-border/20">
+      {Object.entries(params).map(([key, value]) => {
+        const strValue = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        return (
+          <div key={key} className="flex gap-3 py-1.5">
+            <span className="w-24 shrink-0 truncate font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              {key}
+            </span>
+            <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/80">
+              {strValue}
+            </pre>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

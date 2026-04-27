@@ -7,6 +7,7 @@ output/
 node_modules/
 dist/
 rust/target/
+rust/server*.log
 apps/*/dist/
 apps/*/node_modules/
 apps/*/src-tauri/target/

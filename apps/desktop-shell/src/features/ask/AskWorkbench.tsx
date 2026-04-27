@@ -53,8 +53,10 @@ import {
 } from "@/lib/tauri";
 import {
   bindSourceToSession,
+  cancelSession,
   clearSourceBinding,
   compactSession,
+  resumeSession,
 } from "./api/client";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ConversationMessage } from "@/features/common/message-types";
@@ -78,6 +80,8 @@ import {
   type AskErrorClassification,
 } from "./ask-error-classifier";
 import { useNavigate } from "react-router-dom";
+import { useConversationTurnState } from "./useConversationTurnState";
+import type { CapabilityProviderKind } from "./model-capabilities";
 
 type ReplayPhase = "idle" | "streaming" | "handoff" | "complete";
 
@@ -173,6 +177,7 @@ interface ProviderOption {
   id: string;
   label: string;
   model: string;
+  kind: CapabilityProviderKind;
   isActive: boolean;
 }
 
@@ -261,8 +266,12 @@ export function AskWorkbench({
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [showAgentPanel, setShowAgentPanel] = useState(false);
   const [starterDraft, setStarterDraft] = useState<string | null>(null);
+  const [isComposing, setIsComposing] = useState(false);
+  const [interruptedAt, setInterruptedAt] = useState<number | null>(null);
+  const [isResumingTurn, setIsResumingTurn] = useState(false);
   const replayTimerRef = useRef<number | null>(null);
   const replayHandoffTimerRef = useRef<number | null>(null);
+  const interruptingRef = useRef(false);
   const [streamingReplay, setStreamingReplay] =
     useState<StreamingReplayState>({
       run: null,
@@ -441,9 +450,26 @@ export function AskWorkbench({
       )}% · ${streamingReplay.run.totalChars.toLocaleString()} chars`
     : null;
 
+  const turnStatus = useConversationTurnState({
+    session,
+    messages: displayMessages,
+    isSending,
+    isRunning,
+    isReplayStreaming,
+    streamingContent: effectiveStreamingContent,
+    streamingThinking: effectiveStreamingThinking,
+    hasPendingPermission: !!pendingPermission,
+    errorMessage,
+    settingsUnready,
+    isComposing,
+    interruptedAt,
+  });
+
   // Clear local messages when session changes
   useEffect(() => {
     setLocalMessages([]);
+    setInterruptedAt(null);
+    interruptingRef.current = false;
     clearReplayTimers();
     setStreamingReplay({
       run: null,
@@ -452,6 +478,13 @@ export function AskWorkbench({
       offset: 0,
     });
   }, [clearReplayTimers, session?.id]);
+
+  useEffect(() => {
+    if (isSending || session?.turn_state === "running" || streamingReplay.run) {
+      setInterruptedAt(null);
+      interruptingRef.current = false;
+    }
+  }, [isSending, session?.turn_state, streamingReplay.run]);
 
   const handlePermissionDecision = useCallback(
     (action: PermissionAction) => {
@@ -718,6 +751,110 @@ export function AskWorkbench({
   // Input ref for focus shortcut
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  const appendInterruptedTurn = useCallback(
+    (partialContent: string) => {
+      const trimmed = partialContent.trim();
+      if (!trimmed) {
+        addSystemMessage("已停止。");
+        return;
+      }
+
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-interrupted-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 6)}`,
+          role: "assistant",
+          type: "text",
+          content: `${trimmed}\n\n... [已停止]`,
+          timestamp: Date.now(),
+        },
+      ]);
+    },
+    [addSystemMessage],
+  );
+
+  const handleInterruptTurn = useCallback(async () => {
+    if (!turnStatus.canInterrupt || interruptingRef.current) return;
+    interruptingRef.current = true;
+
+    const partialContent = effectiveStreamingContent;
+    setInterruptedAt(Date.now());
+    appendInterruptedTurn(partialContent);
+
+    if (streamingReplay.run) {
+      stopStreamingReplay();
+      window.setTimeout(() => {
+        interruptingRef.current = false;
+      }, 250);
+      return;
+    }
+
+    onStop?.();
+
+    if (!session?.id) return;
+    try {
+      const next = await cancelSession(session.id);
+      queryClient.setQueryData(
+        ["clawwiki", "ask", "session", session.id],
+        next,
+      );
+    } catch (err) {
+      addSystemMessage(
+        `中断失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      window.setTimeout(() => {
+        interruptingRef.current = false;
+      }, 250);
+    }
+  }, [
+    addSystemMessage,
+    appendInterruptedTurn,
+    effectiveStreamingContent,
+    onStop,
+    queryClient,
+    session?.id,
+    stopStreamingReplay,
+    streamingReplay.run,
+    turnStatus.canInterrupt,
+  ]);
+
+  const handleContinueTurn = useCallback(async () => {
+    if (!session?.id) return;
+    setIsResumingTurn(true);
+    setInterruptedAt(null);
+    try {
+      const next = await resumeSession(session.id);
+      queryClient.setQueryData(
+        ["clawwiki", "ask", "session", session.id],
+        next,
+      );
+    } catch (err) {
+      addSystemMessage(
+        `继续生成失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setIsResumingTurn(false);
+    }
+  }, [addSystemMessage, queryClient, session?.id]);
+
+  const handleFocusComposer = useCallback(() => {
+    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+  }, []);
+
+  useEffect(() => {
+    if (!turnStatus.canInterrupt) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      void handleInterruptTurn();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [handleInterruptTurn, turnStatus.canInterrupt]);
+
   // v2: Wiki query hook for ?-prefixed questions.
   const wikiQuery = useWikiQuery();
 
@@ -789,6 +926,7 @@ export function AskWorkbench({
           agentCount={agentCount}
           showAgentPanel={showAgentPanel}
           onToggleAgentPanel={() => setShowAgentPanel((v) => !v)}
+          turnStatus={turnStatus}
         />
       )}
       {settingsUnready && !hideHeader && (
@@ -899,6 +1037,7 @@ export function AskWorkbench({
               isStartingTurn={
                 streamingReplay.run ? false : isSending || extendedRunning
               }
+              turnStatus={turnStatus}
               onPromoteToSession={handlePromoteToSession}
             />
 
@@ -940,6 +1079,15 @@ export function AskWorkbench({
               />
             )}
 
+            {turnStatus.state === "interrupted" && (
+              <InterruptedRecoveryPanel
+                isResuming={isResumingTurn}
+                onContinue={handleContinueTurn}
+                onRegenerate={handleContinueTurn}
+                onFocusComposer={handleFocusComposer}
+              />
+            )}
+
           </div>
           <ScrollToBottomButton />
         </ConversationScroller>
@@ -947,8 +1095,10 @@ export function AskWorkbench({
 
       <Composer
         onSend={handleSendWithUrlFetch}
-        onStop={onStop}
+        onStop={handleInterruptTurn}
         isBusy={isRunning || !!pendingPermission}
+        turnStatus={turnStatus}
+        onComposingChange={setIsComposing}
         modelLabel={modelLabel}
         environmentLabel={environmentLabel}
         providers={providers}
@@ -1006,6 +1156,56 @@ function MessageSkeleton() {
           <div className="h-3 w-20 animate-pulse rounded bg-muted/40" />
           <div className="h-3 flex-1 animate-pulse rounded bg-muted/20" />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function InterruptedRecoveryPanel({
+  isResuming,
+  onContinue,
+  onRegenerate,
+  onFocusComposer,
+}: {
+  isResuming: boolean;
+  onContinue: () => void | Promise<void>;
+  onRegenerate: () => void | Promise<void>;
+  onFocusComposer: () => void;
+}) {
+  return (
+    <div className="ask-interrupted-panel">
+      <div className="min-w-0 flex-1">
+        <p className="text-[12.5px] font-medium text-[#2C2C2A]">
+          生成已停止
+        </p>
+        <p className="mt-0.5 text-[11.5px] text-[#888780]">
+          已保留当前输出。你可以继续生成、重新尝试，或直接输入新问题。
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          className="ask-interrupted-primary"
+          onClick={() => void onContinue()}
+          disabled={isResuming}
+        >
+          {isResuming ? "继续中…" : "↻ 继续生成"}
+        </button>
+        <button
+          type="button"
+          className="ask-interrupted-secondary"
+          onClick={() => void onRegenerate()}
+          disabled={isResuming}
+        >
+          重新生成
+        </button>
+        <button
+          type="button"
+          className="ask-interrupted-secondary"
+          onClick={onFocusComposer}
+        >
+          发新消息
+        </button>
       </div>
     </div>
   );

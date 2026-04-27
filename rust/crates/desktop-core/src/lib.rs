@@ -60,8 +60,10 @@ pub mod providers_config;
 // so the Ask UI sees real `TextDelta` events instead of a single
 // "整段落下" Message event at the end of the turn.
 pub mod openai_compat_streaming;
+pub mod openai_tool_schema;
 pub mod secure_storage;
 pub mod system_prompt;
+pub mod tool_execution;
 // M2 runtime prerequisite classifier. Turns raw stderr / IngestError
 // strings into a `MissingPrerequisite` enum with Chinese user-facing
 // hints, used by `url_ingest` to structure `PrerequisiteMissing` and
@@ -4194,6 +4196,40 @@ impl DesktopState {
                 .default_model
                 .clone()
                 .unwrap_or_else(|| "moonshot-v1-auto".to_string());
+            let tool_specs_for_stream = if model_supports_openai_tools(&model_for_stream) {
+                let specs: Vec<serde_json::Value> = tools::mvp_tool_specs()
+                    .iter()
+                    .map(crate::openai_tool_schema::to_openai_function_tool)
+                    .collect();
+                if specs.is_empty() {
+                    None
+                } else {
+                    eprintln!(
+                        "[openai-compat-stream] session={session_id} model={model_for_stream} enabling tool_calls with {} tool specs",
+                        specs.len()
+                    );
+                    Some(specs)
+                }
+            } else {
+                eprintln!(
+                    "[openai-compat-stream] session={session_id} model={model_for_stream} not in tool support whitelist; text-only mode"
+                );
+                None
+            };
+            let workspace_path_for_stream = PathBuf::from(&project_path);
+            let bypass_permissions_for_stream = {
+                let loader = ConfigLoader::default_for(&workspace_path_for_stream);
+                match loader.load() {
+                    Ok(rc) => matches!(
+                        rc.permission_mode()
+                            .map(permission_mode_from_config)
+                            .unwrap_or(PermissionMode::WorkspaceWrite),
+                        PermissionMode::DangerFullAccess
+                    ),
+                    Err(_) => false,
+                }
+            };
+            let permission_gate_for_stream = permission_gate.clone();
             let user_message_text = message.clone();
             let previous_count_for_stream = previous_message_count;
             let friendly_label_for_stream = friendly_label;
@@ -4212,14 +4248,12 @@ impl DesktopState {
                     sender_for_stream.clone(),
                 );
 
-                // Flatten messages: existing history + the newly
-                // appended user message.
-                let mut msgs =
-                    openai_compat_streaming::messages_from_runtime_session(&session_for_stream);
-                msgs.push(openai_compat_streaming::OpenAiChatMessage {
-                    role: "user".to_string(),
-                    content: user_message_text,
-                });
+                // Existing history + the newly appended user message.
+                // Keep internal blocks intact so OpenAI-compat multi-turn
+                // loops can feed assistant.tool_use and role:tool results
+                // back into the next ChatCompletions request.
+                let mut msgs = session_for_stream.messages.clone();
+                msgs.push(ConversationMessage::user_text(user_message_text));
 
                 // P1-1: throttled session.updated_at bump so long
                 // streams don't trip the frontend isStale soft-recovery
@@ -4243,6 +4277,12 @@ impl DesktopState {
                     messages: msgs,
                     system_prompt: Some(system_prompt_text_openai),
                     on_stream_tick: Some(on_stream_tick),
+                    tool_specs: tool_specs_for_stream,
+                    tool_policy: None,
+                    workspace_path: Some(workspace_path_for_stream),
+                    permission_gate: Some(permission_gate_for_stream),
+                    bypass_permissions: bypass_permissions_for_stream,
+                    tool_timeout_secs: crate::tool_execution::DEFAULT_TOOL_TIMEOUT_SECS,
                 };
 
                 let result = openai_compat_streaming::run_streaming_turn(
@@ -5122,7 +5162,7 @@ impl DesktopState {
         session_id: &str,
         _session: RuntimeSession,
         previous_message_count: usize,
-        result: Result<(ConversationMessage, Option<String>), String>,
+        result: Result<(Vec<ConversationMessage>, Option<String>), String>,
         sender: broadcast::Sender<DesktopSessionEvent>,
         model_label_hint: String,
     ) {
@@ -5133,8 +5173,8 @@ impl DesktopState {
         // `record.session.messages.push(user_message.clone())` BEFORE
         // cloning. Here we only need to add the assistant reply.
 
-        let (assistant_msg, upstream_model, error_text) = match result {
-            Ok((msg, model)) => (Some(msg), model, None),
+        let (messages_to_push, upstream_model, error_text) = match result {
+            Ok((messages, model)) => (messages, model, None),
             Err(error) => {
                 eprintln!("[openai-compat-stream] session={session_id} turn failed: {error}");
                 let err_msg = ConversationMessage {
@@ -5144,7 +5184,7 @@ impl DesktopState {
                     }],
                     usage: None,
                 };
-                (Some(err_msg), None, Some(error))
+                (vec![err_msg], None, Some(error))
             }
         };
 
@@ -5168,7 +5208,7 @@ impl DesktopState {
                 return;
             };
             let mut final_session = record.session.clone();
-            if let Some(msg) = assistant_msg.as_ref() {
+            for msg in &messages_to_push {
                 final_session.push_message(msg.clone()).unwrap_or_default();
             }
             record.metadata.updated_at = unix_timestamp_millis();
@@ -7377,6 +7417,81 @@ fn build_system_prompt_for_openai_compat(
         parts.push(crate::ask_context::binding::grounding_instruction_block().to_string());
     }
     parts.join("\n\n")
+}
+
+/// Determines whether an OpenAI-compatible model is known to support
+/// `tool_calls` in the standard ChatCompletions streaming format.
+///
+/// Returning true only enables the protocol. The actual exposed tool surface
+/// is further filtered by `ToolExposurePolicy` (default: safe read-only only).
+///
+/// This is a conservative whitelist. Unknown models default to false
+/// to avoid breaking text-only paths.
+///
+/// Reasoning models (e.g. deepseek-reasoner) are explicitly excluded
+/// because their providers do not support tool_calls.
+fn model_supports_openai_tools(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        // DeepSeek family
+        "deepseek-chat"
+            | "deepseek-v3"
+            | "deepseek-v3.1"
+            // Moonshot family
+            | "moonshot-v1-128k"
+            | "kimi-k2"
+            // Qwen family
+            | "qwen-plus"
+            | "qwen-max"
+            // OpenAI family
+            | "gpt-4o"
+            // GLM family
+            | "glm-4-plus"
+            // xAI family
+            | "grok-3"
+    )
+    // NOT in list (intentional):
+    //   "deepseek-reasoner"  - DeepSeek R1 docs: tool_calls not supported
+    //   "deepseek-coder"     - tool support unconfirmed
+    //   "qwen-coder"         - tool support unconfirmed
+    //   "moonshot-v1-32k"    - test coverage missing
+    //   "moonshot-v1-8k"     - test coverage missing
+}
+
+#[cfg(test)]
+mod model_capability_tests {
+    use super::*;
+
+    #[test]
+    fn deepseek_chat_supports_tools() {
+        assert!(model_supports_openai_tools("deepseek-chat"));
+    }
+
+    #[test]
+    fn deepseek_reasoner_does_not_support_tools() {
+        assert!(!model_supports_openai_tools("deepseek-reasoner"));
+    }
+
+    #[test]
+    fn unknown_model_defaults_to_unsupported() {
+        assert!(!model_supports_openai_tools("foobar-3000"));
+        assert!(!model_supports_openai_tools(""));
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        assert!(model_supports_openai_tools("DeepSeek-Chat"));
+        assert!(model_supports_openai_tools("DEEPSEEK-CHAT"));
+        assert!(model_supports_openai_tools("  gpt-4o  "));
+    }
+
+    #[test]
+    fn coder_variants_explicitly_unsupported() {
+        // These are conservatively excluded pending verification.
+        assert!(!model_supports_openai_tools("deepseek-coder"));
+        assert!(!model_supports_openai_tools("qwen-coder"));
+    }
 }
 
 fn build_customize_state(project_path: String) -> DesktopCustomizeState {

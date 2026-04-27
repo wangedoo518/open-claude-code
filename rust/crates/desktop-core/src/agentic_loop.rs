@@ -119,7 +119,7 @@ impl PermissionGate {
         }
 
         // Read-only tools never need permission.
-        if is_read_only_tool(tool_name) {
+        if crate::tool_execution::is_read_only_tool(tool_name) {
             return PermissionDecision::Allow;
         }
 
@@ -635,40 +635,20 @@ pub async fn run_agentic_loop(
                             is_error,
                         )
                     } else {
-                        // Built-in tool: execute via the vendored crate under
-                        // the process-wide workspace lock with CWD save/restore.
-                        //
-                        // IM-04: The spawn_blocking future is wrapped in a
-                        // `tokio::time::timeout` so a runaway built-in tool
-                        // cannot hold the process-wide workspace CWD lock
-                        // forever and starve other sessions.
-                        //
-                        // The timeout defaults to 120 seconds and can be
-                        // overridden at runtime via the
-                        // `OCL_TOOL_TIMEOUT_SECS` environment variable for
-                        // operators who need a longer budget (e.g. long
-                        // Bash tool invocations). Values below 5 s are
-                        // ignored to avoid foot-gunning real tools.
-                        let name = tool_name.clone();
-                        let input_value = tool_input_value.clone();
-                        let tool_cwd = config.project_path.clone();
+                        // Built-in tool: execute via the shared helper so the
+                        // agentic and OpenAI-compatible paths share CWD lock,
+                        // timeout, and cancellation behavior.
                         let timeout_secs = resolve_tool_timeout_secs(
                             std::env::var("OCL_TOOL_TIMEOUT_SECS").ok().as_deref(),
                         );
-                        let join = tokio::task::spawn_blocking(move || {
-                            execute_tool_in_workspace(&tool_cwd, &name, &input_value)
-                        });
-                        let result =
-                            match tokio::time::timeout(Duration::from_secs(timeout_secs), join)
-                                .await
-                            {
-                                Ok(Ok(r)) => r,
-                                Ok(Err(e)) => Err(format!("tool task panicked: {e}")),
-                                Err(_) => Err(format!(
-                                    "tool execution timed out after {timeout_secs}s \
-                                 (override via OCL_TOOL_TIMEOUT_SECS env var)"
-                                )),
-                            };
+                        let result = crate::tool_execution::execute_builtin_tool_with_timeout(
+                            config.project_path.clone(),
+                            tool_name.clone(),
+                            tool_input_value.clone(),
+                            cancel_token.clone(),
+                            timeout_secs,
+                        )
+                        .await;
 
                         let (output, is_error) = match result {
                             Ok(output) => (truncate_tool_output(output), false),
@@ -1425,40 +1405,6 @@ fn probe_mcp_servers(servers: &[McpServerEntry]) {
     }
 }
 
-/// Execute a tool with CWD pinned to the workspace under a process-wide lock.
-///
-/// Acquires the global workspace lock, saves the current CWD, changes to the
-/// tool's workspace, runs the tool, then restores the original CWD. The lock
-/// ensures only one tool executes at a time process-wide, preventing
-/// concurrent sessions from racing on `std::env::set_current_dir`.
-fn execute_tool_in_workspace(
-    cwd: &std::path::Path,
-    tool_name: &str,
-    input: &Value,
-) -> Result<String, String> {
-    // Use the SHARED process-wide lock from lib.rs so both the legacy
-    // execute_live_turn path and the agentic loop serialize on the same
-    // mutex. Previously agentic_loop had its own local OnceLock which
-    // meant concurrent legacy+agentic turns did NOT exclude each other
-    // on set_current_dir. See docs/audit-lessons.md L-08.
-    let lock = crate::process_workspace_lock();
-    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-
-    let original = std::env::current_dir().map_err(|e| e.to_string())?;
-
-    if cwd.is_dir() {
-        std::env::set_current_dir(cwd)
-            .map_err(|e| format!("failed to cd into {}: {e}", cwd.display()))?;
-    }
-
-    let result = tools::execute_tool(tool_name, input);
-
-    // Always try to restore CWD, even if the tool failed.
-    let _ = std::env::set_current_dir(&original);
-
-    result
-}
-
 /// Returns `true` if the tool name follows the MCP naming convention.
 ///
 /// MCP tools are always named `mcp__<server>__<tool>`. This is a quick
@@ -1517,14 +1463,6 @@ mod mcp_routing_tests {
         assert!(!is_mcp_tool_name("mcp__only_one_underscore"));
         assert!(!is_mcp_tool_name("some_mcp__thing"));
     }
-}
-
-/// Returns `true` for tools that are read-only and never need permission.
-fn is_read_only_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "read_file" | "glob_search" | "grep_search" | "Read" | "Glob" | "Grep"
-    )
 }
 
 /// Coerce a raw tool_use input JSON string into a `Value::Object`.

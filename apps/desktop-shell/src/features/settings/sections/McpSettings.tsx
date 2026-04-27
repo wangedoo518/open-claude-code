@@ -38,6 +38,61 @@ const SCOPES: { value: McpScope; label: string }[] = [
   { value: "project", label: "当前知识库" },
 ];
 
+type PluginView = DesktopCustomizeState["plugins"][number];
+type DiscoveredServerView = DesktopCustomizeState["mcp_servers"][number];
+
+interface LocalizedToolDisplay {
+  title: string;
+  description: string;
+  badge: string;
+}
+
+const BUILTIN_PLUGIN_COPY: Record<string, LocalizedToolDisplay> = {
+  "example-builtin": {
+    title: "内置扩展示例",
+    description: "用于验证扩展系统是否正常；普通使用可以忽略。",
+    badge: "开发者示例",
+  },
+  "example-bundled": {
+    title: "打包扩展示例",
+    description: "随应用一起安装的示例插件，用于测试插件加载能力。",
+    badge: "开发者示例",
+  },
+  "sample-hooks": {
+    title: "工具流程示例",
+    description: "演示工具调用前后的扩展钩子；不是普通用户需要配置的功能。",
+    badge: "开发者示例",
+  },
+};
+
+const KNOWN_SERVER_COPY: Record<string, LocalizedToolDisplay> = {
+  filesystem: {
+    title: "本地文件访问",
+    description: "允许 AI 在授权范围内读取或整理本机文件。",
+    badge: "文件",
+  },
+  github: {
+    title: "GitHub 协作",
+    description: "让 AI 查看仓库、Issue、Pull Request 和 CI 状态。",
+    badge: "协作",
+  },
+  playwright: {
+    title: "浏览器自动化",
+    description: "让 AI 打开网页、点击页面并做真实浏览器检查。",
+    badge: "浏览器",
+  },
+  fetch: {
+    title: "网页读取",
+    description: "让 AI 获取网页内容，用于检索和摘要。",
+    badge: "网页",
+  },
+  memory: {
+    title: "长期记忆",
+    description: "为 AI 提供可复用的本地记忆存储。",
+    badge: "记忆",
+  },
+};
+
 /* ─── Component ────────────────────────────────────────────────── */
 
 interface McpSettingsProps {
@@ -98,31 +153,41 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
         description="让 AI 调用第三方工具 · 通过标准扩展协议接入"
       >
         <div className="space-y-2">
-          {plugins.map((plugin) => (
-            <div
-              key={plugin.id}
-              className="flex items-center gap-3 rounded-md border border-[rgba(44,44,42,0.12)] bg-white px-3 py-2"
-            >
-              <Plug
-                className="size-4 shrink-0"
-                style={{ color: plugin.enabled ? "var(--color-success)" : "var(--color-muted-foreground)" }}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="text-body font-medium">
-                  {plugin.name}
+          <div className="rounded-md bg-[rgba(44,44,42,0.025)] px-3 py-2 text-label leading-relaxed text-muted-foreground">
+            普通使用一般不需要改这里。只有当你想让外脑接入 GitHub、浏览器、本地文件等外部工具时，再添加或配置扩展工具。
+          </div>
+
+          {plugins.map((plugin) => {
+            const display = localizePluginDisplay(plugin);
+            return (
+              <div
+                key={plugin.id}
+                className="flex items-center gap-3 rounded-md border border-[rgba(44,44,42,0.12)] bg-white px-3 py-2"
+              >
+                <Plug
+                  className="size-4 shrink-0"
+                  style={{ color: plugin.enabled ? "var(--color-success)" : "var(--color-muted-foreground)" }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-body font-medium">
+                    <span>{display.title}</span>
+                    <span className="settings-status-pill settings-status-pill--idle">
+                      {display.badge}
+                    </span>
+                  </div>
+                  <div className="truncate text-label text-muted-foreground">
+                    {formatToolCount(plugin.tool_count)} · {display.description}
+                  </div>
                 </div>
-                <div className="truncate text-label text-muted-foreground">
-                  {plugin.tool_count} 个工具 · {plugin.description || "本机扩展"}
-                </div>
+                <span className={`settings-status-pill ${plugin.enabled ? "settings-status-pill--ok" : "settings-status-pill--idle"}`}>
+                  {plugin.enabled ? "运行正常" : "未启用"}
+                </span>
+                <button type="button" className="settings-text-link">
+                  查看
+                </button>
               </div>
-              <span className={`settings-status-pill ${plugin.enabled ? "settings-status-pill--ok" : "settings-status-pill--idle"}`}>
-                {plugin.enabled ? "运行正常" : "未启用"}
-              </span>
-              <button type="button" className="settings-text-link">
-                配置
-              </button>
-            </div>
-          ))}
+            );
+          })}
 
           {userServers.map((server) =>
             editingId === server.id ? (
@@ -143,31 +208,37 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
             )
           )}
 
-          {discoveredServers.map((server) => (
-            <div
-              key={`${server.scope}-${server.name}-${server.target}`}
-              className="flex items-center gap-3 rounded-md border border-[rgba(44,44,42,0.12)] bg-white px-3 py-2"
-            >
-              <Plug
-                className="size-4 shrink-0"
-                style={{ color: "var(--color-success)" }}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="text-body font-medium">
-                  {server.name}
+          {discoveredServers.map((server) => {
+            const display = localizeDiscoveredServerDisplay(server);
+            return (
+              <div
+                key={`${server.scope}-${server.name}-${server.target}`}
+                className="flex items-center gap-3 rounded-md border border-[rgba(44,44,42,0.12)] bg-white px-3 py-2"
+              >
+                <Plug
+                  className="size-4 shrink-0"
+                  style={{ color: "var(--color-success)" }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-body font-medium">
+                    <span>{display.title}</span>
+                    <span className="settings-status-pill settings-status-pill--idle">
+                      {display.badge}
+                    </span>
+                  </div>
+                  <div className="truncate text-label text-muted-foreground">
+                    {display.description} · {localizeScope(server.scope)} · {localizeTransport(server.transport)}
+                  </div>
                 </div>
-                <div className="truncate text-label text-muted-foreground">
-                  {localizeScope(server.scope)} · {localizeTransport(server.transport)}
-                </div>
+                <span className="settings-status-pill settings-status-pill--ok">
+                  运行正常
+                </span>
+                <button type="button" className="settings-text-link">
+                  查看
+                </button>
               </div>
-              <span className="settings-status-pill settings-status-pill--ok">
-                运行正常
-              </span>
-              <button type="button" className="settings-text-link">
-                配置
-              </button>
-            </div>
-          ))}
+            );
+          })}
 
           {plugins.length === 0 && userServers.length === 0 && discoveredServers.length === 0 ? (
             <div className="settings-empty-row">
@@ -199,14 +270,17 @@ export function McpSettings({ customize, error }: McpSettingsProps) {
             <div className="settings-dev-details-body space-y-2 text-caption text-muted-foreground">
               {plugins.map((plugin) => (
                 <div key={`${plugin.id}-dev`}>
-                  {plugin.name} · <code className="settings-dev-code">{plugin.id}</code>{" "}
+                  {localizePluginDisplay(plugin).title} · <code className="settings-dev-code">{plugin.name}</code>{" "}
+                  <code className="settings-dev-code">{plugin.id}</code>{" "}
                   <code className="settings-dev-code">{plugin.kind}</code>{" "}
+                  <code className="settings-dev-code">{plugin.description || "未上报描述"}</code>{" "}
                   <code className="settings-dev-code">{plugin.root_path ?? "未上报路径"}</code>
                 </div>
               ))}
               {discoveredServers.map((server) => (
                 <div key={`${server.scope}-${server.name}-${server.target}-dev`}>
-                  {server.name} · <code className="settings-dev-code">{server.scope}</code>{" "}
+                  {localizeDiscoveredServerDisplay(server).title} · <code className="settings-dev-code">{server.name}</code>{" "}
+                  <code className="settings-dev-code">{server.scope}</code>{" "}
                   <code className="settings-dev-code">{server.transport}</code>{" "}
                   <code className="settings-dev-code">{server.target}</code>
                 </div>
@@ -529,6 +603,84 @@ function localizeTransport(transport: string) {
     default:
       return transport;
   }
+}
+
+function formatToolCount(count: number) {
+  if (count <= 0) return "暂无可用工具";
+  return `${count} 个可用工具`;
+}
+
+function localizePluginDisplay(plugin: PluginView): LocalizedToolDisplay {
+  const key = normalizeToolKey(plugin.id || plugin.name);
+  const known = BUILTIN_PLUGIN_COPY[key];
+  if (known) return known;
+
+  const nameKey = normalizeToolKey(plugin.name);
+  const knownByName = BUILTIN_PLUGIN_COPY[nameKey] ?? KNOWN_SERVER_COPY[nameKey];
+  if (knownByName) return knownByName;
+
+  return {
+    title: humanizeToolName(plugin.name || plugin.id),
+    description: localizePluginDescription(plugin.description),
+    badge: plugin.default_enabled ? "内置" : "自定义",
+  };
+}
+
+function localizeDiscoveredServerDisplay(
+  server: DiscoveredServerView,
+): LocalizedToolDisplay {
+  const known = KNOWN_SERVER_COPY[normalizeToolKey(server.name)];
+  if (known) return known;
+
+  return {
+    title: humanizeToolName(server.name),
+    description: "让 AI 调用外部工具完成额外操作。",
+    badge: localizeTransport(server.transport),
+  };
+}
+
+function normalizeToolKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^@modelcontextprotocol\/server-/, "")
+    .replace(/^mcp-server-/, "")
+    .replace(/^server-/, "");
+}
+
+function humanizeToolName(value: string) {
+  const normalized = normalizeToolKey(value);
+  if (!normalized) return "未命名扩展工具";
+
+  const words = normalized
+    .split(/[-_\s.]+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (word === "mcp") return "扩展";
+      if (word === "api") return "API";
+      if (word === "ai") return "AI";
+      if (word === "github") return "GitHub";
+      return word.slice(0, 1).toUpperCase() + word.slice(1);
+    });
+
+  return words.join(" ") || "未命名扩展工具";
+}
+
+function localizePluginDescription(description: string) {
+  const trimmed = description.trim();
+  if (!trimmed) return "本机扩展工具，可让 AI 调用额外能力。";
+
+  const lower = trimmed.toLowerCase();
+  if (lower.includes("plugin scaffold")) {
+    return "开发者示例插件，用于验证扩展系统是否正常。";
+  }
+  if (lower.includes("hook integration")) {
+    return "开发者示例插件，用于验证工具调用前后的流程扩展。";
+  }
+  if (/^[\x00-\x7F]+$/.test(trimmed)) {
+    return "本机扩展工具，可让 AI 调用额外能力。";
+  }
+  return trimmed;
 }
 
 function localizeScope(scope: string) {

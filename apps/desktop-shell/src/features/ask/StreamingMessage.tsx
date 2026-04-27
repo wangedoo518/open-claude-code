@@ -31,11 +31,13 @@ import { memo, useState, useEffect, useRef } from "react";
 import { Brain, ChevronRight, ChevronDown } from "lucide-react";
 import { AskMarkdown } from "./AskMarkdown";
 import { Shimmer } from "./Shimmer";
+import type { ConversationTurnStatus } from "./useConversationTurnState";
 
 interface StreamingMessageProps {
   content: string;
   thinkingContent?: string;
   isComplete?: boolean;
+  turnStatus?: ConversationTurnStatus;
 }
 
 function getRevealStep(remaining: number): number {
@@ -50,6 +52,7 @@ export const StreamingMessage = memo(function StreamingMessage({
   content,
   thinkingContent,
   isComplete = false,
+  turnStatus,
 }: StreamingMessageProps) {
   const [elapsed, setElapsed] = useState(0);
   const [displayContent, setDisplayContent] = useState(() =>
@@ -123,7 +126,8 @@ export const StreamingMessage = memo(function StreamingMessage({
   }, [content, isComplete]);
 
   const statusText =
-    content
+    turnStatus?.label ??
+    (content
       ? "正在写入回答"
       : thinkingContent
         ? "正在整理思路"
@@ -131,7 +135,7 @@ export const StreamingMessage = memo(function StreamingMessage({
           ? "正在分析上下文"
           : elapsed < 15
             ? "正在调用工具与检索"
-            : "正在组织回答";
+            : "正在组织回答");
 
   // No content yet → phased work-log shimmer, not a chat bubble.
   if (!content && !thinkingContent) {
@@ -161,6 +165,11 @@ export const StreamingMessage = memo(function StreamingMessage({
           <div className="ask-stream-status">
             <span className="ask-stream-dot" aria-hidden />
             <Shimmer className="text-sm font-medium">{statusText}</Shimmer>
+            {turnStatus?.detail && (
+              <span className="hidden text-[11px] text-muted-foreground/45 md:inline">
+                {turnStatus.detail}
+              </span>
+            )}
             {!isComplete && elapsed >= 2 && (
               <span className="tabular-nums text-[11px] text-muted-foreground/45">
                 {elapsed >= 60

@@ -13,6 +13,7 @@ import { StreamingMessage } from "./StreamingMessage";
 import { useStickToBottomContext } from "./ConversationScroller";
 import type { ConversationMessage } from "@/features/common/message-types";
 import type { SourceRef } from "@/lib/tauri";
+import type { ConversationTurnStatus } from "./useConversationTurnState";
 
 interface MessageListProps {
   sessionKey?: string;
@@ -36,6 +37,7 @@ interface MessageListProps {
    * completed handoff.
    */
   isStartingTurn?: boolean;
+  turnStatus?: ConversationTurnStatus;
   /**
    * A3 — forwarded to <Message> → <UsedSourcesBar> so the inline
    * "固定到会话" action can upgrade an auto-bound turn source
@@ -135,6 +137,7 @@ export const MessageList = memo(function MessageList({
   streamingThinking,
   isStreaming = false,
   isStartingTurn = false,
+  turnStatus,
   onPromoteToSession,
 }: MessageListProps) {
   const { scrollElement, isAtBottom } = useStickToBottomContext();
@@ -240,6 +243,7 @@ export const MessageList = memo(function MessageList({
               <StreamingMessage
                 content={item.content}
                 thinkingContent={item.thinking || undefined}
+                turnStatus={turnStatus}
               />
             ) : (
               <Message

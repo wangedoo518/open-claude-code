@@ -28,6 +28,10 @@ This document answers: how to maintain and verify `desktop-shell`.
 - `cd rust && cargo check --workspace`
 - `git diff --check`
 
+## Known Issues
+
+- Current desktop shell known issues and demo-readiness gaps are tracked in `docs/desktop-shell/operations/KNOWN_ISSUES.md`.
+
 ## Phase 5 Smoke
 
 Run the Phase 5 power-tools regression smoke from the repository root:

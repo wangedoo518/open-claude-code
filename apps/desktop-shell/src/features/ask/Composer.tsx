@@ -59,6 +59,15 @@ import { ResponseModeChip } from "./ResponseModeChip";
 import { SourceBindingChip } from "./SourceBindingChip";
 import { classifyContextMode, extractFirstUrl } from "./mode-classifier";
 import type { ContextMode, SessionSourceBinding } from "@/lib/tauri";
+import type { ConversationTurnStatus } from "./useConversationTurnState";
+import { CapabilityHint } from "./CapabilityHint";
+import { ModelCapabilityCard } from "./ModelCapabilityCard";
+import { ModelCapabilityIndicator } from "./ModelCapabilityIndicator";
+import {
+  getModelCapability,
+  type CapabilityProviderKind,
+  type ModelCapability,
+} from "./model-capabilities";
 
 /* ─── MarkItDown constants ──────────────────────────────────────── */
 
@@ -192,6 +201,7 @@ interface ProviderOption {
   id: string;
   label: string;
   model: string;
+  kind: CapabilityProviderKind;
   isActive: boolean;
 }
 
@@ -208,6 +218,8 @@ interface ComposerProps {
   ) => void | Promise<void>;
   onStop?: () => void;
   isBusy?: boolean;
+  turnStatus?: ConversationTurnStatus;
+  onComposingChange?: (isComposing: boolean) => void;
   modelLabel?: string;
   environmentLabel?: string;
   providers?: ProviderOption[];
@@ -241,6 +253,8 @@ export function Composer({
   onSend,
   onStop,
   isBusy = false,
+  turnStatus,
+  onComposingChange,
   modelLabel,
   providers,
   onSwitchProvider,
@@ -296,6 +310,45 @@ export function Composer({
   const focusTimerRef = useRef<number | null>(null);
   const focusRafRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [modelSelectorOpenRequest, setModelSelectorOpenRequest] = useState(0);
+  const activeProvider = providers?.find((provider) => provider.isActive);
+  const activeModelId = activeProvider?.model ?? modelLabel ?? "unknown";
+  const activeProviderKind: CapabilityProviderKind =
+    activeProvider?.kind ?? (activeModelId.startsWith("claude-") ? "anthropic" : "openai_compat");
+  const activeCapability = getModelCapability(activeModelId, activeProviderKind);
+  const turnState =
+    turnStatus?.state ??
+    (isBusy ? "streaming" : value.trim() ? "composing" : "idle");
+  const isWorkingTurn = turnStatus?.isWorking ?? isBusy;
+  const isWaitingPermission = turnState === "waiting_permission";
+  const isFatalTurn = turnState === "failed_fatal";
+  const inputBlocked =
+    (turnStatus?.isInputBlocked ?? isBusy) ||
+    isUploading ||
+    convertingFile != null;
+  const canSend =
+    !inputBlocked &&
+    !isUploading &&
+    convertingFile == null &&
+    (value.trim().length > 0 || attachments.length > 0);
+  const composerPlaceholder = isWorkingTurn
+    ? "Press Esc to interrupt"
+    : isWaitingPermission
+      ? "上方需要你的确认"
+      : isFatalTurn
+        ? "服务不可用，请检查设置"
+        : turnState === "complete" || turnState === "interrupted"
+          ? "继续问点什么…"
+          : permissionMode === "plan"
+            ? "描述你的计划…"
+            : "问点什么…";
+  const composerMeta = isWorkingTurn
+    ? "Esc 中断"
+    : isWaitingPermission
+      ? "↑ 处理上方授权请求"
+      : isFatalTurn
+        ? "⚠ 服务不可用 · 请检查设置"
+        : "Enter 发送 · Shift+Enter 换行";
 
   const focusTextareaIfReady = useCallback(() => {
     const textarea = textareaRef.current;
@@ -331,10 +384,14 @@ export function Composer({
   }, [focusTextareaIfReady]);
 
   useEffect(() => {
-    if (!isBusy && refocusAfterSendRef.current) {
+    if (!inputBlocked && refocusAfterSendRef.current) {
       scheduleTextareaFocus();
     }
-  }, [isBusy, scheduleTextareaFocus]);
+  }, [inputBlocked, scheduleTextareaFocus]);
+
+  useEffect(() => {
+    onComposingChange?.(value.trim().length > 0 && !inputBlocked);
+  }, [inputBlocked, onComposingChange, value]);
 
   useEffect(() => {
     if (draftValue == null) return;
@@ -355,7 +412,7 @@ export function Composer({
 
   // ── Slash command state ────────────────────────────────────────
   const [dismissedSlashValue, setDismissedSlashValue] = useState<string | null>(null);
-  const slashCandidateVisible = value.startsWith("/") && !isBusy;
+  const slashCandidateVisible = value.startsWith("/") && !inputBlocked;
   const showSlashPalette = slashCandidateVisible && dismissedSlashValue !== value;
   const slashQuery = slashCandidateVisible ? value.slice(1) : "";
 
@@ -600,7 +657,7 @@ export function Composer({
     console.log("[composer:handleSend] called, value:", value.slice(0, 100));
     const trimmed = value.trim();
     // Allow sending if there's text OR at least one attachment.
-    if ((!trimmed && attachments.length === 0) || isBusy) return;
+    if ((!trimmed && attachments.length === 0) || inputBlocked) return;
     // Save to history (only the typed text, not the prepended attachments)
     if (trimmed) {
       setHistory((prev) => [trimmed, ...prev.slice(0, 49)]);
@@ -659,7 +716,7 @@ export function Composer({
   }, [
     value,
     attachments,
-    isBusy,
+    inputBlocked,
     onSend,
     resetComposer,
     overrideMode,
@@ -672,6 +729,16 @@ export function Composer({
   }, [onStop]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape" && turnStatus?.canInterrupt) {
+      e.preventDefault();
+      onStop?.();
+      return;
+    }
+
+    if (inputBlocked) {
+      return;
+    }
+
     // Skip history nav when slash palette is open
     if (showSlashPalette && (e.key === "ArrowUp" || e.key === "ArrowDown")) return;
 
@@ -743,6 +810,8 @@ export function Composer({
       ref={composerRootRef}
       className="ask-composer relative border-t border-border/50 bg-background px-4 py-3"
       data-busy={isBusy || undefined}
+      data-turn-state={turnState}
+      data-input-blocked={inputBlocked || undefined}
       data-dragging={isDragging || undefined}
     >
       {/* Hidden file input for the paperclip button */}
@@ -871,6 +940,15 @@ export function Composer({
         </div>
       )}
 
+      <CapabilityHint
+        modelLabel={modelLabel || activeModelId}
+        modelId={activeModelId}
+        capability={activeCapability}
+        inputValue={value}
+        hasOtherHint={showSlashPalette || isWaitingPermission || isFatalTurn}
+        onSwitchToAnthropic={() => setModelSelectorOpenRequest((count) => count + 1)}
+      />
+
       {/* Input area — CodePilot style: textarea with inline tools */}
       <div
         className={cn(
@@ -880,6 +958,7 @@ export function Composer({
             : "border-border focus-within:border-ring",
         )}
         data-ready={value.trim() || attachments.length > 0 ? "true" : "false"}
+        data-turn-state={turnState}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -897,13 +976,8 @@ export function Composer({
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           aria-label="Message input"
-          placeholder={
-            isBusy
-              ? "等待回复中..."
-              : permissionMode === "plan"
-                ? "描述你的计划..."
-                : "问点什么…    Enter 发送 · Shift+Enter 换行 · / 命令"
-          }
+          placeholder={composerPlaceholder}
+          disabled={inputBlocked}
           rows={1}
           className="ask-composer-textarea max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-relaxed text-foreground outline-none transition-[height] duration-150 ease-out placeholder:text-muted-foreground/50"
         />
@@ -921,7 +995,7 @@ export function Composer({
                 isUploading && "opacity-50",
               )}
               onClick={() => fileInputRef.current?.click()}
-              disabled={isBusy || isUploading}
+              disabled={inputBlocked || isUploading}
               aria-label="附件"
             >
               <Paperclip className="size-3.5" />
@@ -934,6 +1008,7 @@ export function Composer({
               variant="ghost"
               className="text-muted-foreground hover:text-foreground"
               onClick={handleSlashToggle}
+              disabled={inputBlocked}
               aria-label="命令"
             >
               <ChevronDown className="size-3.5 rotate-[-90deg]" />
@@ -949,6 +1024,7 @@ export function Composer({
                   !isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
                 )}
                 onClick={() => setPlanMode(false)}
+                disabled={inputBlocked}
               >
                 <Code2 className="size-3" />
                 代码
@@ -960,6 +1036,7 @@ export function Composer({
                   isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
                 )}
                 onClick={() => setPlanMode(true)}
+                disabled={inputBlocked}
               >
                 <FileSearch className="size-3" />
                 计划
@@ -975,6 +1052,7 @@ export function Composer({
                 )}
                 style={modeConfig.color ? { color: modeConfig.color } : undefined}
                 onClick={() => setShowPermissionMenu((prev) => !prev)}
+                disabled={inputBlocked}
               >
                 <ModeIcon className="size-3" />
                 <span>{modeConfig.label}</span>
@@ -1020,12 +1098,17 @@ export function Composer({
 
           {/* Send / Stop button */}
           <div className="flex items-center gap-1.5">
+            <span className="ask-composer-state-meta hidden sm:inline">
+              {composerMeta}
+            </span>
             <ModelSelector
               currentLabel={modelLabel || "AI"}
               providers={providers}
               onSwitch={onSwitchProvider}
+              capability={activeCapability}
+              openRequest={modelSelectorOpenRequest}
             />
-            {isBusy ? (
+            {isWorkingTurn ? (
               <Button
                 size="icon-sm"
                 variant="destructive"
@@ -1035,18 +1118,30 @@ export function Composer({
               >
                 <Square className="size-3.5" />
               </Button>
+            ) : isFatalTurn ? (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                className="ask-composer-settings rounded-full transition-transform duration-150 active:scale-95"
+                onClick={() => {
+                  window.location.hash = "#/settings";
+                }}
+                aria-label="打开设置"
+              >
+                <AlertCircle className="size-3.5" />
+              </Button>
             ) : (
               <Button
                 size="icon-sm"
                 variant="default"
                 className={cn(
                   "ask-composer-send rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
-                  value.trim() || attachments.length > 0
+                  canSend
                     ? "shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
                     : "bg-primary/40 pointer-events-none",
                 )}
                 onClick={() => void handleSend()}
-                disabled={!value.trim() && attachments.length === 0}
+                disabled={!canSend}
                 aria-label="发送"
               >
                 <ArrowUp className="size-4" />
@@ -1065,13 +1160,23 @@ function ModelSelector({
   currentLabel,
   providers,
   onSwitch,
+  capability,
+  openRequest = 0,
 }: {
   currentLabel: string;
   providers?: ProviderOption[];
   onSwitch?: (id: string) => void;
+  capability: ModelCapability;
+  openRequest?: number;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (openRequest > 0) {
+      setOpen(true);
+    }
+  }, [openRequest]);
 
   useEffect(() => {
     if (!open) return;
@@ -1088,6 +1193,7 @@ function ModelSelector({
     return (
       <span className="ask-model-pill">
         {currentLabel}
+        <ModelCapabilityIndicator capability={capability} />
       </span>
     );
   }
@@ -1100,6 +1206,7 @@ function ModelSelector({
         onClick={() => setOpen(!open)}
       >
         {currentLabel}
+        <ModelCapabilityIndicator capability={capability} />
         <ChevronDown className="size-2.5 opacity-40" />
       </button>
 
@@ -1108,28 +1215,39 @@ function ModelSelector({
           <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             切换模型
           </div>
-          {providers.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors",
-                p.isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/50"
-              )}
-              onClick={() => {
-                onSwitch(p.id);
-                setOpen(false);
-              }}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">{p.label}</div>
-                <div className="text-[10px] text-muted-foreground">{p.model}</div>
+          {providers.map((p) => {
+            const providerCapability = getModelCapability(p.model, p.kind);
+            return (
+              <div key={p.id} className="group/model-option relative">
+                <button
+                  type="button"
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors",
+                    p.isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/50",
+                  )}
+                  onClick={() => {
+                    onSwitch(p.id);
+                    setOpen(false);
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{p.label}</div>
+                    <div className="text-[10px] text-muted-foreground">{p.model}</div>
+                  </div>
+                  <ModelCapabilityIndicator
+                    capability={providerCapability}
+                    className="shrink-0"
+                  />
+                </button>
+                <ModelCapabilityCard
+                  modelId={p.model}
+                  providerLabel={p.label}
+                  capability={providerCapability}
+                  className="pointer-events-none absolute bottom-full left-2 z-[60] mb-2 opacity-0 transition-opacity delay-200 duration-150 group-hover/model-option:opacity-100"
+                />
               </div>
-              {p.isActive && (
-                <div className="size-1.5 shrink-0 rounded-full bg-primary" />
-              )}
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -91,6 +91,7 @@ export function AskPage() {
     id: p.id,
     label: p.display_name || p.id,
     model: p.model,
+    kind: p.kind,
     isActive: p.id === providersQuery.data?.active,
   }));
 
