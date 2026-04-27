@@ -173,6 +173,22 @@
     --deeptutor-ok: oklch(0.54 0.11 150);                      /* = --color-success (DS #3f8f5e) */
     --deeptutor-ok-soft: color-mix(in srgb, oklch(0.54 0.11 150) 8%, transparent);
     --deeptutor-warn: oklch(0.68 0.115 79);                    /* = --color-warning (DS #c09640) */
+
+    /* Motion tokens - cross-model only; do not override per provider. */
+    --motion-fast: 180ms;
+    --motion-normal: 280ms;
+    --motion-slow: 480ms;
+
+    --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+    --easing-decelerate: cubic-bezier(0, 0, 0.2, 1);
+    --easing-accelerate: cubic-bezier(0.4, 0, 1, 1);
+
+    /* State dot tones - shared by all providers and all Ask states. */
+    --state-tone-idle: var(--color-text-tertiary, #888780);
+    --state-tone-ok: var(--color-success, #1D9E75);
+    --state-tone-working: var(--color-primary, #D85A30);
+    --state-tone-warn: var(--color-warning, #BA7517);
+    --state-tone-error: var(--color-error, #C44545);
   }
 
   .dark {
@@ -6999,6 +7015,117 @@
   }
 }
 
+/* Cross-model Ask motion primitives. These classes must be state-driven, not provider-driven. */
+.ask-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background-color: var(--state-tone-idle);
+  transition:
+    background-color var(--motion-normal) var(--easing-standard),
+    box-shadow var(--motion-normal) var(--easing-standard);
+}
+
+.ask-state-dot[data-tone="idle"] {
+  background-color: var(--state-tone-idle);
+}
+
+.ask-state-dot[data-tone="ok"] {
+  background-color: var(--state-tone-ok);
+}
+
+.ask-state-dot[data-tone="working"] {
+  background-color: var(--state-tone-working);
+  animation: askStateDotPulse 1.5s ease-in-out infinite;
+}
+
+.ask-state-dot[data-tone="warn"] {
+  background-color: var(--state-tone-warn);
+  animation: askStateDotPulse 1.2s ease-in-out infinite;
+}
+
+.ask-state-dot[data-tone="error"] {
+  background-color: var(--state-tone-error);
+}
+
+@keyframes askStateDotPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(216, 90, 48, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(216, 90, 48, 0.15);
+  }
+}
+
+@keyframes askLabelFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ask-status-label {
+  display: inline-block;
+  animation: askLabelFadeIn var(--motion-normal) var(--easing-standard);
+}
+
+.ask-composer {
+  transition:
+    background-color var(--motion-normal) var(--easing-standard),
+    border-color var(--motion-normal) var(--easing-standard);
+}
+
+.ask-composer[data-input-blocked="true"] {
+  animation: askComposerBreath 2.8s ease-in-out infinite;
+}
+
+@keyframes askComposerBreath {
+  0%,
+  100% {
+    border-color: rgba(44, 44, 42, 0.10);
+  }
+  50% {
+    border-color: rgba(44, 44, 42, 0.18);
+  }
+}
+
+.ask-composer[data-input-blocked="true"] .ask-composer-placeholder {
+  animation: askPlaceholderBreath 2.4s ease-in-out infinite;
+}
+
+@keyframes askPlaceholderBreath {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 0.7;
+    transform: translateX(2px);
+  }
+}
+
+.ask-send-button[data-mode="stop"] {
+  animation: askStopButtonPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes askStopButtonPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(196, 69, 69, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(196, 69, 69, 0);
+  }
+}
+
 @media (max-width: 860px) {
   .inbox-redesign-page {
     padding: 28px 20px 56px;
@@ -7044,6 +7171,14 @@
     animation: none;
   }
 
+  .ask-state-dot,
+  .ask-status-label,
+  .ask-composer,
+  .ask-composer-placeholder,
+  .ask-send-button {
+    animation: none;
+  }
+
   .ds-rail .ds-rail-brand,
   .ds-rail-btn,
   .ds-rail-secondary,
@@ -7064,7 +7199,9 @@
   .ds-settings-nav-item,
   .ds-settings-card,
   .ds-settings-badge,
-  .ds-settings-advanced > summary {
+  .ds-settings-advanced > summary,
+  .ask-state-dot,
+  .ask-composer {
     transition: none;
   }
 }
