@@ -304,28 +304,36 @@ export function useConversationTurnState({
 
   useEffect(() => {
     const userId = lastUserMessage?.id ?? null;
+    const currentTime = Date.now();
+
     if (userId && userId !== activeTurnUserIdRef.current) {
       activeTurnUserIdRef.current = userId;
       if (active) {
         if (turnStartedAtRef.current === null) {
-          turnStartedAtRef.current = Date.now();
+          turnStartedAtRef.current = currentTime;
         }
         lastCompletedDurationRef.current = 0;
+        setNow(currentTime);
       }
     }
 
     if (active && turnStartedAtRef.current === null) {
-      turnStartedAtRef.current = Date.now();
+      turnStartedAtRef.current = currentTime;
+      setNow(currentTime);
     }
     if (!active && turnStartedAtRef.current !== null) {
-      lastCompletedDurationRef.current = Date.now() - turnStartedAtRef.current;
+      lastCompletedDurationRef.current =
+        currentTime - turnStartedAtRef.current;
       turnStartedAtRef.current = null;
+      // Force one final render after the active -> complete transition so the
+      // header does not remain on the previous in-flight frame (often 0.0s).
+      setNow(currentTime);
     }
   }, [active, lastUserMessage?.id]);
 
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [active]);
 
