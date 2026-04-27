@@ -41,7 +41,18 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
+use crate::tool_execution::ToolExposurePolicy;
 use crate::DesktopSessionEvent;
+
+const FINAL_SYNTHESIS_SYSTEM_INSTRUCTION: &str = "\
+最终整合轮：本次请求已禁用工具。请只基于前文对话和已经返回的工具结果，\
+直接给用户完整、流畅的最终回答。不要再说“我将搜索”“我会读取”“我将提取”\
+“我会运行命令”或“我会调用工具”。如果信息不足，请说明限制，并基于现有上下文\
+给出最好的最终答案。";
+
+const TOOL_DISABLED_DIRECT_ANSWER_INSTRUCTION: &str = "\
+本次请求已禁用工具。请直接基于对话回答，不要说你将搜索、抓取网页、读取文件、\
+运行命令或调用工具。";
 
 /// Internal control tokens that may leak into content streams.
 ///
@@ -273,6 +284,490 @@ impl StreamFinishReason {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptIntent {
+    Writing,
+    SmallTalk,
+    Search,
+    Code,
+    File,
+    Ambiguous,
+}
+
+impl PromptIntent {
+    fn allows_tools(self) -> bool {
+        !matches!(self, PromptIntent::Writing | PromptIntent::SmallTalk)
+    }
+}
+
+fn classify_latest_user_prompt_intent(messages: &[ConversationMessage]) -> PromptIntent {
+    latest_user_prompt(messages)
+        .as_deref()
+        .map(classify_prompt_intent)
+        .unwrap_or(PromptIntent::Ambiguous)
+}
+
+fn latest_user_prompt(messages: &[ConversationMessage]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::User)
+        .map(|message| extract_text_from_blocks(&message.blocks))
+        .filter(|text| !text.trim().is_empty())
+}
+
+fn classify_prompt_intent(prompt: &str) -> PromptIntent {
+    let normalized = normalize_prompt(prompt);
+    if normalized.is_empty() {
+        return PromptIntent::Ambiguous;
+    }
+
+    if looks_like_smalltalk_prompt(&normalized) {
+        return PromptIntent::SmallTalk;
+    }
+    if looks_like_explicit_search_request(&normalized) {
+        return PromptIntent::Search;
+    }
+    if looks_like_code_request(&normalized) {
+        return PromptIntent::Code;
+    }
+    if looks_like_file_request(&normalized) {
+        return PromptIntent::File;
+    }
+    if looks_like_writing_request(&normalized) {
+        return PromptIntent::Writing;
+    }
+    if looks_like_broad_search_request(&normalized) {
+        return PromptIntent::Search;
+    }
+
+    PromptIntent::Ambiguous
+}
+
+fn prompt_requests_forbidden_tool_action(prompt: &str, policy: &ToolExposurePolicy) -> bool {
+    let normalized = normalize_prompt(prompt);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    (!policy.include_filesystem_write && looks_like_filesystem_write_request(&normalized))
+        || (!policy.include_shell && looks_like_shell_request(&normalized))
+        || looks_like_agentic_tool_request(&normalized)
+}
+
+fn normalize_prompt(prompt: &str) -> String {
+    prompt
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn looks_like_smalltalk_prompt(prompt: &str) -> bool {
+    let trimmed = prompt.trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace());
+    matches!(
+        trimmed,
+        "hi" | "hello"
+            | "hey"
+            | "thanks"
+            | "thank you"
+            | "ok"
+            | "okay"
+            | "good morning"
+            | "good night"
+            | "\u{4f60}\u{597d}"
+            | "\u{8c22}\u{8c22}"
+    ) || contains_any(
+        trimmed,
+        &[
+            "how are you",
+            "who are you",
+            "what can you do",
+            "\u{4f60}\u{597d}",
+            "\u{8c22}\u{8c22}",
+        ],
+    )
+}
+
+fn looks_like_explicit_search_request(prompt: &str) -> bool {
+    contains_any(
+        prompt,
+        &[
+            "search",
+            "look up",
+            "lookup",
+            "browse",
+            "google",
+            "web",
+            "internet",
+            "http://",
+            "https://",
+            "www.",
+            "site:",
+            "\u{641c}\u{4e00}\u{4e0b}",
+            "\u{641c}\u{641c}",
+            "\u{641c}\u{7d22}",
+            "\u{67e5}\u{4e00}\u{4e0b}",
+            "\u{67e5}\u{67e5}",
+            "\u{8054}\u{7f51}",
+            "\u{4e0a}\u{7f51}",
+        ],
+    )
+}
+
+fn looks_like_broad_search_request(prompt: &str) -> bool {
+    contains_any(
+        prompt,
+        &[
+            "latest",
+            "today",
+            "current",
+            "news",
+            "weather",
+            "stock price",
+            "exchange rate",
+            "\u{6700}\u{65b0}",
+            "\u{4eca}\u{5929}",
+            "\u{65b0}\u{95fb}",
+        ],
+    )
+}
+
+fn looks_like_code_request(prompt: &str) -> bool {
+    contains_any(
+        prompt,
+        &[
+            "code",
+            "function",
+            "class",
+            "method",
+            "bug",
+            "stack trace",
+            "compile",
+            "compiler",
+            "cargo",
+            "npm",
+            "typescript",
+            "javascript",
+            "python",
+            "rust",
+            "sql",
+            "regex",
+            "api",
+            "endpoint",
+            "test failure",
+            "\u{4ee3}\u{7801}",
+            "\u{51fd}\u{6570}",
+        ],
+    )
+}
+
+fn looks_like_file_request(prompt: &str) -> bool {
+    contains_any(
+        prompt,
+        &[
+            "file",
+            "folder",
+            "directory",
+            "workspace",
+            "repo",
+            "repository",
+            "path",
+            "read_file",
+            "grep",
+            "glob",
+            "open ",
+            "inspect ",
+            "find in ",
+            ".rs",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".json",
+            ".toml",
+            ".md",
+            ".py",
+            ".go",
+            ".java",
+            ".cpp",
+            ".css",
+            ".html",
+            "\\",
+            "/",
+            "\u{6587}\u{4ef6}",
+            "\u{76ee}\u{5f55}",
+        ],
+    )
+}
+
+fn looks_like_writing_request(prompt: &str) -> bool {
+    contains_any(
+        prompt,
+        &[
+            "write",
+            "draft",
+            "compose",
+            "rewrite",
+            "polish",
+            "translate",
+            "summarize",
+            "outline",
+            "brainstorm",
+            "email",
+            "essay",
+            "poem",
+            "story",
+            "copy",
+            "tagline",
+            "blurb",
+            "title",
+            "name ideas",
+            "make it sound",
+            "improve this text",
+            "grammar",
+            "\u{5199}",
+            "\u{64b0}",
+            "\u{7ffb}\u{8bd1}",
+            "\u{6da6}\u{8272}",
+            "\u{603b}\u{7ed3}",
+        ],
+    )
+}
+
+fn looks_like_filesystem_write_request(prompt: &str) -> bool {
+    let write_action = contains_any(
+        prompt,
+        &[
+            "write to",
+            "write into",
+            "save to",
+            "save as",
+            "create file",
+            "create a file",
+            "edit file",
+            "modify file",
+            "update file",
+            "delete file",
+            "remove file",
+            "append to",
+            "replace in",
+            "patch file",
+            "apply patch",
+            "rename file",
+            "move file",
+            "touch ",
+            "\u{4fee}\u{6539}",
+            "\u{7f16}\u{8f91}",
+            "\u{5220}\u{9664}",
+            "\u{521b}\u{5efa}",
+            "\u{65b0}\u{5efa}",
+            "\u{4fdd}\u{5b58}",
+            "\u{5199}\u{5165}",
+            "\u{4fdd}\u{5b58}\u{5230}",
+            "\u{521b}\u{5efa}\u{6587}\u{4ef6}",
+            "\u{4fee}\u{6539}\u{6587}\u{4ef6}",
+            "\u{5220}\u{9664}\u{6587}\u{4ef6}",
+        ],
+    );
+
+    write_action
+        || (contains_any(prompt, &["write", "edit", "modify", "update"])
+            && looks_like_file_request(prompt))
+}
+
+fn looks_like_shell_request(prompt: &str) -> bool {
+    contains_any(
+        prompt,
+        &[
+            "run command",
+            "execute command",
+            "shell",
+            "terminal",
+            "bash",
+            "powershell",
+            "cmd.exe",
+            "command line",
+            "npm install",
+            "pnpm install",
+            "yarn install",
+            "cargo ",
+            "npm run",
+            "cargo check",
+            "cargo test",
+            "run cargo",
+            "run npm",
+            "run python",
+            "\u{8fd0}\u{884c} npm",
+            "\u{6267}\u{884c} npm",
+            "\u{8fd0}\u{884c} cargo",
+            "\u{6267}\u{884c} cargo",
+            "\u{8fd0}\u{884c}\u{547d}\u{4ee4}",
+            "\u{6267}\u{884c}\u{547d}\u{4ee4}",
+        ],
+    )
+}
+
+fn looks_like_agentic_tool_request(prompt: &str) -> bool {
+    let mentions_agent = contains_any(
+        prompt,
+        &[
+            " agent",
+            "agent ",
+            "subagent",
+            "sub-agent",
+            "worker",
+            "\u{4ee3}\u{7406}",
+        ],
+    );
+    let asks_to_use = contains_any(
+        prompt,
+        &[
+            "use ",
+            "call ",
+            "start ",
+            "launch ",
+            "spawn ",
+            "delegate",
+            "create an agent",
+            "ask an agent",
+            "\u{542f}\u{52a8}",
+            "\u{8c03}\u{7528}",
+        ],
+    );
+    mentions_agent && asks_to_use
+}
+
+fn build_tool_policy_system_prompt(policy: &ToolExposurePolicy) -> String {
+    let mut allowed = Vec::new();
+    let mut forbidden = Vec::new();
+
+    if policy.include_safe {
+        allowed.push(
+            "只读文件/搜索工具（read_file, glob_search, grep_search）和联网查询工具（WebSearch, WebFetch）",
+        );
+    } else {
+        forbidden.push("只读文件、搜索和联网查询工具");
+    }
+
+    if policy.include_filesystem_write {
+        allowed.push("文件写入/编辑工具");
+    } else {
+        forbidden.push("文件写入或编辑");
+    }
+
+    if policy.include_shell {
+        allowed.push("Shell 或终端执行工具");
+    } else {
+        forbidden.push("Shell、终端、Bash、PowerShell 或命令执行");
+    }
+
+    if policy.include_specialty {
+        allowed.push("已暴露的专项工具，例如 TodoWrite");
+    } else {
+        forbidden.push("未显式暴露的专项工具");
+    }
+
+    forbidden.push("Agent/subagent 协作工具");
+    forbidden.push("未知或未列出的工具");
+
+    let allowed_text = if allowed.is_empty() {
+        "无".to_string()
+    } else {
+        allowed.join("；")
+    };
+
+    format!(
+        "本轮 OpenAI 兼容模型的工具安全策略：\n\
+         - 当前允许使用：{allowed_text}。\n\
+         - 当前禁止使用：{}。\n\
+         - 只能调用本次请求里真实暴露的工具。\n\
+         - 如果用户请求需要被禁止的能力（例如写入文件、编辑文件、运行 Shell 命令、启动 Agent/subagent），\
+         不要先调用读取/搜索工具试探。请直接说明“当前安全策略不允许该操作”，并给出安全的文本替代方案。\n\
+         - 不要承诺会使用不可用工具。",
+        forbidden.join("；")
+    )
+}
+
+fn build_turn_system_prompt(
+    base_system_prompt: Option<&str>,
+    tool_policy: Option<&ToolExposurePolicy>,
+    tool_use_disabled: bool,
+    final_synthesis: bool,
+) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if let Some(base) = base_system_prompt {
+        if !base.trim().is_empty() {
+            parts.push(base.to_string());
+        }
+    }
+
+    if let Some(policy) = tool_policy {
+        parts.push(build_tool_policy_system_prompt(policy));
+    }
+
+    if final_synthesis {
+        parts.push(FINAL_SYNTHESIS_SYSTEM_INSTRUCTION.to_string());
+    } else if tool_use_disabled {
+        parts.push(TOOL_DISABLED_DIRECT_ANSWER_INSTRUCTION.to_string());
+    }
+
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
+fn build_openai_request_body(
+    model: &str,
+    messages_for_request: &[serde_json::Value],
+    tool_specs: Option<&[serde_json::Value]>,
+    tool_policy: &ToolExposurePolicy,
+    allow_tools: bool,
+) -> serde_json::Value {
+    let mut request_body = serde_json::json!({
+        "model": model,
+        "messages": messages_for_request,
+        "stream": true,
+    });
+
+    let Some(tools) = tool_specs else {
+        return request_body;
+    };
+    if tools.is_empty() {
+        return request_body;
+    }
+
+    if !allow_tools {
+        request_body["tool_choice"] = serde_json::Value::String("none".into());
+        return request_body;
+    }
+
+    let filtered: Vec<serde_json::Value> = tools
+        .iter()
+        .filter(|tool| {
+            let name = tool
+                .get("function")
+                .and_then(|function| function.get("name"))
+                .and_then(|name| name.as_str())
+                .unwrap_or("");
+            tool_policy.allows(name)
+        })
+        .cloned()
+        .collect();
+
+    if filtered.is_empty() {
+        request_body["tool_choice"] = serde_json::Value::String("none".into());
+    } else {
+        request_body["tools"] = serde_json::Value::Array(filtered);
+        request_body["tool_choice"] = serde_json::Value::String("auto".into());
+    }
+
+    request_body
+}
+
 /// Minimal OpenAI ChatCompletions message shape.
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenAiChatMessage {
@@ -295,17 +790,19 @@ pub struct StreamingTurnConfig {
     pub on_stream_tick: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Optional tools array in OpenAI ChatCompletions format.
     ///
-    /// When `Some(non_empty)`, the request body will include:
+    /// When `Some(non_empty)` and enabled for the prompt intent, the request
+    /// body will include:
     ///   - `"tools": [...]` array
     ///   - `"tool_choice": "auto"`
     ///
-    /// When `None` or empty, the request remains text-only (current default).
+    /// When disabled for a final/text-only/policy-refusal turn, the request
+    /// sets `"tool_choice": "none"`.
     ///
     /// Tool specs should be pre-converted by the caller using
     /// `openai_tool_schema::to_openai_function_tool`.
     pub tool_specs: Option<Vec<serde_json::Value>>,
     /// Tool exposure policy. If None, defaults to safe read-only tools only.
-    pub tool_policy: Option<crate::tool_execution::ToolExposurePolicy>,
+    pub tool_policy: Option<ToolExposurePolicy>,
     /// Workspace path for built-in tool execution.
     pub workspace_path: Option<PathBuf>,
     /// Permission gate for built-in tool execution.
@@ -332,6 +829,23 @@ pub async fn run_streaming_turn(
     let mut current_messages = config.messages.clone();
     let mut all_new_messages: Vec<ConversationMessage> = Vec::new();
     let mut last_upstream_model: Option<String> = None;
+    let tool_policy = config.tool_policy.clone().unwrap_or_default();
+    let has_configured_tools = config
+        .tool_specs
+        .as_ref()
+        .is_some_and(|tools| !tools.is_empty());
+    let latest_user_text = latest_user_prompt(&current_messages).unwrap_or_default();
+    let prompt_intent = classify_latest_user_prompt_intent(&current_messages);
+    let prompt_needs_policy_refusal =
+        prompt_requests_forbidden_tool_action(&latest_user_text, &tool_policy);
+    let should_inject_tool_policy = has_configured_tools || prompt_needs_policy_refusal;
+
+    if has_configured_tools {
+        eprintln!(
+            "[openai_compat] prompt intent={:?}, policy_refusal={}",
+            prompt_intent, prompt_needs_policy_refusal
+        );
+    }
 
     for turn_idx in 0..MAX_TURNS {
         if cancel_token.is_cancelled() {
@@ -342,26 +856,49 @@ pub async fn run_streaming_turn(
             break;
         }
 
+        let is_final_synthesis_turn = turn_idx + 1 >= MAX_TURNS;
+        let allow_tools = has_configured_tools
+            && !is_final_synthesis_turn
+            && prompt_intent.allows_tools()
+            && !prompt_needs_policy_refusal;
+        let turn_system_prompt = build_turn_system_prompt(
+            config.system_prompt.as_deref(),
+            should_inject_tool_policy.then_some(&tool_policy),
+            (has_configured_tools && !allow_tools) || prompt_needs_policy_refusal,
+            is_final_synthesis_turn,
+        );
         let openai_messages =
-            build_openai_messages(&current_messages, config.system_prompt.as_deref());
+            build_openai_messages(&current_messages, turn_system_prompt.as_deref());
         eprintln!(
             "[openai_compat] turn {}: sending {} messages",
             turn_idx,
             openai_messages.len()
         );
 
-        let allow_tools = turn_idx + 1 < MAX_TURNS;
-        if !allow_tools {
+        if is_final_synthesis_turn && has_configured_tools {
             eprintln!(
-                "[openai_compat] turn {}: final synthesis turn, disabling tool injection",
+                "[openai_compat] turn {}: final synthesis turn, disabling tools",
                 turn_idx
             );
+        } else if has_configured_tools && !allow_tools {
+            if prompt_needs_policy_refusal {
+                eprintln!(
+                    "[openai_compat] turn {}: prompt asks for forbidden tool action, disabling tools",
+                    turn_idx
+                );
+            } else {
+                eprintln!(
+                    "[openai_compat] turn {}: prompt intent {:?} is text-only, disabling tools",
+                    turn_idx, prompt_intent
+                );
+            }
         }
 
         let (new_messages, upstream_model, finish_reason) = execute_single_turn(
             http_client,
             &config,
             &openai_messages,
+            &tool_policy,
             allow_tools,
             event_sender,
             session_id,
@@ -380,8 +917,9 @@ pub async fn run_streaming_turn(
 
         match finish_reason {
             StreamFinishReason::ToolCalls => {
-                let has_tool_result =
-                    new_messages.iter().any(|message| message.role == MessageRole::Tool);
+                let has_tool_result = new_messages
+                    .iter()
+                    .any(|message| message.role == MessageRole::Tool);
                 if !has_tool_result {
                     eprintln!(
                         "[openai_compat] turn {}: finish_reason=tool_calls but no tool_result produced, breaking loop",
@@ -446,6 +984,7 @@ async fn execute_single_turn(
     http_client: &reqwest::Client,
     config: &StreamingTurnConfig,
     messages_for_request: &[serde_json::Value],
+    tool_policy: &ToolExposurePolicy,
     allow_tools: bool,
     event_sender: &broadcast::Sender<DesktopSessionEvent>,
     session_id: &str,
@@ -454,48 +993,36 @@ async fn execute_single_turn(
     use futures_util::StreamExt;
 
     // ── Build request body ─────────────────────────────────────────
-    let mut request_body = serde_json::json!({
-        "model": config.model.clone(),
-        "messages": messages_for_request,
-        "stream": true,
-    });
+    let request_body = build_openai_request_body(
+        &config.model,
+        messages_for_request,
+        config.tool_specs.as_deref(),
+        tool_policy,
+        allow_tools,
+    );
 
-    if allow_tools {
-        if let Some(tools) = &config.tool_specs {
-            let policy = config.tool_policy.clone().unwrap_or_default();
-            let filtered: Vec<serde_json::Value> = tools
-                .iter()
-                .filter(|tool| {
-                    let name = tool
-                        .get("function")
-                        .and_then(|function| function.get("name"))
-                        .and_then(|name| name.as_str())
-                        .unwrap_or("");
-                    policy.allows(name)
-                })
-                .cloned()
-                .collect();
-
-            if !filtered.is_empty() {
-                let dropped_count = tools.len().saturating_sub(filtered.len());
-                request_body["tools"] = serde_json::Value::Array(filtered);
-                request_body["tool_choice"] = serde_json::Value::String("auto".into());
-                eprintln!(
-                    "[openai-compat-stream] session={session_id} tool policy: {} of {} tools allowed ({} filtered out)",
-                    tools.len().saturating_sub(dropped_count),
-                    tools.len(),
-                    dropped_count
-                );
-            } else if !tools.is_empty() {
-                eprintln!(
-                    "[openai-compat-stream] session={session_id} tool policy: all {} tools filtered out, request will be text-only",
-                    tools.len()
-                );
-            }
-        }
-    } else if config.tool_specs.as_ref().is_some_and(|tools| !tools.is_empty()) {
+    let configured_tool_count = config.tool_specs.as_ref().map_or(0, Vec::len);
+    let allowed_tool_count = request_body
+        .get("tools")
+        .and_then(|tools| tools.as_array())
+        .map_or(0, Vec::len);
+    let tool_execution_enabled = allow_tools && allowed_tool_count > 0;
+    if allow_tools && allowed_tool_count > 0 {
+        let dropped_count = configured_tool_count.saturating_sub(allowed_tool_count);
         eprintln!(
-            "[openai-compat-stream] session={session_id} tool specs available but disabled for synthesis turn"
+            "[openai-compat-stream] session={session_id} tool policy: {} of {} tools allowed ({} filtered out)",
+            allowed_tool_count,
+            configured_tool_count,
+            dropped_count
+        );
+    } else if allow_tools && configured_tool_count > 0 {
+        eprintln!(
+            "[openai-compat-stream] session={session_id} tool policy: all {} tools filtered out, request will be text-only",
+            configured_tool_count
+        );
+    } else if configured_tool_count > 0 {
+        eprintln!(
+            "[openai-compat-stream] session={session_id} tool specs available but disabled; tool_choice=none"
         );
     }
 
@@ -691,7 +1218,7 @@ async fn execute_single_turn(
         }
     }
 
-    let validated_tool_uses: Vec<(String, String, serde_json::Value)> = tool_calls
+    let mut validated_tool_uses: Vec<(String, String, serde_json::Value)> = tool_calls
         .values()
         .filter_map(|acc| {
             if let Err(e) = acc.validate() {
@@ -711,6 +1238,13 @@ async fn execute_single_turn(
             Some((acc.id.clone(), acc.name.clone(), args))
         })
         .collect();
+    if !tool_execution_enabled && !validated_tool_uses.is_empty() {
+        eprintln!(
+            "[openai_compat] dropping {} tool_call(s) because tool use is disabled for this turn",
+            validated_tool_uses.len()
+        );
+        validated_tool_uses.clear();
+    }
 
     // Defensive final pass for markers that crossed SSE chunk boundaries.
     let final_text = strip_leak_tokens(&accumulated).to_string();
@@ -741,13 +1275,21 @@ async fn execute_single_turn(
             eprintln!(
                 "[openai_compat] tool_use blocks present but no workspace_path; skipping tool execution"
             );
-            return Ok((messages, upstream_model, finish_reason_from(last_finish_reason.as_deref())));
+            return Ok((
+                messages,
+                upstream_model,
+                finish_reason_from(last_finish_reason.as_deref()),
+            ));
         };
         let Some(permission_gate) = config.permission_gate.clone() else {
             eprintln!(
                 "[openai_compat] tool_use blocks present but no permission_gate; skipping tool execution"
             );
-            return Ok((messages, upstream_model, finish_reason_from(last_finish_reason.as_deref())));
+            return Ok((
+                messages,
+                upstream_model,
+                finish_reason_from(last_finish_reason.as_deref()),
+            ));
         };
 
         eprintln!(
@@ -785,19 +1327,24 @@ async fn execute_single_turn(
             )
             .await;
 
-            let is_error = result_msg.blocks.iter().any(|block| {
-                matches!(
-                    block,
-                    ContentBlock::ToolResult { is_error: true, .. }
-                )
-            });
-            eprintln!("[openai_compat] tool {} done: is_error={}", tool_name, is_error);
+            let is_error = result_msg
+                .blocks
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolResult { is_error: true, .. }));
+            eprintln!(
+                "[openai_compat] tool {} done: is_error={}",
+                tool_name, is_error
+            );
 
             messages.push(result_msg);
         }
     }
 
-    Ok((messages, upstream_model, finish_reason_from(last_finish_reason.as_deref())))
+    Ok((
+        messages,
+        upstream_model,
+        finish_reason_from(last_finish_reason.as_deref()),
+    ))
 }
 
 fn finish_reason_from(reason: Option<&str>) -> StreamFinishReason {
@@ -836,7 +1383,10 @@ pub fn build_openai_messages(
             }
             MessageRole::Assistant => {
                 let mut object = serde_json::Map::new();
-                object.insert("role".to_string(), serde_json::Value::String("assistant".into()));
+                object.insert(
+                    "role".to_string(),
+                    serde_json::Value::String("assistant".into()),
+                );
                 object.insert(
                     "content".to_string(),
                     serde_json::Value::String(extract_text_from_blocks(&msg.blocks)),
@@ -844,7 +1394,10 @@ pub fn build_openai_messages(
 
                 let tool_calls = extract_tool_calls_from_blocks(&msg.blocks);
                 if !tool_calls.is_empty() {
-                    object.insert("tool_calls".to_string(), serde_json::Value::Array(tool_calls));
+                    object.insert(
+                        "tool_calls".to_string(),
+                        serde_json::Value::Array(tool_calls),
+                    );
                 }
 
                 result.push(serde_json::Value::Object(object));
@@ -872,9 +1425,7 @@ pub fn build_openai_messages(
                 }
             }
             MessageRole::System => {
-                eprintln!(
-                    "[openai_compat] unexpected System role mid-conversation, skipping"
-                );
+                eprintln!("[openai_compat] unexpected System role mid-conversation, skipping");
             }
         }
     }
@@ -997,6 +1548,196 @@ pub fn messages_from_runtime_session(session: &runtime::Session) -> Vec<OpenAiCh
         })
         .filter(|m| !m.content.trim().is_empty())
         .collect()
+}
+
+#[cfg(test)]
+mod prompt_intent_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_pure_writing_as_text_only() {
+        assert_eq!(
+            classify_prompt_intent("Draft a warm launch email for our beta users"),
+            PromptIntent::Writing
+        );
+    }
+
+    #[test]
+    fn classifies_smalltalk_as_text_only() {
+        assert_eq!(classify_prompt_intent("Thanks!"), PromptIntent::SmallTalk);
+    }
+
+    #[test]
+    fn classifies_explicit_search_as_tool_eligible() {
+        assert_eq!(
+            classify_prompt_intent("Search the web for the latest Rust release"),
+            PromptIntent::Search
+        );
+    }
+
+    #[test]
+    fn classifies_code_before_generic_writing() {
+        assert_eq!(
+            classify_prompt_intent("Write a Rust function that parses a URL"),
+            PromptIntent::Code
+        );
+    }
+
+    #[test]
+    fn classifies_file_requests_as_tool_eligible() {
+        assert_eq!(
+            classify_prompt_intent("Inspect src/lib.rs and explain the config loader"),
+            PromptIntent::File
+        );
+    }
+
+    #[test]
+    fn writing_about_today_news_stays_writing() {
+        assert_eq!(
+            classify_prompt_intent("写一篇关于今天新闻的散文"),
+            PromptIntent::Writing
+        );
+    }
+
+    #[test]
+    fn detects_forbidden_write_without_blocking_read_requests() {
+        let policy = ToolExposurePolicy::default();
+
+        assert!(prompt_requests_forbidden_tool_action(
+            "Write this summary to README.md",
+            &policy
+        ));
+        assert!(!prompt_requests_forbidden_tool_action(
+            "Read README.md and summarize it",
+            &policy
+        ));
+        assert!(prompt_requests_forbidden_tool_action(
+            "帮我修改 README.md",
+            &policy
+        ));
+    }
+
+    #[test]
+    fn detects_forbidden_shell_and_agent_requests() {
+        let policy = ToolExposurePolicy::default();
+
+        assert!(prompt_requests_forbidden_tool_action(
+            "Run cargo check in the terminal",
+            &policy
+        ));
+        assert!(prompt_requests_forbidden_tool_action(
+            "运行 npm install",
+            &policy
+        ));
+        assert!(prompt_requests_forbidden_tool_action(
+            "Use an Agent to inspect the repository",
+            &policy
+        ));
+    }
+}
+
+#[cfg(test)]
+mod request_planning_tests {
+    use super::*;
+
+    fn tool_spec(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "test tool",
+                "parameters": { "type": "object" }
+            }
+        })
+    }
+
+    fn user_messages() -> Vec<serde_json::Value> {
+        vec![serde_json::json!({
+            "role": "user",
+            "content": "hello"
+        })]
+    }
+
+    #[test]
+    fn auto_tool_choice_includes_only_policy_allowed_tools() {
+        let tools = vec![tool_spec("WebSearch"), tool_spec("write_file")];
+        let body = build_openai_request_body(
+            "test-model",
+            &user_messages(),
+            Some(&tools),
+            &ToolExposurePolicy::default(),
+            true,
+        );
+
+        assert_eq!(body["tool_choice"], "auto");
+        let exposed_tools = body["tools"].as_array().expect("tools should be exposed");
+        assert_eq!(exposed_tools.len(), 1);
+        assert_eq!(exposed_tools[0]["function"]["name"], "WebSearch");
+    }
+
+    #[test]
+    fn disabled_tools_set_explicit_none_without_tools_array() {
+        let tools = vec![tool_spec("WebSearch")];
+        let body = build_openai_request_body(
+            "test-model",
+            &user_messages(),
+            Some(&tools),
+            &ToolExposurePolicy::default(),
+            false,
+        );
+
+        assert_eq!(body["tool_choice"], "none");
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn all_filtered_tools_set_explicit_none() {
+        let tools = vec![tool_spec("write_file")];
+        let body = build_openai_request_body(
+            "test-model",
+            &user_messages(),
+            Some(&tools),
+            &ToolExposurePolicy::default(),
+            true,
+        );
+
+        assert_eq!(body["tool_choice"], "none");
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn final_synthesis_prompt_is_appended() {
+        let prompt = build_turn_system_prompt(
+            Some("Base prompt."),
+            Some(&ToolExposurePolicy::default()),
+            true,
+            true,
+        )
+        .expect("prompt should be present");
+
+        assert!(prompt.contains("Base prompt."));
+        assert!(prompt.contains("工具安全策略"));
+        assert!(prompt.contains("最终整合轮"));
+        assert!(prompt.contains("已禁用工具"));
+    }
+}
+
+#[cfg(test)]
+mod tool_policy_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn default_policy_prompt_describes_allowed_and_forbidden_actions() {
+        let prompt = build_tool_policy_system_prompt(&ToolExposurePolicy::default());
+
+        assert!(prompt.contains("当前允许使用"));
+        assert!(prompt.contains("只读文件/搜索工具"));
+        assert!(prompt.contains("当前禁止使用"));
+        assert!(prompt.contains("文件写入"));
+        assert!(prompt.contains("Shell"));
+        assert!(prompt.contains("Agent/subagent"));
+        assert!(prompt.contains("不要先调用读取/搜索工具"));
+    }
 }
 
 #[cfg(test)]
