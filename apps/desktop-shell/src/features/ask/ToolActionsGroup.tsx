@@ -13,8 +13,6 @@ import { memo, useState, useEffect, useRef, useMemo } from "react";
 import {
   ChevronDown,
   ChevronRight,
-  Loader2,
-  CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 import { Shimmer } from "./Shimmer";
@@ -131,6 +129,8 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
   // Pick a representative icon from the first tool call
   const firstToolName = stats.toolNames[0] ?? "Tool";
   const { icon: FirstIcon, color: firstColor } = getToolMeta(firstToolName);
+  const groupTone =
+    stats.running > 0 ? "working" : stats.errors > 0 ? "error" : stats.completed > 0 ? "ok" : "idle";
 
   const label = stats.isContextGroup
     ? "收集上下文"
@@ -152,10 +152,7 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
         ) : (
           <ChevronRight className="size-3 shrink-0 text-muted-foreground/75" />
         )}
-        <span
-          className={isStreaming ? "ask-work-dot ask-work-dot--active" : "ask-work-dot"}
-          aria-hidden
-        />
+        <span className="ask-state-dot" data-tone={groupTone} aria-hidden />
         <FirstIcon className="size-3.5 shrink-0" style={{ color: firstColor }} />
         <span className="ask-tool-group-title font-medium text-foreground">{label}</span>
 
@@ -163,19 +160,19 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
         <span className="ask-tool-group-status ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
           {stats.running > 0 && (
             <span className="flex items-center gap-0.5">
-              <Loader2 className="size-3 animate-spin" style={{ color: "var(--deeptutor-primary, var(--claude-orange))" }} />
+              <span className="ask-state-dot" data-tone="working" aria-hidden />
               <Shimmer className="text-[11px] font-medium">{stats.running} 执行中</Shimmer>
             </span>
           )}
           {stats.completed > 0 && stats.errors === 0 && (
             <span className="flex items-center gap-0.5">
-              <CheckCircle2 className="size-3" style={{ color: "var(--color-success)" }} />
+              <span className="ask-state-dot" data-tone="ok" aria-hidden />
               {stats.completed} 完成
             </span>
           )}
           {stats.errors > 0 && (
             <span className="flex items-center gap-0.5">
-              <AlertCircle className="size-3" style={{ color: "var(--color-error)" }} />
+              <span className="ask-state-dot" data-tone="error" aria-hidden />
               {stats.errors} 失败
             </span>
           )}
@@ -283,7 +280,7 @@ function PairedToolRow({ entry }: { entry: PairedToolEntry }) {
             </div>
           ) : (
             <div className="flex items-center gap-1.5 px-3 py-2 text-[11px] text-muted-foreground/70">
-              <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
+              <span className="ask-state-dot" data-tone="working" aria-hidden />
               <span>等待工具结果…</span>
             </div>
           )}
@@ -294,26 +291,13 @@ function PairedToolRow({ entry }: { entry: PairedToolEntry }) {
 }
 
 function PairedStatusBadge({ status }: { status: PairedToolStatus }) {
-  if (status === "running") {
-    return (
-      <span className="ask-tool-status text-[color:var(--deeptutor-primary)]">
-        <span className="inline-block size-2 animate-spin rounded-full border border-current border-t-transparent" />
-        执行中
-      </span>
-    );
-  }
-  if (status === "error") {
-    return (
-      <span className="ask-tool-status text-[color:var(--color-error)]">
-        <AlertCircle className="size-3" />
-        失败
-      </span>
-    );
-  }
+  const tone = status === "running" ? "working" : status === "error" ? "error" : "ok";
+  const label = status === "running" ? "执行中" : status === "error" ? "失败" : "完成";
+
   return (
-    <span className="ask-tool-status text-[color:var(--color-success)]">
-      <CheckCircle2 className="size-3" />
-      完成
+    <span className="ask-tool-status">
+      <span className="ask-state-dot" data-tone={tone} aria-hidden />
+      {label}
     </span>
   );
 }

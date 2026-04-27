@@ -810,8 +810,9 @@ export function Composer({
       ref={composerRootRef}
       className="ask-composer relative border-t border-border/50 bg-background px-4 py-3"
       data-busy={isBusy || undefined}
+      data-state={turnState}
       data-turn-state={turnState}
-      data-input-blocked={inputBlocked || undefined}
+      data-input-blocked={inputBlocked ? "true" : "false"}
       data-dragging={isDragging || undefined}
     >
       {/* Hidden file input for the paperclip button */}
@@ -969,6 +970,14 @@ export function Composer({
             <span className="text-[13px] font-medium text-primary">拖放文件到这里</span>
           </div>
         )}
+        {!value && (
+          <span
+            className="ask-composer-placeholder pointer-events-none absolute left-4 top-3.5 z-[1] text-[14px] leading-relaxed text-muted-foreground/50"
+            aria-hidden="true"
+          >
+            {composerPlaceholder}
+          </span>
+        )}
         <textarea
           ref={textareaRef}
           value={value}
@@ -976,10 +985,10 @@ export function Composer({
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           aria-label="Message input"
-          placeholder={composerPlaceholder}
+          placeholder=""
           disabled={inputBlocked}
           rows={1}
-          className="ask-composer-textarea max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-relaxed text-foreground outline-none transition-[height] duration-150 ease-out placeholder:text-muted-foreground/50"
+          className="ask-composer-textarea relative z-[2] max-h-[200px] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-relaxed text-foreground outline-none transition-[height] duration-150 ease-out placeholder:text-muted-foreground/50"
         />
 
         {/* Inline toolbar inside the input card */}
@@ -1112,7 +1121,8 @@ export function Composer({
               <Button
                 size="icon-sm"
                 variant="destructive"
-                className="ask-composer-stop rounded-full transition-transform duration-150 active:scale-95"
+                className="ask-send-button ask-composer-stop rounded-full transition-transform duration-150 active:scale-95"
+                data-mode="stop"
                 onClick={handleStop}
                 aria-label="停止"
               >
@@ -1134,8 +1144,9 @@ export function Composer({
               <Button
                 size="icon-sm"
                 variant="default"
+                data-mode="send"
                 className={cn(
-                  "ask-composer-send rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
+                  "ask-send-button ask-composer-send rounded-full text-white transition-[transform,opacity,box-shadow] duration-150",
                   canSend
                     ? "shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
                     : "bg-primary/40 pointer-events-none",

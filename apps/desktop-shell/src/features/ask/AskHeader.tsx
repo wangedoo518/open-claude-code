@@ -41,11 +41,14 @@ export function AskHeader({
       <div className="min-w-0">
         <div className="ask-chat-header-status">
           <span
-            className="ask-chat-status-dot"
+            className="ask-state-dot"
             data-tone={statusTone}
             aria-hidden
           />
-          <span className="min-w-0 truncate text-[13px] text-[#5F5E5A]">
+          <span
+            key={statusLabel}
+            className="ask-status-label min-w-0 truncate text-[13px] text-[#5F5E5A]"
+          >
             {statusLabel}
           </span>
         </div>

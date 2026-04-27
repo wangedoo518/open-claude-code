@@ -77,7 +77,7 @@ export const StreamingMessage = memo(function StreamingMessage({
         <div className="ask-transcript-shell ask-transcript-shell--streaming">
           <div className="ask-transcript-rail ask-transcript-rail--active" aria-hidden />
           <div className="ask-stream-status">
-            <span className="ask-stream-dot" aria-hidden />
+            <span className="ask-state-dot" data-tone={turnStatus?.tone ?? "working"} aria-hidden />
             <Shimmer className="text-sm font-medium">{statusText}…</Shimmer>
             {elapsed >= 2 && (
               <span className="tabular-nums text-[11px] text-muted-foreground/45">
@@ -96,7 +96,7 @@ export const StreamingMessage = memo(function StreamingMessage({
         <div className="ask-transcript-rail ask-transcript-rail--active" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="ask-stream-status">
-            <span className="ask-stream-dot" aria-hidden />
+            <span className="ask-state-dot" data-tone={turnStatus?.tone ?? "working"} aria-hidden />
             <Shimmer className="text-sm font-medium">{statusText}</Shimmer>
             {turnStatus?.detail && (
               <span className="hidden text-[11px] text-muted-foreground/45 md:inline">

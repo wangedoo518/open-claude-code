@@ -7082,7 +7082,19 @@
     border-color var(--motion-normal) var(--easing-standard);
 }
 
+.ask-composer .ask-composer-card {
+  transition:
+    background-color var(--motion-normal) var(--easing-standard),
+    border-color var(--motion-normal) var(--easing-standard),
+    box-shadow var(--motion-normal) var(--easing-standard),
+    transform var(--motion-normal) var(--easing-standard);
+}
+
 .ask-composer[data-input-blocked="true"] {
+  animation: askComposerBreath 2.8s ease-in-out infinite;
+}
+
+.ask-composer[data-input-blocked="true"] .ask-composer-card {
   animation: askComposerBreath 2.8s ease-in-out infinite;
 }
 
@@ -7174,6 +7186,7 @@
   .ask-state-dot,
   .ask-status-label,
   .ask-composer,
+  .ask-composer-card,
   .ask-composer-placeholder,
   .ask-send-button {
     animation: none;
