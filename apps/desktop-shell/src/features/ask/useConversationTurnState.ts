@@ -298,8 +298,9 @@ export function useConversationTurnState({
   const lastInterruptedAtRef = useRef<number | null>(null);
   const activeTurnUserIdRef = useRef<string | null>(null);
 
+  const safeMessages = Array.isArray(messages) ? messages : [];
   const active = isSending || isRunning || isReplayStreaming;
-  const lastUserMessage = findLastUserMessage(messages);
+  const lastUserMessage = findLastUserMessage(safeMessages);
 
   useEffect(() => {
     const userId = lastUserMessage?.id ?? null;
@@ -341,18 +342,18 @@ export function useConversationTurnState({
   }, [interruptedAt]);
 
   return useMemo(() => {
-    const activeTool = summarizeActiveTool(messages);
+    const activeTool = summarizeActiveTool(safeMessages);
     const { inputTokens: aggInputTokens, outputTokens: aggOutputTokens } =
-      aggregateCurrentTurnTokens(messages);
+      aggregateCurrentTurnTokens(safeMessages);
     const {
       inputTokens: estimatedInputTokens,
       outputTokens: estimatedOutputTokens,
-    } = estimateCurrentTurnTokens(messages, streamingContent);
+    } = estimateCurrentTurnTokens(safeMessages, streamingContent);
     const inputTokens =
       aggInputTokens > 0 ? aggInputTokens : estimatedInputTokens;
     const outputTokens =
       aggOutputTokens > 0 ? aggOutputTokens : estimatedOutputTokens;
-    const messageBasedElapsed = computeCurrentTurnElapsed(messages, active, now);
+    const messageBasedElapsed = computeCurrentTurnElapsed(safeMessages, active, now);
     const elapsedMs = active
       ? Math.max(
           messageBasedElapsed,
@@ -365,7 +366,9 @@ export function useConversationTurnState({
     let state: ConversationTurnState;
     let failureKind: AskErrorKind | undefined;
 
-    if (errorMessage || settingsUnready) {
+    if (interruptedAt) {
+      state = "interrupted";
+    } else if (errorMessage || settingsUnready) {
       const classified = classifyAskError(errorMessage ?? "settings not ready");
       failureKind = classified.kind;
       state = isFatalError(classified.kind, settingsUnready)
@@ -373,8 +376,6 @@ export function useConversationTurnState({
         : "failed_retriable";
     } else if (hasPendingPermission) {
       state = "waiting_permission";
-    } else if (interruptedAt && !active) {
-      state = "interrupted";
     } else if (isSending) {
       state = "sending";
     } else if (isRunning || isReplayStreaming) {
@@ -393,7 +394,7 @@ export function useConversationTurnState({
       }
     } else if (isComposing) {
       state = "composing";
-    } else if (messages.length > 0) {
+    } else if (safeMessages.length > 0) {
       state = "complete";
     } else {
       state = "idle";
@@ -456,7 +457,7 @@ export function useConversationTurnState({
     isReplayStreaming,
     isRunning,
     isSending,
-    messages,
+    safeMessages,
     now,
     session,
     settingsUnready,

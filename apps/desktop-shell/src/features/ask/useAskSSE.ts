@@ -17,6 +17,12 @@ import { useStreamingStore } from "@/state/streaming-store";
 import { usePermissionsStore } from "@/state/permissions-store";
 import type { DesktopSessionEvent, DesktopSessionDetail } from "@/lib/tauri";
 
+function isUsableSessionDetail(
+  detail: DesktopSessionDetail | undefined,
+): detail is DesktopSessionDetail {
+  return Array.isArray(detail?.session?.messages);
+}
+
 export function useAskSSE(
   sessionId: string | null,
   isRunning: boolean,
@@ -79,7 +85,8 @@ export function useAskSSE(
               ["clawwiki", "ask", "session", sessionId],
               (prev: DesktopSessionDetail | undefined) => {
                 const next = event.session;
-                if (!prev) return next;
+                if (!isUsableSessionDetail(next)) return prev ?? next;
+                if (!isUsableSessionDetail(prev)) return next;
                 return {
                   ...next,
                   context_basis: next.context_basis ?? prev.context_basis ?? null,
@@ -94,12 +101,15 @@ export function useAskSSE(
             queryClient.setQueryData(
               ["clawwiki", "ask", "session", sessionId],
               (prev: DesktopSessionDetail | undefined) => {
-                if (!prev) return prev;
+                if (!isUsableSessionDetail(prev)) return prev;
+                const previousMessages = Array.isArray(prev.session.messages)
+                  ? prev.session.messages
+                  : [];
                 return {
                   ...prev,
                   session: {
                     ...prev.session,
-                    messages: [...prev.session.messages, event.message],
+                    messages: [...previousMessages, event.message],
                   },
                 };
               },

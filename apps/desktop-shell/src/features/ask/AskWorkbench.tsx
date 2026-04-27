@@ -85,6 +85,8 @@ import type { CapabilityProviderKind } from "./model-capabilities";
 
 type ReplayPhase = "idle" | "streaming" | "handoff" | "complete";
 
+const EMPTY_RUNTIME_MESSAGES: RuntimeConversationMessage[] = [];
+
 interface StreamingReplayState {
   run: StreamingReplayRun | null;
   phase: ReplayPhase;
@@ -102,6 +104,12 @@ function readEnrichStatus(
 ): EnrichStatus | null | undefined {
   if (!detail) return undefined;
   return detail.enrich_status ?? null;
+}
+
+function isDesktopSessionDetail(value: unknown): value is DesktopSessionDetail {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as { session?: { messages?: unknown } };
+  return Array.isArray(maybe.session?.messages);
 }
 
 /** Detect URLs in text and return the first one. */
@@ -378,10 +386,14 @@ export function AskWorkbench({
     }
   }, [showDemo, stopStreamingReplay, streamingReplay.run]);
 
+  const sessionRuntimeMessages = isDesktopSessionDetail(session)
+    ? session.session.messages
+    : EMPTY_RUNTIME_MESSAGES;
+
   const messages = useMemo(
     () =>
       flattenSessionMessages(
-        session?.session.messages ?? [],
+        sessionRuntimeMessages,
         // A1 integration patch: backend currently emits `context_basis`
         // on the top-level `DesktopSessionDetail` (per-Snapshot side
         // channel), not on individual `RuntimeConversationMessage`
@@ -393,7 +405,7 @@ export function AskWorkbench({
         // None, so this label is turn-local and disappears on reload.
         session?.context_basis ?? null
       ),
-    [session?.session.messages, session?.context_basis]
+    [sessionRuntimeMessages, session?.context_basis]
   );
   const replayMessages = useMemo(() => {
     if (!streamingReplay.run) return null;
@@ -480,7 +492,10 @@ export function AskWorkbench({
   }, [clearReplayTimers, session?.id]);
 
   useEffect(() => {
-    if (isSending || session?.turn_state === "running" || streamingReplay.run) {
+    if (
+      (isSending || session?.turn_state === "running" || streamingReplay.run) &&
+      !interruptingRef.current
+    ) {
       setInterruptedAt(null);
       interruptingRef.current = false;
     }
@@ -793,13 +808,24 @@ export function AskWorkbench({
 
     onStop?.();
 
-    if (!session?.id) return;
+    if (!session?.id) {
+      window.setTimeout(() => {
+        interruptingRef.current = false;
+      }, 250);
+      return;
+    }
     try {
       const next = await cancelSession(session.id);
-      queryClient.setQueryData(
-        ["clawwiki", "ask", "session", session.id],
-        next,
-      );
+      if (isDesktopSessionDetail(next)) {
+        queryClient.setQueryData(
+          ["clawwiki", "ask", "session", session.id],
+          next,
+        );
+      } else {
+        void queryClient.invalidateQueries({
+          queryKey: ["clawwiki", "ask", "session", session.id],
+        });
+      }
     } catch (err) {
       addSystemMessage(
         `中断失败：${err instanceof Error ? err.message : String(err)}`,
