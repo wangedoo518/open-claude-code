@@ -69,6 +69,7 @@ import {
   type StreamingReplayRun,
 } from "./streamingReplayHarness";
 import { useAskUiStore } from "@/state/ask-ui-store";
+import { useStreamingReveal } from "@/state/useStreamingReveal";
 import { formatIngestError } from "@/lib/ingest/format-error";
 import {
   getStoredProfileName,
@@ -251,6 +252,7 @@ export function AskWorkbench({
 }: AskWorkbenchProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  useStreamingReveal();
   // Python deps auto-installed by backend on startup — no frontend action needed.
 
   const pendingPermission = usePermissionsStore(

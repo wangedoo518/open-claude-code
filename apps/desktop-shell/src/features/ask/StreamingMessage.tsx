@@ -40,14 +40,6 @@ interface StreamingMessageProps {
   turnStatus?: ConversationTurnStatus;
 }
 
-function getRevealStep(remaining: number): number {
-  // Large SSE chunks should feel like text is being laid down, not pasted.
-  // Keep the step adaptive so tiny chunks stay responsive while 10k+ bursts
-  // catch up in under a second without a single-frame flash.
-  const adaptiveStep = Math.ceil(remaining * 0.055);
-  return Math.min(220, Math.max(28, adaptiveStep));
-}
-
 export const StreamingMessage = memo(function StreamingMessage({
   content,
   thinkingContent,
@@ -55,13 +47,7 @@ export const StreamingMessage = memo(function StreamingMessage({
   turnStatus,
 }: StreamingMessageProps) {
   const [elapsed, setElapsed] = useState(0);
-  const [displayContent, setDisplayContent] = useState(() =>
-    isComplete ? content : "",
-  );
   const startRef = useRef(Date.now());
-  const targetContentRef = useRef(content);
-  const displayContentRef = useRef(isComplete ? content : "");
-  const revealRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isComplete) return;
@@ -71,59 +57,6 @@ export const StreamingMessage = memo(function StreamingMessage({
     }, 1000);
     return () => clearInterval(timer);
   }, [isComplete]);
-
-  useEffect(() => {
-    targetContentRef.current = content;
-
-    const cancelReveal = () => {
-      if (revealRafRef.current !== null) {
-        cancelAnimationFrame(revealRafRef.current);
-        revealRafRef.current = null;
-      }
-    };
-
-    if (isComplete) {
-      cancelReveal();
-      displayContentRef.current = content;
-      setDisplayContent(content);
-      return cancelReveal;
-    }
-
-    const current = displayContentRef.current;
-    if (!content.startsWith(current) || content.length < current.length) {
-      displayContentRef.current = content;
-      setDisplayContent(content);
-      return cancelReveal;
-    }
-
-    const revealNextFrame = () => {
-      if (revealRafRef.current !== null) return;
-      revealRafRef.current = requestAnimationFrame(() => {
-        revealRafRef.current = null;
-        const target = targetContentRef.current;
-        const prev = displayContentRef.current;
-
-        if (!target.startsWith(prev) || target.length <= prev.length) {
-          displayContentRef.current = target;
-          setDisplayContent(target);
-          return;
-        }
-
-        const remaining = target.length - prev.length;
-        const step = Math.min(remaining, getRevealStep(remaining));
-        const next = target.slice(0, prev.length + step);
-        displayContentRef.current = next;
-        setDisplayContent(next);
-
-        if (next.length < target.length) {
-          revealNextFrame();
-        }
-      });
-    };
-
-    revealNextFrame();
-    return cancelReveal;
-  }, [content, isComplete]);
 
   const statusText =
     turnStatus?.label ??
@@ -188,16 +121,12 @@ export const StreamingMessage = memo(function StreamingMessage({
           {/* Streaming body reuses AskMarkdown so the element tree
               matches the final AssistantMessage; code blocks render
               in their streaming variant until the turn completes. */}
-          {displayContent && (
+          {content && (
             <div
-              className={`ask-assistant-prose ask-stream-body ask-stream-fade overflow-hidden text-foreground ${
-                !isComplete && displayContent.length < content.length
-                  ? "ask-stream-body--catching-up"
-                  : ""
-              }`}
+              className="ask-assistant-prose ask-stream-body ask-stream-fade overflow-hidden text-foreground"
               style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
             >
-              <AskMarkdown content={displayContent} streaming={!isComplete} />
+              <AskMarkdown content={content} streaming={!isComplete} />
               {!isComplete && (
                 <span
                   className="ask-blink-cursor ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-foreground/70"

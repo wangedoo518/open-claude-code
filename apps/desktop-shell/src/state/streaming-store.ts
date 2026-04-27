@@ -1,8 +1,8 @@
 import { create } from "zustand";
 
 /**
- * Streaming state — holds only the accumulated text from TextDelta SSE
- * events. The "is the session running?" question is answered by
+ * Streaming state — holds the backend text buffer and the visible text
+ * reveal. The "is the session running?" question is answered by
  * `session.turn_state === "running"` read from React Query cache, NOT
  * by a separate boolean in this store.
  *
@@ -11,15 +11,15 @@ import { create } from "zustand";
  * turn_state stayed Running, causing UI flicker). See audit-lessons L-07.
  *
  * ── Performance note ─────────────────────────────────────────────
- * `appendStreamingContent` batches writes via `requestAnimationFrame`
- * to avoid triggering a Zustand subscriber re-render on every SSE
- * `text_delta` event. At high token rates (100+/s), per-event updates
- * caused noticeable jank. The RAF batch coalesces all chunks received
- * within a single frame (~16.67ms) into one `set` call, capping UI
- * updates at ~60Hz regardless of token arrival rate.
+ * `appendStreamingContent` writes only to `streamingBuffer`, which UI
+ * components do not render directly. `useStreamingReveal` drains that
+ * buffer into `streamingContent` at a model-agnostic cadence so providers
+ * with different chunk patterns still feel like one product.
  */
 export interface StreamingState {
-  /** Accumulated text content from TextDelta SSE events. */
+  /** Backend-accurate text content from TextDelta SSE events. */
+  streamingBuffer: string;
+  /** User-visible text content, throttled by useStreamingReveal. */
   streamingContent: string;
   /**
    * Accumulated thinking / reasoning summary for the current turn.
@@ -36,8 +36,10 @@ export interface StreamingState {
   streamingThinking: string;
   /** Whether the session is in Plan Mode (read-only exploration). */
   isPlanMode: boolean;
-  /** Append a text chunk to the streaming buffer (batched via RAF). */
+  /** Append a text chunk to the backend buffer. */
   appendStreamingContent: (chunk: string) => void;
+  /** Immediately reveal all currently buffered text. */
+  flushStreamingContent: () => void;
   /** Append a thinking-summary chunk (forward-compatible; see above). */
   appendStreamingThinking: (chunk: string) => void;
   /** Clear both streaming buffers without changing other state. */
@@ -46,25 +48,19 @@ export interface StreamingState {
   setPlanMode: (value: boolean) => void;
 }
 
-// ── RAF batching ────────────────────────────────────────────────────
-// Chunks received within a single animation frame are accumulated in
-// these module-level buffers and flushed once per frame. Content and
-// thinking are batched independently so a burst of text_delta doesn't
-// delay a thinking_delta (or vice versa) past the next paint.
-let pendingContentBuffer = "";
+// ── Thinking RAF batching ───────────────────────────────────────────
+// Thinking remains a forward-compatible side channel. It is unrelated to
+// the visible text reveal loop and can keep the lightweight RAF coalesce.
 let pendingThinkingBuffer = "";
 let rafHandle: number | null = null;
 
-/** Test-only: synchronously flush pending chunks. */
-function flushPendingChunks() {
-  const contentChunk = pendingContentBuffer;
+/** Test-only: synchronously flush pending thinking chunks. */
+function flushPendingThinking() {
   const thinkingChunk = pendingThinkingBuffer;
-  pendingContentBuffer = "";
   pendingThinkingBuffer = "";
   rafHandle = null;
-  if (contentChunk.length === 0 && thinkingChunk.length === 0) return;
+  if (thinkingChunk.length === 0) return;
   useStreamingStore.setState((state) => ({
-    streamingContent: state.streamingContent + contentChunk,
     streamingThinking: state.streamingThinking + thinkingChunk,
   }));
 }
@@ -76,20 +72,27 @@ function flushPendingChunks() {
 function scheduleFlush() {
   if (rafHandle !== null) return;
   if (typeof requestAnimationFrame === "function") {
-    rafHandle = requestAnimationFrame(() => flushPendingChunks());
+    rafHandle = requestAnimationFrame(() => flushPendingThinking());
   } else {
     // Fallback for non-browser environments (tests, SSR).
-    rafHandle = setTimeout(flushPendingChunks, 16) as unknown as number;
+    rafHandle = setTimeout(flushPendingThinking, 16) as unknown as number;
   }
 }
 
 export const useStreamingStore = create<StreamingState>((set) => ({
+  streamingBuffer: "",
   streamingContent: "",
   streamingThinking: "",
   isPlanMode: false,
   appendStreamingContent: (chunk) => {
-    pendingContentBuffer += chunk;
-    scheduleFlush();
+    set((state) => ({
+      streamingBuffer: state.streamingBuffer + chunk,
+    }));
+  },
+  flushStreamingContent: () => {
+    set((state) => ({
+      streamingContent: state.streamingBuffer,
+    }));
   },
   appendStreamingThinking: (chunk) => {
     pendingThinkingBuffer += chunk;
@@ -99,7 +102,6 @@ export const useStreamingStore = create<StreamingState>((set) => ({
     // Clearing must be synchronous so an incoming message arrival
     // immediately blanks the streaming buffer (prevents the last
     // chunk from appearing as a ghost after the complete message).
-    pendingContentBuffer = "";
     pendingThinkingBuffer = "";
     if (rafHandle !== null) {
       if (typeof cancelAnimationFrame === "function") {
@@ -109,7 +111,7 @@ export const useStreamingStore = create<StreamingState>((set) => ({
       }
       rafHandle = null;
     }
-    set({ streamingContent: "", streamingThinking: "" });
+    set({ streamingBuffer: "", streamingContent: "", streamingThinking: "" });
   },
   setPlanMode: (value) => set({ isPlanMode: value }),
 }));

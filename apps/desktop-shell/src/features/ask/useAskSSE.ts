@@ -97,6 +97,11 @@ export function useAskSSE(
             break;
 
           case "message":
+            // A complete message has arrived. Reveal any buffered text once,
+            // then clear the transient stream after one paint so the final
+            // persisted message can take over without leaving stale chunks.
+            useStreamingStore.getState().flushStreamingContent();
+            useStreamingStore.setState({ streamingBuffer: "" });
             // Invalidate the session query to pick up the new message
             queryClient.setQueryData(
               ["clawwiki", "ask", "session", sessionId],
@@ -114,8 +119,12 @@ export function useAskSSE(
                 };
               },
             );
-            // Clear streaming buffer when a complete message arrives
-            useStreamingStore.getState().clearStreamingContent();
+            setTimeout(() => {
+              const state = useStreamingStore.getState();
+              if (state.streamingBuffer.length === 0) {
+                state.clearStreamingContent();
+              }
+            }, 50);
             break;
         }
       },
