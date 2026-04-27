@@ -53,6 +53,7 @@ import { AccountModelSettings } from "./sections/AccountModelSettings";
 import { WeChatSettings } from "./sections/WeChatSettings";
 import { McpSettings } from "./sections/McpSettings";
 import { RuntimeHealthSection } from "./sections/RuntimeHealthSection";
+import { ToolCapabilitySection } from "./sections/ToolCapabilitySection";
 import { PermissionSettings } from "./sections/PermissionSettings";
 import { DataSettings } from "./sections/DataSettings";
 import { ShortcutsSettings } from "./sections/ShortcutsSettings";
@@ -387,6 +388,9 @@ function GroupBody({
       <>
         <div id="ds-settings-anchor-runtime-health">
           <RuntimeHealthSection />
+        </div>
+        <div id="ds-settings-anchor-tool-capability">
+          <ToolCapabilitySection />
         </div>
         <div id="ds-settings-anchor-mcp">
           <McpSettings customize={customize} error={error} />
