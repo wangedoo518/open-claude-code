@@ -224,6 +224,24 @@ export interface ContextBasis {
    * under the A2/A3 paths. UI renders a "✓ Grounded" badge when true.
    */
   grounding_applied?: boolean;
+  /**
+   * R1.1 reliability sprint — when a bound source resolved, whether
+   * the underlying raw is article-shaped (URL fetch / WeChat-article
+   * fetch / PDF / DOCX / PPTX succeeded). When `false`, the bound
+   * source is a non-article raw — chat text, voice transcript,
+   * archived link without a fetched body. The UI renders a yellow
+   * warning chip ("只保存了链接 / 原文未抓取") instead of the
+   * regular green "Grounded" chip in that case, and the backend
+   * pushes a sentinel system message instead of the bound-source
+   * body so the LLM doesn't hallucinate a summary of an empty body.
+   *
+   * `null` / absent on:
+   *   - legacy sessions (pre-R1.1) — the field is omitted by serde.
+   *   - turns where no source was bound at all.
+   *   - turns where the resolver couldn't load the raw (already
+   *     degraded to a pre-A2 unbound turn).
+   */
+  bound_source_is_article?: boolean | null;
 }
 
 /* ──────────────────────────────────────────────────────────────────

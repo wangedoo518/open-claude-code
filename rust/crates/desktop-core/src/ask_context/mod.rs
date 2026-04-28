@@ -162,6 +162,31 @@ pub struct ContextBasis {
     /// for non-binding turns.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub grounding_applied: bool,
+    /// R1.1: `Some(true)` when `bound_source` resolved to a body
+    /// that `wiki_store::is_full_article` classifies as an article
+    /// (i.e. URL fetch / WeChat-article fetch / PDF / DOCX / PPTX
+    /// succeeded). `Some(false)` when the bound source resolved but
+    /// is a non-article raw — chat text, voice transcript, archived
+    /// link without a fetched body. `None` when no source was bound
+    /// or when the resolver could not load the raw at all.
+    ///
+    /// The frontend reads this to render a yellow warning chip
+    /// ("只保存了链接 / 原文未抓取") instead of the regular green
+    /// "Grounded" chip — and to disable affordances that only make
+    /// sense with a real article (pin-as-source-of-truth, etc).
+    ///
+    /// On the prompt side, when this is `Some(false)` the backend
+    /// pushes a sentinel system message instead of the bound-source
+    /// body + Grounded Mode rules, so the LLM cannot hallucinate a
+    /// summary of an empty body. See
+    /// `binding::format_archived_link_sentinel`.
+    ///
+    /// Legacy JSON without this field decodes to `None` via
+    /// `#[serde(default)]`; skip-when-none serializer keeps the
+    /// wire + on-disk shape untouched for pre-R1.1 snapshots and
+    /// for non-binding turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_source_is_article: Option<bool>,
 }
 
 impl ContextBasis {
@@ -186,6 +211,7 @@ impl ContextBasis {
             bound_source: None,
             auto_bound: false,
             grounding_applied: false,
+            bound_source_is_article: None,
         }
     }
 
@@ -223,6 +249,21 @@ impl ContextBasis {
     #[must_use]
     pub fn with_grounding_applied(mut self, applied: bool) -> Self {
         self.grounding_applied = applied;
+        self
+    }
+
+    /// R1.1: stamp whether the resolved bound source is an article
+    /// (full document body the LLM can summarize) or a non-article
+    /// raw (chat text / voice transcript / archived link without a
+    /// fetched body). The frontend reads this to render a warning
+    /// chip in the latter case so the user sees "只保存了链接，原文
+    /// 未抓取" instead of a misleading "Grounded" badge. `None` means
+    /// no source was bound for this turn (or the resolver could not
+    /// load the raw, in which case the binding is degraded to a
+    /// pre-A2 turn anyway).
+    #[must_use]
+    pub fn with_bound_source_is_article(mut self, is_article: Option<bool>) -> Self {
+        self.bound_source_is_article = is_article;
         self
     }
 }

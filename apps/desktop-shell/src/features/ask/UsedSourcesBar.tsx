@@ -21,7 +21,16 @@
  *     isn't true and no bound_source exists.
  */
 
-import { Hash, BookOpen, Inbox, Link2, Link, Pin, ShieldCheck } from "lucide-react";
+import {
+  Hash,
+  BookOpen,
+  Inbox,
+  Link2,
+  Link,
+  Pin,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
 import type { ContextBasis, SourceRef } from "@/lib/tauri";
 import { formatSourceRefLabel, sourceRefKey } from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
@@ -77,6 +86,52 @@ function GroundedBadge({ toneClassName }: { toneClassName?: string }) {
   );
 }
 
+/**
+ * R1.1 reliability sprint — warning chip rendered when the bound
+ * source is **not** an article (e.g. WeChat plain-text message,
+ * archived link without a fetched body, voice transcript). The
+ * backend pushes a sentinel system message instead of the body in
+ * this case so the LLM doesn't hallucinate a summary; the chip tells
+ * the user *why* the answer is "this source has no article body to
+ * summarize" and suggests next steps.
+ *
+ * Tone: amber/yellow — not red because nothing is broken; the data
+ * is stored, just not summarizable as an article. The Tooltip carries
+ * the user-actionable next steps (refetch / paste).
+ */
+function ArchivedLinkWarningBadge() {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge
+            variant="outline"
+            className={cn(
+              "gap-1 text-[10px] font-normal",
+              "border-amber-500/40 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200",
+            )}
+          >
+            <TriangleAlert className="size-3 shrink-0" />
+            <span>原文未抓取</span>
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-xs">
+          <div className="space-y-1 leading-snug">
+            <div className="font-medium">这条来源没有完整文章正文</div>
+            <div className="text-background/90">
+              · 系统只存了链接 / 短消息 / 语音片段
+              <br />
+              · 模型不会假装看过它，会明确告诉你
+              <br />
+              · 如需摘要：在素材库点「重新抓取」，或粘贴正文
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 interface UsedSourcesBarProps {
   basis: ContextBasis | null | undefined;
   /**
@@ -120,6 +175,15 @@ export function UsedSourcesBar({
 
   if (boundSource === null && !showGenericLinkBadge) return null;
 
+  // R1.1: explicit "this source isn't an article" gate. The backend
+  // sets `bound_source_is_article === false` for wechat-text /
+  // kefu-text / paste / voice / etc. raws — bodies the LLM cannot
+  // summarize as articles. Render the warning chip and **suppress**
+  // the green Grounded badge regardless of `grounding_applied` (the
+  // backend already overrides Grounded for non-articles, but be
+  // defensive in case an older snapshot lands here).
+  const isArchivedLinkOnly = basis.bound_source_is_article === false;
+
   if (isAutoBound && boundSource) {
     // A3 — blue tone, link icon, "本轮自动锁定" prefix, inline pin action.
     const Icon = iconFor(boundSource);
@@ -146,7 +210,8 @@ export function UsedSourcesBar({
             {label}
           </span>
         </Badge>
-        {basis.grounding_applied === true && (
+        {isArchivedLinkOnly && <ArchivedLinkWarningBadge />}
+        {!isArchivedLinkOnly && basis.grounding_applied === true && (
           <GroundedBadge toneClassName="border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/5 text-[color:var(--claude-blue)]" />
         )}
         {onPromoteToSession && (
@@ -199,7 +264,8 @@ export function UsedSourcesBar({
           <span>本链接</span>
         </Badge>
       )}
-      {basis.grounding_applied === true && (
+      {isArchivedLinkOnly && <ArchivedLinkWarningBadge />}
+      {!isArchivedLinkOnly && basis.grounding_applied === true && (
         <GroundedBadge toneClassName="border-muted-foreground/30 text-muted-foreground" />
       )}
     </div>

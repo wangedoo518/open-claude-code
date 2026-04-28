@@ -896,6 +896,65 @@ const RAW_CONTENT_VALIDATION_EXEMPT: &[&str] = &[
     "query",       // Q&A crystallization — short answers are fine
 ];
 
+/// Source strings whose raw body counts as a successfully fetched
+/// **article-shaped** document — i.e. content that a human would
+/// recognize as "an article" rather than a chat message, voice memo,
+/// or saved-but-unfetched link archive.
+///
+/// This is the **central reliability gate** for the Ask "bind source"
+/// path: when the resolver sees a non-article raw, it MUST refuse to
+/// summarize / ground the LLM on it (the body is either a one-liner
+/// chat message or a fallback artifact written when URL fetch failed),
+/// otherwise the LLM hallucinates an answer pretending the empty body
+/// were the article. See R1.1 reliability sprint.
+///
+/// Decision table:
+///
+/// | Source                | is_full_article | Why |
+/// |-----------------------|-----------------|-----|
+/// | `url`                 | true            | HTTP fetch succeeded, body is article HTML→Markdown |
+/// | `wechat-article`      | true            | Playwright fetch of mp.weixin.qq.com succeeded |
+/// | `pdf` / `docx` / `pptx` | true          | Document import succeeded |
+/// | `paste`               | false           | User pasted text — could be anything, treat as opaque |
+/// | `wechat-text`         | false           | Plain WeChat message OR fetch-fallback archive of original text |
+/// | `kefu-text`           | false           | Customer-service text channel — short messages |
+/// | `voice`               | false           | Transcript fragment — not an article |
+/// | `query`               | false           | Q&A crystallization, not source material |
+/// | `image` / `card` / `chat` | false       | Non-article media |
+/// | `video`               | false           | Until video transcript fetch lands |
+/// | unknown / other       | false           | Conservative default — better to under-summarize than hallucinate |
+///
+/// Returns `true` ONLY when the source string is in the article-shaped
+/// allowlist. Adding a new fetch path? Add the source string to the
+/// `match` arm here AND ensure the writer enforces the article shape
+/// (length, structure) before calling `write_raw_entry`.
+#[must_use]
+pub fn is_full_article(source: &str) -> bool {
+    matches!(source, "url" | "wechat-article" | "pdf" | "docx" | "pptx")
+}
+
+/// Stable display label for a raw entry's source kind. Used by the
+/// Ask resolver to render a clear "this is a saved link / chat message,
+/// not an article" sentinel when the binding is gated by
+/// [`is_full_article`].
+#[must_use]
+pub fn raw_entry_kind_label(source: &str) -> &'static str {
+    match source {
+        "url" | "wechat-article" => "article",
+        "pdf" | "docx" | "pptx" => "document",
+        "wechat-text" => "wechat_text",
+        "kefu-text" => "kefu_text",
+        "paste" => "paste",
+        "voice" => "voice",
+        "query" => "query",
+        "image" => "image",
+        "card" => "card",
+        "chat" => "chat",
+        "video" => "video",
+        _ => "unknown",
+    }
+}
+
 /// Reject pages that look like anti-bot / captcha placeholders before
 /// they hit the raw layer. See
 /// `wiki_ingest::validate_fetched_content` for the primary fetch-time
@@ -5203,6 +5262,55 @@ mod tests {
         let fm2 = RawFrontmatter::for_paste("wechat-text", None);
         write_raw_entry(&paths, "wechat-text", "msg", "你好", &fm2)
             .expect("wechat-text short message should pass");
+    }
+
+    // ── R1.1 reliability sprint · article-shape gate ────────────────
+    //
+    // `is_full_article` is the single source of truth for "is this
+    // raw safe to summarize / ground an LLM on?". The Ask resolver
+    // gates `format_bound_source` on it so a saved-but-unfetched
+    // wechat-text never gets handed to the LLM as if it were the
+    // article body. Pin every supported `source` value here so the
+    // matrix can't drift silently.
+
+    #[test]
+    fn is_full_article_classifies_known_sources() {
+        // Article-shaped: full document body that the LLM can summarize.
+        for src in ["url", "wechat-article", "pdf", "docx", "pptx"] {
+            assert!(is_full_article(src), "{src} should classify as article");
+        }
+
+        // Non-article: short messages, fallbacks, media, conservative defaults.
+        for src in [
+            "paste",
+            "wechat-text",
+            "kefu-text",
+            "voice",
+            "query",
+            "image",
+            "card",
+            "chat",
+            "video",
+            "",
+            "totally-new-source-name",
+        ] {
+            assert!(
+                !is_full_article(src),
+                "{src} must NOT classify as article"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_entry_kind_label_returns_stable_strings() {
+        assert_eq!(raw_entry_kind_label("url"), "article");
+        assert_eq!(raw_entry_kind_label("wechat-article"), "article");
+        assert_eq!(raw_entry_kind_label("pdf"), "document");
+        assert_eq!(raw_entry_kind_label("wechat-text"), "wechat_text");
+        assert_eq!(raw_entry_kind_label("kefu-text"), "kefu_text");
+        assert_eq!(raw_entry_kind_label("paste"), "paste");
+        assert_eq!(raw_entry_kind_label("voice"), "voice");
+        assert_eq!(raw_entry_kind_label("totally-new-source"), "unknown");
     }
 
     // ── extract_readable_title regression (2026-04 mp.weixin) ───

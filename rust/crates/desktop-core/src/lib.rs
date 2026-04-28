@@ -1582,6 +1582,29 @@ impl Display for DesktopStateError {
 
 impl std::error::Error for DesktopStateError {}
 
+/// R1.1 reliability gate · output of
+/// [`DesktopState::resolve_bound_source_body`].
+///
+/// Carries the body that the prompt assembler would inject as the
+/// bound source body, plus a verdict on whether that body is safe
+/// to summarize / ground an LLM on. Callers MUST consult
+/// `is_article` before pushing the body into the system prompt:
+/// when `false`, push
+/// [`crate::ask_context::binding::format_archived_link_sentinel`]
+/// instead, otherwise the LLM hallucinates an "article summary"
+/// of an empty / one-liner body.
+///
+/// `kind_label` is the stable identifier that
+/// [`crate::ask_context::binding::format_archived_link_sentinel`]
+/// uses to pick a tailored Chinese phrasing for the user-facing
+/// message ("微信纯文本消息" vs "客服对话文本片段" etc).
+#[derive(Debug, Clone)]
+struct ResolvedBoundSource {
+    body: String,
+    is_article: bool,
+    kind_label: &'static str,
+}
+
 impl DesktopState {
     #[must_use]
     pub fn new() -> Self {
@@ -3380,14 +3403,14 @@ impl DesktopState {
         }
     }
 
-    /// A2: resolve a `SourceRef` to a (source, body-string) pair,
-    /// ready for `format_bound_source`. The body is read from
-    /// `wiki_store`:
+    /// A2 + R1.1: resolve a `SourceRef` to a body string plus a
+    /// reliability gate. The body is read from `wiki_store`:
     ///
     ///   * `Raw { id }` → `wiki_store::read_raw_entry(paths, id)` →
-    ///     body string.
+    ///     body + `frontmatter.source` for the article-shape gate.
     ///   * `Wiki { slug }` → `wiki_store::read_wiki_page(paths, slug)`
-    ///     → body string.
+    ///     → body. Wiki pages are by definition article-shaped
+    ///     (already maintained), so `is_article` is always `true`.
     ///   * `Inbox { id }` → scan `list_inbox_entries(paths)` for the
     ///     matching `id`, then resolve `source_raw_id` via
     ///     `read_raw_entry`. Inbox items are pointers at raws, not
@@ -3398,12 +3421,23 @@ impl DesktopState {
     /// caller degrades gracefully — the turn still runs, just without
     /// the bound-source prepend.
     ///
-    /// Token budgeting + truncation is applied here so every caller
-    /// gets a size-clamped body and doesn't have to call
-    /// `truncate_source_body` manually.
+    /// On success, returns a [`ResolvedBoundSource`] carrying:
+    ///   * `body` — already truncated to the source's token budget
+    ///     (`token_budget_for_source`), so callers don't need to
+    ///     call `truncate_source_body` themselves.
+    ///   * `is_article` — `wiki_store::is_full_article` verdict on
+    ///     the underlying source string. Callers MUST gate
+    ///     `format_bound_source` / `grounding_instruction_block` on
+    ///     this flag; when `false`, push
+    ///     `format_archived_link_sentinel` instead so the LLM is
+    ///     not asked to summarize an empty / non-article body.
+    ///   * `kind_label` — stable identifier (e.g. `"wechat_text"`,
+    ///     `"article"`) that
+    ///     `binding::format_archived_link_sentinel` consumes to pick
+    ///     a tailored Chinese phrasing for the user-facing message.
     fn resolve_bound_source_body(
         source: &crate::ask_context::binding::SourceRef,
-    ) -> Option<String> {
+    ) -> Option<ResolvedBoundSource> {
         use crate::ask_context::binding::{
             token_budget_for_source, truncate_source_body, SourceRef,
         };
@@ -3417,16 +3451,21 @@ impl DesktopState {
         }
         let paths = wiki_store::WikiPaths::resolve(&root);
 
-        let body = match source {
+        // R1.1: `(body, source_string)`. The source_string is the
+        // raw entry's `frontmatter.source` (e.g. "url",
+        // "wechat-article", "wechat-text"); for `SourceRef::Wiki`
+        // we synthesize "wiki" since wiki pages are by definition
+        // article-shaped (they were already absorbed/maintained).
+        let (body, source_string): (String, String) = match source {
             SourceRef::Raw { id, .. } => match wiki_store::read_raw_entry(&paths, *id) {
-                Ok((_entry, body)) => body,
+                Ok((entry, body)) => (body, entry.source),
                 Err(e) => {
                     eprintln!("[bind_source] read_raw_entry({id}) failed: {e}");
                     return None;
                 }
             },
             SourceRef::Wiki { slug, .. } => match wiki_store::read_wiki_page(&paths, slug) {
-                Ok((_summary, body)) => body,
+                Ok((_summary, body)) => (body, "wiki".to_string()),
                 Err(e) => {
                     eprintln!("[bind_source] read_wiki_page({slug}) failed: {e}");
                     return None;
@@ -3447,7 +3486,7 @@ impl DesktopState {
                 let entry = inbox_entries.iter().find(|e| e.id == *id)?;
                 let raw_id = entry.source_raw_id?;
                 match wiki_store::read_raw_entry(&paths, raw_id) {
-                    Ok((_entry, body)) => body,
+                    Ok((entry, body)) => (body, entry.source),
                     Err(e) => {
                         eprintln!("[bind_source] inbox#{id} → raw#{raw_id} read failed: {e}");
                         return None;
@@ -3457,7 +3496,26 @@ impl DesktopState {
         };
 
         let budget = token_budget_for_source(source);
-        Some(truncate_source_body(&body, budget))
+        // R1.1: gate "is this body safe to summarize / ground on?"
+        // - Wiki pages: always article-shaped (already maintained).
+        // - Raw entries: depends on `frontmatter.source` —
+        //   `is_full_article` returns true only for fetched articles
+        //   / documents.
+        let is_article = match source {
+            SourceRef::Wiki { .. } => true,
+            SourceRef::Raw { .. } | SourceRef::Inbox { .. } => {
+                wiki_store::is_full_article(&source_string)
+            }
+        };
+        let kind_label = match source {
+            SourceRef::Wiki { .. } => "wiki",
+            _ => wiki_store::raw_entry_kind_label(&source_string),
+        };
+        Some(ResolvedBoundSource {
+            body: truncate_source_body(&body, budget),
+            is_article,
+            kind_label,
+        })
     }
 
     /// If the message contains a URL, try to fetch its content and
@@ -3800,9 +3858,18 @@ impl DesktopState {
         // Resolve outside the read lock — wiki_store I/O is
         // synchronous but potentially slow (filesystem hit). If it
         // fails we log + degrade to pre-A2 behaviour.
-        let bound_body: Option<(crate::ask_context::binding::SourceRef, String)> =
+        //
+        // R1.1: the resolver now returns `ResolvedBoundSource` so
+        // each downstream caller can gate `format_bound_source` /
+        // `grounding_instruction_block` on `is_article`. When false
+        // (e.g. user bound a `wechat-text` raw written as fallback
+        // when URL fetch failed), the prompt assembler injects a
+        // sentinel via `format_archived_link_sentinel` instead of
+        // pretending the body is an article.
+        let bound_body: Option<(crate::ask_context::binding::SourceRef, ResolvedBoundSource)> =
             session_binding.as_ref().and_then(|b| {
-                Self::resolve_bound_source_body(&b.source).map(|body| (b.source.clone(), body))
+                Self::resolve_bound_source_body(&b.source)
+                    .map(|resolved| (b.source.clone(), resolved))
             });
         if session_binding.is_some() && bound_body.is_none() {
             eprintln!(
@@ -3944,8 +4011,8 @@ impl DesktopState {
             // when a binding resolved, so the frontend chip shows the
             // combined token footprint. If both URL enrichment AND a
             // binding ran, the binding wins (it's the explicit pin).
-            let source_bytes: Option<usize> = if let Some((_, body)) = &bound_body {
-                Some(body.len())
+            let source_bytes: Option<usize> = if let Some((_, resolved)) = &bound_body {
+                Some(resolved.body.len())
             } else if has_enrichment {
                 Some(enriched.len())
             } else {
@@ -3974,19 +4041,36 @@ impl DesktopState {
             // `grounding_instruction_block()` tacked on at the end
             // of `system_prompt_text`. Either way the LLM saw the
             // Grounded Mode guardrails, so the flag is true.
-            if let Some((source, _)) = &bound_body {
+            if let Some((source, resolved)) = &bound_body {
+                // R1.1: only stamp `grounding_applied = true` when the
+                // bound source is article-shaped — when it's not, the
+                // prompt assembler pushes
+                // `format_archived_link_sentinel` instead of the
+                // Grounded Mode rules, so the UI's "Grounded" badge
+                // would lie. The `bound_source_is_article` flag tells
+                // the frontend which chip to render (warning vs
+                // green Grounded).
                 basis = basis
                     .with_bound_source(Some(source.clone()))
-                    .with_grounding_applied(true);
+                    .with_grounding_applied(resolved.is_article)
+                    .with_bound_source_is_article(Some(resolved.is_article));
             } else if let Some(source) = &auto_bound_source {
                 // A3: no explicit binding, but enrichment produced a
                 // raw → auto-bind for this turn. Mark the basis so
                 // the UI can render the "自动绑定" chip and so
                 // downstream consumers know the source is turn-local.
+                //
+                // A3 is by construction article-shaped: the auto-bind
+                // only fires after a successful `EnrichStatus::Success`
+                // / `Reused`, which means a real URL fetch produced
+                // a `url`/`wechat-article` raw. Stamp
+                // `bound_source_is_article = Some(true)` so the
+                // frontend renders the green Grounded chip.
                 basis = basis
                     .with_bound_source(Some(source.clone()))
                     .with_auto_bound(true)
-                    .with_grounding_applied(true);
+                    .with_grounding_applied(true)
+                    .with_bound_source_is_article(Some(true));
             }
             record.metadata.last_context_basis = Some(basis);
 
@@ -4176,9 +4260,17 @@ impl DesktopState {
             // the system_prompt assembly below (see `system_prompt_text`).
             let session_for_stream = session.clone();
             let marker_for_openai = crate::ask_context::boundary_marker_for(effective_mode);
-            let bound_prefix_for_openai: Option<String> = bound_body
-                .as_ref()
-                .map(|(s, b)| crate::ask_context::binding::format_bound_source(s, b));
+            // R1.1: gate the bound-source body on `is_article`. When the
+            // user bound a non-article raw (wechat-text, kefu-text, etc.),
+            // emit the sentinel instead of `format_bound_source` so the
+            // LLM doesn't hallucinate a summary of an empty body.
+            let bound_prefix_for_openai: Option<String> = bound_body.as_ref().map(|(s, r)| {
+                if r.is_article {
+                    crate::ask_context::binding::format_bound_source(s, &r.body)
+                } else {
+                    crate::ask_context::binding::format_archived_link_sentinel(s, r.kind_label)
+                }
+            });
             let system_prompt_text_openai = build_system_prompt_for_openai_compat(
                 &project_path,
                 &bound_prefix_for_openai,
@@ -4377,15 +4469,35 @@ impl DesktopState {
                 // finally any URL enrichment as "oh and there's also
                 // this fresh URL content". Ordering matters — the
                 // binding is top-priority.
-                if let Some((source, body)) = &bound_body {
+                if let Some((source, resolved)) = &bound_body {
+                    // R1.1: gate the bound-source body on `is_article`.
+                    // For non-article raws (wechat-text, kefu-text,
+                    // archived-link-only), push the sentinel system
+                    // message that tells the LLM the source has no
+                    // fetched body and instructs it to ask the user to
+                    // refetch / paste — instead of pretending to summarize
+                    // an empty body.
                     eprintln!(
-                        "[bind_source] injecting bound {} ({}) into system_prompt (agentic)",
+                        "[bind_source] injecting bound {} ({}) into system_prompt (agentic, is_article={})",
                         source.display_kind(),
-                        source.binding_key()
+                        source.binding_key(),
+                        resolved.is_article,
                     );
-                    system_prompt_text.push_str(&crate::ask_context::binding::format_bound_source(
-                        source, body,
-                    ));
+                    if resolved.is_article {
+                        system_prompt_text.push_str(
+                            &crate::ask_context::binding::format_bound_source(
+                                source,
+                                &resolved.body,
+                            ),
+                        );
+                    } else {
+                        system_prompt_text.push_str(
+                            &crate::ask_context::binding::format_archived_link_sentinel(
+                                source,
+                                resolved.kind_label,
+                            ),
+                        );
+                    }
                 }
                 //
                 // A1: insert the mode-specific boundary marker BEFORE the
@@ -4606,13 +4718,24 @@ impl DesktopState {
                 // boundary marker to `url_context` so at least the
                 // system-prompt instruction propagates.
                 let marker_for_fallback = crate::ask_context::boundary_marker_for(effective_mode);
-                // A2: prepend the bound source (if resolved) to the
-                // fallback url_context so the vendored turn executor
-                // sees it too. Ordering matches the agentic path:
-                // binding → marker → enrichment.
-                let bound_prefix: Option<String> = bound_body
-                    .as_ref()
-                    .map(|(s, b)| crate::ask_context::binding::format_bound_source(s, b));
+                // A2 + R1.1: prepend the bound source (if resolved) to
+                // the fallback url_context so the vendored turn
+                // executor sees it too. Ordering matches the agentic
+                // path: binding → marker → enrichment.
+                //
+                // R1.1: gate on `is_article` so non-article raws emit
+                // the sentinel instead of a confidence-feigning bound
+                // body. Mirrors the agentic + openai-compat paths.
+                let bound_prefix: Option<String> = bound_body.as_ref().map(|(s, r)| {
+                    if r.is_article {
+                        crate::ask_context::binding::format_bound_source(s, &r.body)
+                    } else {
+                        crate::ask_context::binding::format_archived_link_sentinel(
+                            s,
+                            r.kind_label,
+                        )
+                    }
+                });
                 let fallback_url_context = match (&bound_prefix, has_enrichment) {
                     (Some(bind), true) => Some(match marker_for_fallback {
                         Some(m) => format!("{bind}{m}\n\n{enriched}"),

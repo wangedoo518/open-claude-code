@@ -286,6 +286,56 @@ pub fn grounding_instruction_block() -> &'static str {
      5. **不要编造** —— 不要引用来源里不存在的句子；如果是复述而非原文，请显式标注「来源原文改述：」。\n\n"
 }
 
+/// R1.1 reliability gate · sentinel for non-article bound sources.
+///
+/// When the user binds a raw whose body is **not** an article (e.g.
+/// a `wechat-text` archive of just the original link/text after URL
+/// fetch failed, a `kefu-text` chat-message fragment, a short paste,
+/// a voice transcript), we MUST NOT hand the body to the LLM under
+/// the [`format_bound_source`] / [`grounding_instruction_block`]
+/// framing — the body either is empty / a one-liner / a placeholder,
+/// and the LLM will hallucinate an "article summary" that looks
+/// confident but contains no real source content.
+///
+/// Instead, push this sentinel into the system prompt: a short note
+/// stating that the bound source is an archived link / chat / text
+/// without a fetched article body, plus an explicit instruction to
+/// the model: do not pretend to have read it, ask the user to
+/// re-fetch the URL or paste the article text manually.
+///
+/// `kind_label` should come from
+/// `wiki_store::raw_entry_kind_label(source_string)` so the LLM can
+/// give the user a precise reason ("已存档的微信纯文本消息" vs
+/// "未抓取到正文的链接归档").
+#[must_use]
+pub fn format_archived_link_sentinel(
+    source: &SourceRef,
+    kind_label: &str,
+) -> String {
+    let human_kind = match kind_label {
+        "wechat_text" => "微信纯文本消息（不是抓取到的文章正文）",
+        "kefu_text" => "客服对话文本片段（不是抓取到的文章正文）",
+        "paste" => "用户粘贴的短文本（不是抓取到的文章正文）",
+        "voice" => "语音转写片段（不是抓取到的文章正文）",
+        "image" | "card" | "chat" | "video" => {
+            "非文章类素材（图片/卡片/对话/视频，不是抓取到的文章正文）"
+        }
+        "query" => "Q&A 结晶（不是抓取到的文章正文）",
+        _ => "已存档的素材，但**未抓取到完整文章正文**",
+    };
+    format!(
+        "\n\n## 绑定来源 · {display_kind} · {title}\n\n\
+         ⚠️ 这是一条 **{human_kind}**。系统**没有完整的文章正文**可以引用。\n\n\
+         请按以下方式回答：\n\
+         1. 明确告诉用户：「当前来源未抓取到完整文章正文，无法基于它给出摘要或引用。」\n\
+         2. 提示用户可以采取的操作：在素材库点击「重新抓取」、把原文复制粘贴到聊天、或重新转发链接。\n\
+         3. **不要**编造摘要、不要假装看过文章、不要把对话历史里的信息当作来源内容。\n\n",
+        display_kind = source.display_kind(),
+        title = source.title(),
+        human_kind = human_kind,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,5 +664,76 @@ mod tests {
             closing_fence_idx < rule_idx,
             "closing fence must separate body from rules: fence={closing_fence_idx}, rules={rule_idx}"
         );
+    }
+
+    /// R1.1 reliability gate · the sentinel for non-article sources
+    /// must:
+    ///   1. NOT carry the body — there is no real body to ground on.
+    ///   2. NOT include the Grounded Mode rule header — those rules
+    ///      assume a real source above and would tell the LLM to
+    ///      "quote the source", which is impossible.
+    ///   3. Tell the model exactly what to say and what NOT to say
+    ///      so it cannot hallucinate a confident summary.
+    /// Pin all three contracts.
+    #[test]
+    fn format_archived_link_sentinel_does_not_emit_body_or_grounding() {
+        let source = SourceRef::Raw {
+            id: 7,
+            title: "测试".into(),
+        };
+        let body_marker = "REAL_BODY_BYTES_12345";
+        // The sentinel never sees the body — it doesn't take it as an arg.
+        let out = format_archived_link_sentinel(&source, "wechat_text");
+
+        assert!(
+            !out.contains(body_marker),
+            "sentinel must not carry any body: {out}"
+        );
+        assert!(
+            !out.contains("Grounded Mode · 回答规则"),
+            "sentinel must NOT trigger Grounded Mode rules: {out}"
+        );
+        // It must tell the LLM the kind so the user gets a precise reason.
+        assert!(
+            out.contains("微信纯文本消息"),
+            "sentinel must surface human-readable kind label: {out}"
+        );
+        // It must explicitly tell the LLM not to fabricate.
+        assert!(
+            out.contains("不要"),
+            "sentinel must include a no-fabrication directive: {out}"
+        );
+        // It must tell the user what action they can take.
+        assert!(
+            out.contains("重新抓取") || out.contains("粘贴"),
+            "sentinel must surface user-actionable next steps: {out}"
+        );
+    }
+
+    /// All non-article kind labels we ship today get a tailored Chinese
+    /// phrasing, and unknown labels fall back to a safe default rather
+    /// than crashing or emitting "unknown" to the LLM.
+    #[test]
+    fn format_archived_link_sentinel_handles_each_known_kind() {
+        let source = SourceRef::Raw {
+            id: 1,
+            title: "t".into(),
+        };
+        let kinds_and_phrases = [
+            ("wechat_text", "微信纯文本消息"),
+            ("kefu_text", "客服对话文本片段"),
+            ("paste", "用户粘贴的短文本"),
+            ("voice", "语音转写片段"),
+            ("image", "非文章类素材"),
+            ("query", "Q&A 结晶"),
+            ("totally-new-source", "已存档的素材"),
+        ];
+        for (label, expected_phrase) in kinds_and_phrases {
+            let out = format_archived_link_sentinel(&source, label);
+            assert!(
+                out.contains(expected_phrase),
+                "sentinel for kind={label} must contain '{expected_phrase}': {out}"
+            );
+        }
     }
 }
