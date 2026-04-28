@@ -51,3 +51,70 @@ export async function updateWeChatIngestConfig(
     body: JSON.stringify(config),
   });
 }
+
+// ── R1.3 reliability gate · aggregate WeChat health ────────────────
+//
+// Single endpoint that combines kefu monitor status, iLink account
+// roster, and outbox counts under one verdict so the UI can render a
+// "Connected / Degraded / Disconnected / Not configured" pill without
+// re-implementing the rules.
+//
+// Route: GET /api/desktop/wechat/health
+// Polled every 5s by `WeChatHealthPanel` while mounted.
+
+export type WeChatHealthVerdict =
+  | "connected"
+  | "degraded"
+  | "disconnected"
+  | "not_configured";
+
+/** Per-iLink-account snapshot embedded in the aggregate health. */
+export interface WeChatHealthIlinkAccount {
+  id: string;
+  display_name: string;
+  /** Wire status string from `WeChatAccountStatus::wire_tag`. */
+  status: string;
+  last_active_at: number | null;
+}
+
+/** Outbox status histogram embedded in the aggregate health. */
+export interface WeChatHealthOutboxCounts {
+  pending: number;
+  sending: number;
+  sent: number;
+  failed: number;
+  cancelled: number;
+}
+
+/** Kefu monitor snapshot — mirrors `KefuStatus` on the wire. */
+export interface WeChatHealthKefu {
+  configured: boolean;
+  account_created: boolean;
+  monitor_running: boolean;
+  last_poll_unix_ms: number | null;
+  last_inbound_unix_ms: number | null;
+  consecutive_failures: number;
+  last_error: string | null;
+  capabilities: {
+    text: boolean;
+    url: boolean;
+    query: boolean;
+    commands: string[];
+    file: boolean;
+    image: boolean;
+    card: boolean;
+  };
+}
+
+/** Envelope returned by `GET /api/desktop/wechat/health`. */
+export interface WeChatHealthSnapshot {
+  /** Worst-wins overall verdict; the UI renders one pill from this. */
+  health: WeChatHealthVerdict;
+  kefu: WeChatHealthKefu;
+  ilink_accounts: WeChatHealthIlinkAccount[];
+  outbox: WeChatHealthOutboxCounts;
+}
+
+export async function fetchWeChatHealth(): Promise<WeChatHealthSnapshot> {
+  return fetchJson<WeChatHealthSnapshot>("/api/desktop/wechat/health");
+}

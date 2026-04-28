@@ -16,6 +16,7 @@ import {
   type KefuStatus,
 } from "@/api/desktop/settings";
 import type { DesktopSettingsResponse } from "@/api/contracts/desktop";
+import { WeChatHealthPanel } from "@/features/wechat/components/WeChatHealthPanel";
 
 type HealthLevel = "ok" | "warn" | "error";
 
@@ -249,6 +250,16 @@ export function RuntimeHealthSection() {
           ))}
         </div>
       )}
+
+      {/* R1.3 reliability panel — surfaces WeChat connectivity +
+          outbox state in one place so users no longer have to guess
+          why a reply didn't go out. Polls every 5s while mounted. */}
+      <div className="mt-3">
+        <div className="mb-1.5 text-[12.5px] font-medium text-foreground">
+          WeChat 渠道详情
+        </div>
+        <WeChatHealthPanel />
+      </div>
     </SettingGroup>
   );
 }

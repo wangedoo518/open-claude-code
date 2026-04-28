@@ -83,4 +83,12 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/desktop/wechat/outbox",
             get(list_wechat_outbox_handler),
         )
+        // R1.3 reliability gate · aggregate health snapshot. Returns
+        // a single derived "connected / degraded / disconnected /
+        // not_configured" verdict plus the per-channel detail the UI
+        // needs to render the WeChatHealthPanel.
+        .route(
+            "/api/desktop/wechat/health",
+            get(wechat_health_handler),
+        )
 }

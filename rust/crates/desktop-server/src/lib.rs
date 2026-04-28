@@ -57,7 +57,8 @@ pub(crate) use handlers::wechat::{
     list_wechat_accounts_handler, list_wechat_outbox_handler, load_kefu_config_handler,
     save_kefu_config_handler, start_kefu_monitor_handler, start_kefu_pipeline_handler,
     start_wechat_login_handler, stop_kefu_monitor_handler, wechat_bridge_config_get_handler,
-    wechat_bridge_config_post_handler, wechat_bridge_health_handler, wechat_login_status_handler,
+    wechat_bridge_config_post_handler, wechat_bridge_health_handler, wechat_health_handler,
+    wechat_login_status_handler,
 };
 pub use handlers::wechat::{BridgeHealthResponse, ChannelHealth};
 pub(crate) use handlers::wiki_crud::{

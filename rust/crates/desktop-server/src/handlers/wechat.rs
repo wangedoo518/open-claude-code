@@ -506,6 +506,100 @@ pub(crate) async fn cancel_kefu_pipeline_handler(
     Json(serde_json::json!({ "ok": true }))
 }
 
+/// `GET /api/desktop/wechat/health` — aggregate WeChat reliability
+/// snapshot for the R1.3 health panel. Combines:
+///   * kefu monitor status (configured / running / last poll /
+///     consecutive failures / last error).
+///   * iLink account roster (each account's monitor state).
+///   * outbox counts (pending / sending / sent / failed / cancelled).
+///   * an overall derived `health` verdict so the UI can render a
+///     single "Connected / Degraded / Disconnected / Not configured"
+///     pill without re-implementing the rules.
+///
+/// The verdict rules (worst wins):
+///   * `not_configured` — no kefu config AND no iLink accounts yet.
+///   * `disconnected` — at least one configured channel is not
+///     running (monitor stopped, login expired, transport down).
+///   * `degraded` — every configured channel runs, but at least one
+///     has `consecutive_failures > 0` OR the outbox has any entry
+///     in `Failed` state.
+///   * `connected` — every configured channel runs cleanly and
+///     outbox has no `Failed` rows.
+///
+/// Frontend reads this every 5s while the panel is mounted (polling
+/// is sufficient — wechat reliability changes are slow). No manual
+/// retry / cancel mutation here; those are R1.3 follow-up.
+pub(crate) async fn wechat_health_handler(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // 1. Kefu snapshot.
+    let kefu = state.desktop.kefu_status().await;
+
+    // 2. iLink accounts. We surface each account's `status` (the
+    //    same wire string the accounts list endpoint emits) so the
+    //    UI can show a row per bot.
+    let ilink_accounts = state.desktop.list_wechat_accounts_summary().await;
+    let ilink_payload: Vec<serde_json::Value> = ilink_accounts
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "id": a.id,
+                "display_name": a.display_name,
+                "status": a.status.wire_tag(),
+                "last_active_at": a.saved_at,
+            })
+        })
+        .collect();
+
+    // 3. Outbox counts (cheap — single mutex-guarded read of the
+    //    outbox file).
+    let wiki_root = wiki_store::default_root();
+    let _ = wiki_store::init_wiki(&wiki_root);
+    let paths = wiki_store::WikiPaths::resolve(&wiki_root);
+    let outbox = wiki_store::wechat_outbox::outbox_counts(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("outbox_counts failed: {e}"),
+            })),
+        )
+    })?;
+
+    // 4. Derived overall verdict.
+    let any_configured = kefu.configured || !ilink_accounts.is_empty();
+    let any_disconnected = (kefu.configured && !kefu.monitor_running)
+        || ilink_accounts
+            .iter()
+            .any(|a| !matches!(a.status.wire_tag(), "connected"));
+    let any_degraded = kefu.consecutive_failures > 0
+        || ilink_accounts.iter().any(|_| {
+            // We don't yet expose per-account consecutive_failures
+            // through `WeChatAccountSummary`; treat any non-connected
+            // status as the disconnected branch instead. Future:
+            // surface `consecutive_failures` from MonitorStatus and
+            // reclassify here.
+            false
+        })
+        || outbox.failed > 0;
+
+    let health = if !any_configured {
+        "not_configured"
+    } else if any_disconnected {
+        "disconnected"
+    } else if any_degraded {
+        "degraded"
+    } else {
+        "connected"
+    };
+
+    Ok(Json(serde_json::json!({
+        "health": health,
+        "kefu": kefu,
+        "ilink_accounts": ilink_payload,
+        "outbox": outbox,
+    })))
+}
+
 /// `GET /api/desktop/wechat/outbox` — list every WeChat reply the
 /// system has tried (or is queued) to send, plus a summary counter.
 /// Powers the R1.2 reliability UI surface so users can see whether
