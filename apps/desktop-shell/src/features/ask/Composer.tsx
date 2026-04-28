@@ -956,7 +956,7 @@ export function Composer({
           "ask-composer-card relative overflow-visible rounded-2xl border bg-card shadow-[0_1px_8px_rgba(0,0,0,0.03)] transition-colors",
           isDragging
             ? "border-2 border-dashed border-primary/50 bg-primary/[0.03]"
-            : "border-border focus-within:border-ring",
+            : "border-border",
         )}
         data-ready={value.trim() || attachments.length > 0 ? "true" : "false"}
         data-turn-state={turnState}

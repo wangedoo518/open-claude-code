@@ -2098,6 +2098,7 @@
 
 .ask-composer-card {
   isolation: isolate;
+  border-color: rgba(44, 44, 42, 0.16);
   background:
     radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 7%, transparent), transparent 34%),
     linear-gradient(180deg, color-mix(in srgb, var(--color-card) 96%, transparent), color-mix(in srgb, var(--color-muted) 18%, var(--color-card)));
@@ -2127,13 +2128,23 @@
     transform 620ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.ask-composer-card:focus-within,
 .ask-composer-card[data-ready="true"] {
+  border-color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 24%, rgba(44, 44, 42, 0.18));
+}
+
+.ask-composer-card:focus-within {
+  border-color: color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 42%, rgba(44, 44, 42, 0.16));
   box-shadow:
     0 18px 42px color-mix(in srgb, var(--color-foreground) 7%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 11%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 18%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--deeptutor-primary, var(--claude-orange)) 7%, transparent),
     inset 0 1px 0 color-mix(in srgb, white 28%, transparent);
   transform: translateY(-1px);
+}
+
+.ask-composer-textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .ask-composer-card:focus-within::before {
