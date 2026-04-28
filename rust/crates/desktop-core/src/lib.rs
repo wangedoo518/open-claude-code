@@ -5653,6 +5653,110 @@ impl PersistedDesktopSession {
 // are cheap — the heavy work (long-polling, login waiting) runs in
 // background tokio tasks.
 
+/// R1.2 reliability gate · replay one outbox entry through its
+/// transport. Called once per due entry per worker tick from
+/// [`DesktopState::spawn_wechat_outbox_worker`].
+///
+/// Steps:
+///   1. Dispatch on `entry.transport`. R1.2 ships kefu only;
+///      iLink is a follow-up additive variant.
+///   2. Reconstruct the transport client from on-disk config.
+///      `KefuClient::new` is cheap (arc + http client); rebuilding
+///      it every tick gives up the access-token cache for
+///      simplicity — 30s ticks make refresh cost negligible.
+///   3. Claim → send → mark with classified error.
+///
+/// Failure modes that translate to terminal `Failed`:
+///   * Config missing (kefu config deleted, account un-enrolled) →
+///     `session_expired` kind, immediate Failed.
+///   * `errcode=…` in error string → `api` kind, immediate Failed.
+///
+/// Failure modes that bounce back to `Pending` with backoff:
+///   * Generic transport / timeout errors below
+///     `MAX_OUTBOX_ATTEMPTS`.
+async fn replay_outbox_entry(
+    paths: &wiki_store::WikiPaths,
+    entry: &wiki_store::wechat_outbox::OutboxEntry,
+) {
+    use wiki_store::wechat_outbox::{
+        mark_outbox_failed, mark_outbox_sending, mark_outbox_sent, OutboxLastError,
+        OutboxTransport,
+    };
+
+    match &entry.transport {
+        OutboxTransport::Kefu {
+            external_userid,
+            open_kfid,
+            msgid: _,
+        } => {
+            // Step 1: ensure the kefu config is present. Without it
+            // we cannot construct a client → terminal-fail with a
+            // clear "needs re-login" reason so the UI can guide the
+            // user.
+            let config = match wechat_kefu::load_config().ok().flatten() {
+                Some(c) => c,
+                None => {
+                    let err = OutboxLastError {
+                        kind: "session_expired".to_string(),
+                        message: "kefu config missing — re-login required".to_string(),
+                    };
+                    let _ = mark_outbox_failed(paths, entry.id, err);
+                    return;
+                }
+            };
+            let client = wechat_kefu::KefuClient::new(&config.corpid, &config.secret);
+
+            // Step 2: claim. Race with another worker / handler is
+            // safe — the `mark_outbox_sending` call is mutex-guarded
+            // and refuses non-`Pending` rows.
+            if let Err(e) = mark_outbox_sending(paths, entry.id, None) {
+                eprintln!(
+                    "[outbox worker] claim failed for #{}: {e} (likely raced with another tick)",
+                    entry.id
+                );
+                return;
+            }
+
+            // Step 3: actual network call.
+            match client.send_text(external_userid, open_kfid, &entry.content).await {
+                Ok(()) => {
+                    if let Err(e) = mark_outbox_sent(paths, entry.id) {
+                        eprintln!(
+                            "[outbox worker] mark_sent failed for #{}: {e}",
+                            entry.id
+                        );
+                    } else {
+                        eprintln!(
+                            "[outbox worker] replay #{} → Sent (attempt {})",
+                            entry.id,
+                            entry.attempts + 1
+                        );
+                    }
+                }
+                Err(send_err) => {
+                    let msg = send_err.to_string();
+                    let kind = if msg.contains("errcode=") {
+                        "api"
+                    } else if msg.to_lowercase().contains("timeout") {
+                        "timeout"
+                    } else {
+                        "transport"
+                    };
+                    let outbox_err = OutboxLastError {
+                        kind: kind.to_string(),
+                        message: msg,
+                    };
+                    eprintln!(
+                        "[outbox worker] replay #{} failed ({}): {} — backoff or terminal",
+                        entry.id, outbox_err.kind, outbox_err.message
+                    );
+                    let _ = mark_outbox_failed(paths, entry.id, outbox_err);
+                }
+            }
+        }
+    }
+}
+
 impl DesktopState {
     /// Spawn a long-poll WeChat monitor for `account_id`, wiring it
     /// to this state's session store via a [`DesktopAgentHandler`].
@@ -5953,6 +6057,70 @@ impl DesktopState {
             *self.kefu_callback_tx.write().await = None;
             eprintln!("[kefu] monitor stopped");
         }
+    }
+
+    /// R1.2 reliability gate · spawn the WeChat outbox replay worker.
+    ///
+    /// On first call:
+    ///   1. Reverts every `Sending` row in `_wechat_outbox.json` back
+    ///      to `Pending` (crash-recovery sweep — entries claimed but
+    ///      not delivered before a previous crash become retryable).
+    ///   2. Spawns a long-running tokio task whose tick interval is
+    ///      30s. Each tick scans for `Pending` rows whose
+    ///      `next_retry_at` is due (or unset), replays them through
+    ///      the transport client, and marks the result.
+    ///
+    /// Cancellation cascades from `monitor_cancel_token()` so a
+    /// process shutdown stops the worker cleanly.
+    ///
+    /// Idempotent — calling twice spawns one extra worker but the
+    /// second worker is harmless (mutex serialization keeps the
+    /// state machine consistent). Production calls this exactly
+    /// once from `desktop-server::main`.
+    pub async fn spawn_wechat_outbox_worker(&self) {
+        let cancel = self.monitor_cancel_token().await;
+        let wiki_root = wiki_store::default_root();
+        let _ = wiki_store::init_wiki(&wiki_root);
+        let paths = wiki_store::WikiPaths::resolve(&wiki_root);
+
+        // 1. Crash-recovery sweep on bootstrap. Synchronous so we
+        //    log the count before the worker tick begins.
+        match wiki_store::wechat_outbox::reconcile_outbox_on_startup(&paths) {
+            Ok(0) => {}
+            Ok(n) => eprintln!(
+                "[outbox worker] reconciled {n} stale Sending row(s) on startup"
+            ),
+            Err(e) => eprintln!("[outbox worker] reconcile failed: {e}"),
+        }
+
+        eprintln!("[outbox worker] spawning replay tick (30s)");
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => {
+                        eprintln!("[outbox worker] shutdown signal received, stopping");
+                        return;
+                    }
+                    () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                        let now = wiki_store::now_iso8601();
+                        let due = match wiki_store::wechat_outbox::list_pending_outbox_due(&paths, &now) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("[outbox worker] list_pending_outbox_due failed: {e}");
+                                continue;
+                            }
+                        };
+                        if due.is_empty() {
+                            continue;
+                        }
+                        eprintln!("[outbox worker] {} entr(ies) due for retry", due.len());
+                        for entry in due {
+                            replay_outbox_entry(&paths, &entry).await;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub async fn kefu_status(&self) -> wechat_kefu::KefuStatus {

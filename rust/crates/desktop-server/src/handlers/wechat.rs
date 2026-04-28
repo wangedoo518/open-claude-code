@@ -505,3 +505,58 @@ pub(crate) async fn cancel_kefu_pipeline_handler(
     state.desktop.cancel_kefu_pipeline().await;
     Json(serde_json::json!({ "ok": true }))
 }
+
+/// `GET /api/desktop/wechat/outbox` — list every WeChat reply the
+/// system has tried (or is queued) to send, plus a summary counter.
+/// Powers the R1.2 reliability UI surface so users can see whether
+/// any reply is stuck in `Pending` (transient retry pending) or
+/// `Failed` (permanent — needs manual retry / re-login / etc.).
+///
+/// Response shape:
+/// ```json
+/// {
+///   "entries": [ { "id": 12, "transport": "kefu", ... }, ... ],
+///   "counts": { "pending": 2, "sending": 0, "sent": 47,
+///               "failed": 1, "cancelled": 0 }
+/// }
+/// ```
+pub(crate) async fn list_wechat_outbox_handler(
+    State(_state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // The outbox lives at `wiki_store::default_root() / .clawwiki /
+    // _wechat_outbox.json`. Resolve the path the same way the worker
+    // does so dev / test isolation via `CLAWWIKI_HOME` env var works.
+    let wiki_root = wiki_store::default_root();
+    if let Err(e) = wiki_store::init_wiki(&wiki_root) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("init_wiki failed: {e}"),
+            })),
+        ));
+    }
+    let paths = wiki_store::WikiPaths::resolve(&wiki_root);
+
+    let entries =
+        wiki_store::wechat_outbox::list_outbox_entries(&paths).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("list_outbox_entries failed: {e}"),
+                })),
+            )
+        })?;
+    let counts = wiki_store::wechat_outbox::outbox_counts(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("outbox_counts failed: {e}"),
+            })),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "entries": entries,
+        "counts": counts,
+    })))
+}

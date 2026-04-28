@@ -31,6 +31,144 @@ const TURN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60
 #[allow(dead_code)]
 const INTER_CHUNK_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
+/// R1.2 reliability gate · classify a [`KefuClientError`] into the
+/// outbox's coarse error kinds (`api` / `timeout` / `transport`) so
+/// the worker can apply the right retry policy.
+///
+/// `KefuClientError::Api(String)` is the only variant the kefu client
+/// emits today — it lumps HTTP, body, and API errors together. We
+/// inspect the message prefix to recover the distinction:
+///   * `"send_msg errcode=…"` → API errcode (terminal, user blocked,
+///     auth expired, etc.). Worker stops retrying.
+///   * contains `timeout` (case-insensitive) → request never finished.
+///     Treated as transport (retry helps).
+///   * otherwise → transport (HTTP / DNS / TCP flap). Retry helps.
+fn classify_kefu_error(
+    err: &super::client::KefuClientError,
+) -> wiki_store::wechat_outbox::OutboxLastError {
+    let msg = err.to_string();
+    let kind = if msg.contains("errcode=") {
+        "api"
+    } else if msg.to_lowercase().contains("timeout") {
+        "timeout"
+    } else {
+        "transport"
+    };
+    wiki_store::wechat_outbox::OutboxLastError {
+        kind: kind.to_string(),
+        message: msg,
+    }
+}
+
+/// R1.2 reliability gate · single durable-send entry point for the
+/// kefu transport. Every outbound reply (commands, queries, URL
+/// ingest replies, text-ingest replies, conflict notifications)
+/// routes through this helper so:
+///
+///   1. The plaintext content lands in `_wechat_outbox.json` BEFORE
+///      the network call. A crash mid-send is recoverable by
+///      [`wiki_store::wechat_outbox::reconcile_outbox_on_startup`].
+///   2. Send-success → `mark_outbox_sent` (terminal, idempotent).
+///   3. Send-failure → `mark_outbox_failed` with a classified error
+///      kind. The replay worker (R1.2 step 3) will retry with
+///      exponential backoff; terminal errors (api / session_expired)
+///      land as `Failed` immediately.
+///
+/// Without `paths` (legacy boot path before `with_wiki_paths` is
+/// called) it falls back to a direct, lossy send so we never drop
+/// a reply just because the outbox isn't wired up yet. Production
+/// always passes `Some` since `KefuDesktopHandler::new` immediately
+/// chains `with_wiki_paths`.
+async fn send_kefu_durably(
+    paths: Option<&wiki_store::WikiPaths>,
+    client: &KefuClient,
+    userid: &str,
+    open_kfid: &str,
+    content: &str,
+) {
+    let Some(paths) = paths else {
+        if let Err(e) = client.send_text(userid, open_kfid, content).await {
+            eprintln!(
+                "[kefu handler] send without outbox failed for userid={userid}: {e}"
+            );
+        }
+        return;
+    };
+
+    // Step 1: enqueue. Durability invariant — if this fails we still
+    // attempt a direct send so the user is not silently dropped, but
+    // we cannot recover on retry.
+    let entry = match wiki_store::wechat_outbox::append_outbox_entry(
+        paths,
+        wiki_store::wechat_outbox::OutboxTransport::Kefu {
+            external_userid: userid.to_string(),
+            open_kfid: open_kfid.to_string(),
+            msgid: None,
+        },
+        content,
+    ) {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!(
+                "[kefu handler] outbox enqueue failed ({err}) — direct fallback for userid={userid}"
+            );
+            if let Err(send_err) = client.send_text(userid, open_kfid, content).await {
+                eprintln!(
+                    "[kefu handler] direct send fallback also failed: {send_err}"
+                );
+            }
+            return;
+        }
+    };
+
+    // Step 2: claim → bumps attempts, transitions to Sending.
+    if let Err(err) =
+        wiki_store::wechat_outbox::mark_outbox_sending(paths, entry.id, None)
+    {
+        eprintln!(
+            "[kefu handler] outbox claim failed for #{}: {err} — direct fallback",
+            entry.id
+        );
+        if let Err(send_err) = client.send_text(userid, open_kfid, content).await {
+            eprintln!(
+                "[kefu handler] direct send fallback also failed: {send_err}"
+            );
+        }
+        return;
+    }
+
+    // Step 3: actual network call.
+    match client.send_text(userid, open_kfid, content).await {
+        Ok(()) => {
+            if let Err(err) =
+                wiki_store::wechat_outbox::mark_outbox_sent(paths, entry.id)
+            {
+                eprintln!(
+                    "[kefu handler] outbox mark_sent failed for #{}: {err}",
+                    entry.id
+                );
+            }
+        }
+        Err(send_err) => {
+            let outbox_err = classify_kefu_error(&send_err);
+            eprintln!(
+                "[kefu handler] send failed for outbox#{} ({}: {}) — replay worker will retry",
+                entry.id, outbox_err.kind, outbox_err.message
+            );
+            // Mark for retry (or terminal Failed if attempts >= cap
+            // or kind is `api`). Best-effort: any disk-write error
+            // here is logged but not surfaced — the row stays in
+            // `Sending` and will be reverted to `Pending` on next
+            // startup reconcile.
+            let _ = wiki_store::wechat_outbox::mark_outbox_failed(
+                paths,
+                entry.id,
+                outbox_err,
+            );
+        }
+    }
+}
+
 /// Handler that bridges kefu messages into ClaudeWiki desktop sessions.
 #[allow(dead_code)]
 pub struct KefuDesktopHandler {
@@ -214,13 +352,14 @@ impl KefuMessageHandler for KefuDesktopHandler {
             "event" => return,
             other => {
                 eprintln!("[kefu handler] unsupported msgtype={other}");
-                let _ = client
-                    .send_text(
-                        &external_userid,
-                        open_kfid,
-                        &unsupported_msgtype_reply(other),
-                    )
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    &external_userid,
+                    open_kfid,
+                    &unsupported_msgtype_reply(other),
+                )
+                .await;
                 return;
             }
         };
@@ -324,18 +463,28 @@ impl KefuDesktopHandler {
         question: &str,
     ) {
         if question.is_empty() {
-            let _ = client
-                .send_text(userid, open_kfid, "请在 ? 后面输入问题")
-                .await;
+            send_kefu_durably(
+                self.wiki_paths.as_ref(),
+                client,
+                userid,
+                open_kfid,
+                "请在 ? 后面输入问题",
+            )
+            .await;
             return;
         }
 
         let paths = match &self.wiki_paths {
             Some(p) => p.clone(),
             None => {
-                let _ = client
-                    .send_text(userid, open_kfid, "❌ 知识库未初始化")
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    "❌ 知识库未初始化",
+                )
+                .await;
                 return;
             }
         };
@@ -365,19 +514,29 @@ impl KefuDesktopHandler {
                      你的知识库中还没有关于「{question}」的内容。\n\
                      试试先投喂一些相关资料？"
                 );
-                let _ = client.send_text(userid, open_kfid, &reply).await;
+                send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
                 return;
             }
             Ok(Err(e)) => {
-                let _ = client
-                    .send_text(userid, open_kfid, &format!("❌ 查询失败: {e}"))
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ 查询失败: {e}"),
+                )
+                .await;
                 return;
             }
             Err(e) => {
-                let _ = client
-                    .send_text(userid, open_kfid, &format!("❌ 查询失败: {e}"))
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ 查询失败: {e}"),
+                )
+                .await;
                 return;
             }
         };
@@ -387,7 +546,7 @@ impl KefuDesktopHandler {
 
         let reply =
             format!("💡 {question}\n\n{answer}{sources_section}\n\n—— 基于 ClawWiki 知识库回答");
-        let _ = client.send_text(userid, open_kfid, &reply).await;
+        send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
         eprintln!("[kefu handler] query replied ({} chars)", reply.len());
     }
 
@@ -396,9 +555,14 @@ impl KefuDesktopHandler {
         let paths = match &self.wiki_paths {
             Some(p) => p.clone(),
             None => {
-                let _ = client
-                    .send_text(userid, open_kfid, "❌ 知识库未初始化")
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    "❌ 知识库未初始化",
+                )
+                .await;
                 return;
             }
         };
@@ -451,7 +615,7 @@ impl KefuDesktopHandler {
             _ => format!("未知命令: {cmd}\n可用: {KEFU_COMMAND_RECENT} {KEFU_COMMAND_STATS}"),
         };
 
-        let _ = client.send_text(userid, open_kfid, &reply).await;
+        send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
     }
 
     /// URL → url_ingest orchestrator → absorb → 冲突检查 → 回复
@@ -474,9 +638,14 @@ impl KefuDesktopHandler {
         let paths = match &self.wiki_paths {
             Some(p) => p.clone(),
             None => {
-                let _ = client
-                    .send_text(userid, open_kfid, "❌ 知识库未初始化")
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    "❌ 知识库未初始化",
+                )
+                .await;
                 return;
             }
         };
@@ -521,7 +690,7 @@ impl KefuDesktopHandler {
 
                 // Step 4: Reply confirmation.
                 let reply = format!("✓ 已入库「{display_title}」{absorb_reply}");
-                let _ = client.send_text(userid, open_kfid, &reply).await;
+                send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
                 eprintln!(
                     "[kefu handler] URL ingested: {} → raw #{}",
                     url, raw_entry.id
@@ -546,7 +715,7 @@ impl KefuDesktopHandler {
                 let display_title = raw_entry.slug.clone();
                 let absorb_reply = trigger_absorb_internal(raw_entry.id).await;
                 let reply = format!("✓ 已入库「{display_title}」{absorb_reply}");
-                let _ = client.send_text(userid, open_kfid, &reply).await;
+                send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
                 eprintln!(
                     "[kefu handler] URL ingested (dedupe): {} → raw #{}",
                     url, raw_entry.id
@@ -577,7 +746,7 @@ impl KefuDesktopHandler {
                     raw_entry.id,
                     decision.tag()
                 );
-                let _ = client.send_text(userid, open_kfid, &reply).await;
+                send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
                 eprintln!(
                     "[kefu handler] URL reused (canonical dedupe): {} → raw #{} [{}]",
                     url,
@@ -587,35 +756,47 @@ impl KefuDesktopHandler {
             }
             crate::url_ingest::IngestOutcome::RejectedQuality { reason } => {
                 eprintln!("[kefu handler] URL content rejected: {reason}");
-                let _ = client
-                    .send_text(
-                        userid,
-                        open_kfid,
-                        &format!("❌ 链接抓取失败（{reason}）\n请手动复制内容发送"),
-                    )
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ 链接抓取失败（{reason}）\n请手动复制内容发送"),
+                )
+                .await;
             }
             crate::url_ingest::IngestOutcome::FetchFailed { error } => {
                 eprintln!("[kefu handler] URL fetch failed: {error}");
-                let _ = client
-                    .send_text(
-                        userid,
-                        open_kfid,
-                        &format!("❌ 无法获取链接内容: {error}\n请手动复制内容发送"),
-                    )
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ 无法获取链接内容: {error}\n请手动复制内容发送"),
+                )
+                .await;
             }
             crate::url_ingest::IngestOutcome::PrerequisiteMissing { dep, hint } => {
                 eprintln!("[kefu handler] URL ingest prerequisite missing: {dep} — {hint}");
-                let _ = client
-                    .send_text(userid, open_kfid, &format!("❌ 缺少依赖 {dep}\n{hint}"))
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ 缺少依赖 {dep}\n{hint}"),
+                )
+                .await;
             }
             crate::url_ingest::IngestOutcome::InvalidUrl { reason } => {
                 eprintln!("[kefu handler] URL invalid: {reason}");
-                let _ = client
-                    .send_text(userid, open_kfid, &format!("❌ URL 无效: {reason}"))
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ URL 无效: {reason}"),
+                )
+                .await;
             }
             crate::url_ingest::IngestOutcome::FallbackToText { .. } => {
                 // `allow_text_fallback: None` above guarantees this
@@ -640,24 +821,30 @@ impl KefuDesktopHandler {
         let paths = match &self.wiki_paths {
             Some(p) => p.clone(),
             None => {
-                let _ = client
-                    .send_text(userid, open_kfid, "❌ 知识库未初始化")
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    "❌ 知识库未初始化",
+                )
+                .await;
                 return;
             }
         };
 
         let char_count = text.chars().count();
         if !should_ingest_text(text) {
-            let _ = client
-                .send_text(
-                    userid,
-                    open_kfid,
-                    &format!(
-                        "消息太短（< {KEFU_TEXT_MIN_CHARS} 字），未入库。请发送更多内容或链接。"
-                    ),
-                )
-                .await;
+            send_kefu_durably(
+                self.wiki_paths.as_ref(),
+                client,
+                userid,
+                open_kfid,
+                &format!(
+                    "消息太短（< {KEFU_TEXT_MIN_CHARS} 字），未入库。请发送更多内容或链接。"
+                ),
+            )
+            .await;
             return;
         }
 
@@ -667,9 +854,14 @@ impl KefuDesktopHandler {
         let raw_entry = match wiki_store::write_raw_entry(&paths, "wechat-text", &slug, text, &fm) {
             Ok(e) => e,
             Err(e) => {
-                let _ = client
-                    .send_text(userid, open_kfid, &format!("❌ 入库失败: {e}"))
-                    .await;
+                send_kefu_durably(
+                    self.wiki_paths.as_ref(),
+                    client,
+                    userid,
+                    open_kfid,
+                    &format!("❌ 入库失败: {e}"),
+                )
+                .await;
                 return;
             }
         };
@@ -685,7 +877,7 @@ impl KefuDesktopHandler {
         let absorb_reply = trigger_absorb_internal(raw_entry.id).await;
 
         let reply = format!("✓ 已记录（{char_count} 字）{absorb_reply}");
-        let _ = client.send_text(userid, open_kfid, &reply).await;
+        send_kefu_durably(self.wiki_paths.as_ref(), client, userid, open_kfid, &reply).await;
         eprintln!("[kefu handler] text ingested: raw #{}", raw_entry.id);
 
         // Delayed conflict check.
@@ -745,7 +937,7 @@ async fn check_and_notify_conflicts(
         return;
     };
 
-    let _ = client.send_text(userid, open_kfid, &msg).await;
+    send_kefu_durably(Some(paths), client, userid, open_kfid, &msg).await;
     eprintln!("[kefu handler] conflict notification sent");
 }
 

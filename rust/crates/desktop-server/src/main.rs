@@ -131,6 +131,13 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // Channel B: auto-start kefu monitor if configured
     state.auto_start_kefu_monitor().await;
 
+    // R1.2 reliability gate · spawn the durable WeChat outbox replay
+    // worker. Reverts any `Sending` rows from a previous crash to
+    // `Pending`, then ticks every 30s to retry transient failures
+    // and surface terminal ones. Cancellation cascades from
+    // `set_shutdown_cancel` above.
+    state.spawn_wechat_outbox_worker().await;
+
     // Read the auth token from the spawn env if the Tauri shell
     // provided one; otherwise fabricate one so the handler still has a
     // valid credential to compare against (standalone `cargo run -p

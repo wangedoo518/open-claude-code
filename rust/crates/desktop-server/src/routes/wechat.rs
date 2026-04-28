@@ -75,4 +75,12 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/desktop/wechat-kefu/pipeline/cancel",
             post(cancel_kefu_pipeline_handler),
         )
+        // R1.2 reliability gate · durable outbox read endpoint. Lists
+        // every WeChat reply the system tried or queued to send, so
+        // the UI can surface "1 failed / 2 pending" instead of users
+        // discovering missed replies anecdotally.
+        .route(
+            "/api/desktop/wechat/outbox",
+            get(list_wechat_outbox_handler),
+        )
 }
