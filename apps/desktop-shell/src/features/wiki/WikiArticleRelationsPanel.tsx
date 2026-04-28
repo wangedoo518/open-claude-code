@@ -15,10 +15,8 @@
  * UX rules (from the G1 brief):
  *   - Panels with zero items are omitted from the render tree so the
  *     article doesn't grow an empty "Relations" header.
- *   - R1 sprint update: when *all three* lists are empty we no longer
- *     return `null`. Rendering a compact EmptyState keeps the G1
- *     feature discoverable (users see the affordance exists) while
- *     explaining the two conditions that populate it.
+ *   - Sprint A update: when *all three* lists are empty, render one
+ *     compact line so the article ends cleanly.
  *   - No modal / popover / extra layer: every item is a plain button
  *     that hands off to `navigateToWikiPage` with a per-panel
  *     WikiNavContext so future telemetry can distinguish origins.
@@ -30,7 +28,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Link2, Sparkles } from "lucide-react";
 
 import { getWikiPageGraph, type PageGraphNode, type RelatedPageHit } from "@/lib/tauri";
-import { EmptyState } from "@/components/ui/empty-state";
 import { navigateToWikiPage, type WikiNavContext } from "./navigate-helpers";
 import { WikiLineagePanel } from "./WikiLineagePanel";
 
@@ -49,38 +46,14 @@ export function WikiArticleRelationsPanel({ slug }: WikiArticleRelationsPanelPro
   const backlinks = data?.backlinks ?? [];
   const related = data?.related ?? [];
 
-  // R1 sprint — when all three lists are empty, show an explanatory
-  // EmptyState instead of hiding the section entirely. Keeps the G1
-  // three-panel feature discoverable and teaches the user the two
-  // ways relations get populated (explicit links + shared raw source).
-  // P1 sprint — WikiLineagePanel is rendered as a 4th section below
-  // regardless of whether the G1 relations list is empty.
+  // Sprint A: keep the empty state short so it does not interrupt
+  // the reading flow. P1 lineage still renders below it.
   if (outgoing.length === 0 && backlinks.length === 0 && related.length === 0) {
     return (
       <section className="wiki-relations-panel mt-12 border-t border-[var(--color-border)] pt-6">
-        <EmptyState
-          size="compact"
-          icon={Link2}
-          title="本页还没有关系数据"
-          description={
-            <>
-              这里会显示:
-              <br />
-              · 本页链接到的其他 Wiki 页 (Outgoing)
-              <br />
-              · 链接到本页的其他 Wiki 页 (Backlinks)
-              <br />
-              · 基于「共同链接」或「共享素材源」推导的相关页 (Related)
-              <br />
-              <br />
-              一旦在其他页用{" "}
-              <code className="rounded bg-[var(--color-muted)] px-1 py-0.5 text-[11px]">
-                [text](concepts/slug.md)
-              </code>{" "}
-              格式链接到本页，或两页引用同一条 raw 素材，关系就会自动显示。
-            </>
-          }
-        />
+        <div className="py-2 text-sm italic text-muted-foreground">
+          暂无关系
+        </div>
         <WikiLineagePanel slug={slug} />
       </section>
     );

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { getWikiGraph, listWikiPages } from "@/api/wiki/repository";
 import type { WikiPageSummary } from "@/api/wiki/types";
+import { ConfidenceBadge } from "./components/ConfidenceBadge";
 
 type SortMode = "recent" | "oldest" | "words" | "refs";
 type FilterMode = "all" | "concept" | "derived";
@@ -402,6 +403,7 @@ export function KnowledgePagesList() {
                                 </span>
                                 <span>{formatKnowledgeTime(page.created_at)}</span>
                                 <span>{estimateWords(page.byte_size)}</span>
+                                <ConfidenceBadge confidence={page.confidence} />
                               </span>
                             </span>
                             <ChevronRight

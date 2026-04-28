@@ -16,9 +16,10 @@ import {
   useWikiLinkRenderer,
 } from "./wiki-link-utils";
 import { WikiArticleRelationsPanel } from "./WikiArticleRelationsPanel";
+import { ConfidenceBadge } from "./components/ConfidenceBadge";
 
 /* ── Reading time ──────────────────────────────────────────────── */
-function estimateReadingTime(body: string): string {
+function estimateReadingMinutes(body: string): number {
   // CJK: 400 chars/min; ASCII: 200 words/min
   let cjkChars = 0;
   for (const ch of body) {
@@ -28,8 +29,12 @@ function estimateReadingTime(body: string): string {
     .split(/\s+/)
     .filter((w) => w.length > 0 && w.charCodeAt(0) <= 127).length;
 
-  const minutes = Math.ceil(cjkChars / 400 + asciiWords / 200);
-  return minutes <= 1 ? "1 min" : `${minutes} min`;
+  return Math.max(1, Math.ceil(cjkChars / 400 + asciiWords / 200));
+}
+
+function localizeReadingTime(minutes: number): string {
+  if (minutes < 1) return "1 分钟内阅读";
+  return `${Math.round(minutes)} 分钟阅读`;
 }
 
 /* ── Category badge colors ─────────────────────────────────────── */
@@ -45,19 +50,19 @@ function formatShortDate(value?: string | null): string | null {
   return value.slice(0, 10);
 }
 
-function confidenceMeta(value?: number): { label: string; className: string } | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const clamped = Math.max(0, Math.min(1, value));
-  const percent = Math.round(clamped * 100);
-  const tier =
-    clamped >= 0.85 ? "high" : clamped >= 0.5 ? "medium" : clamped > 0 ? "low" : "unknown";
-  const className =
-    tier === "high"
-      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : tier === "medium"
-        ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-        : "border-border bg-muted/60 text-muted-foreground";
-  return { label: `confidence ${percent}%`, className };
+function formatVerifiedDate(value?: string | null): string | null {
+  const date = formatShortDate(value);
+  return date ? `已于 ${date} 验证` : null;
+}
+
+function localizePageKind(kind: string): string {
+  const map: Record<string, string> = {
+    concept: "概念",
+    people: "人物",
+    topic: "主题",
+    compare: "对比",
+  };
+  return map[kind] ?? kind;
 }
 
 /* ── Markdown custom components ────────────────────────────────── */
@@ -120,10 +125,9 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   const { summary, body } = data;
   const category = summary.category ?? "concept";
   const categoryStyle = CATEGORY_STYLES[category] ?? CATEGORY_STYLES.concept;
-  const readingTime = estimateReadingTime(body);
+  const readingTime = localizeReadingTime(estimateReadingMinutes(body));
   const expandedBody = preprocessWikilinks(body);
-  const confidence = confidenceMeta(summary.confidence);
-  const lastVerified = formatShortDate(summary.last_verified);
+  const lastVerified = formatVerifiedDate(summary.last_verified);
 
   return (
     <div className="mx-auto max-w-[720px] px-8 py-6">
@@ -135,28 +139,23 @@ export function WikiArticle({ slug }: WikiArticleProps) {
       {/* Metadata row — component-spec.md §3.3 */}
       <div className="mb-6 flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className={`rounded px-2 py-0.5 text-[10px] font-medium ${categoryStyle}`}>
-          {category}
+          {localizePageKind(category)}
         </span>
         <span>&middot;</span>
         <span>{summary.created_at?.slice(0, 10) ?? "—"}</span>
         <span>&middot;</span>
-        <span>{readingTime} read</span>
-        {confidence && (
+        <span>{readingTime}</span>
+        {summary.confidence != null && (
           <>
             <span>&middot;</span>
-            <span
-              className={`rounded border px-2 py-0.5 text-[10px] font-medium ${confidence.className}`}
-              title="Automatically computed from source count, freshness, and conflicts"
-            >
-              {confidence.label}
-            </span>
+            <ConfidenceBadge confidence={summary.confidence} />
           </>
         )}
         {lastVerified && (
           <>
             <span>&middot;</span>
-            <span title="Last verified by the maintainer pipeline">
-              verified {lastVerified}
+            <span title="由知识维护流程记录的最近验证时间">
+              {lastVerified}
             </span>
           </>
         )}
