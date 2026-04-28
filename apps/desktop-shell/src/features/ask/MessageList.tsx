@@ -216,6 +216,8 @@ export const MessageList = memo(function MessageList({
     >
       {virtualItems.map((virtualItem) => {
         const item = items[virtualItem.index];
+        if (!item) return null;
+
         return (
           <div
             key={item.key}

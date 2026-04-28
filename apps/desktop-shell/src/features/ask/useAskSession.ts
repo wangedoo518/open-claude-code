@@ -62,6 +62,12 @@ const askSessionKeys = {
     ["clawwiki", "ask", "session", id ?? "none"] as const,
 };
 
+function isUsableSessionDetail(detail: unknown): detail is DesktopSessionDetail {
+  if (!detail || typeof detail !== "object") return false;
+  const candidate = detail as { session?: { messages?: unknown } };
+  return Array.isArray(candidate.session?.messages);
+}
+
 function readActiveSessionId(): string | null {
   try {
     const raw = window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
@@ -205,6 +211,11 @@ export function useAskSession(): UseAskSessionResult {
       return created.session;
     },
     onSuccess: (session) => {
+      if (!isUsableSessionDetail(session)) {
+        console.warn("[ask] create/ensure returned malformed session detail");
+        setErrorMessage("Session response was malformed");
+        return;
+      }
       writeActiveSessionId(session.id);
       setActiveId(session.id);
       queryClient.setQueryData(askSessionKeys.detail(session.id), session);
@@ -276,6 +287,15 @@ export function useAskSession(): UseAskSessionResult {
       return appendMessage(sessionId, text, mode ? { mode } : undefined);
     },
     onSuccess: (response, variables) => {
+      if (!isUsableSessionDetail(response.session)) {
+        console.warn("[ask] append returned malformed session detail", {
+          sessionId: variables.sessionId,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: askSessionKeys.detail(variables.sessionId),
+        });
+        return;
+      }
       queryClient.setQueryData(
         askSessionKeys.detail(variables.sessionId),
         response.session
@@ -330,7 +350,13 @@ export function useAskSession(): UseAskSessionResult {
         idToUse = created.id;
       }
       const next = await bindSourceToSession(idToUse, source);
-      queryClient.setQueryData(askSessionKeys.detail(idToUse), next);
+      if (isUsableSessionDetail(next)) {
+        queryClient.setQueryData(askSessionKeys.detail(idToUse), next);
+      } else {
+        void queryClient.invalidateQueries({
+          queryKey: askSessionKeys.detail(idToUse),
+        });
+      }
       setErrorMessage(undefined);
       return next;
     },

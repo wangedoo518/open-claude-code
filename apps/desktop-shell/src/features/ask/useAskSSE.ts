@@ -17,10 +17,10 @@ import { useStreamingStore } from "@/state/streaming-store";
 import { usePermissionsStore } from "@/state/permissions-store";
 import type { DesktopSessionEvent, DesktopSessionDetail } from "@/lib/tauri";
 
-function isUsableSessionDetail(
-  detail: DesktopSessionDetail | undefined,
-): detail is DesktopSessionDetail {
-  return Array.isArray(detail?.session?.messages);
+function isUsableSessionDetail(detail: unknown): detail is DesktopSessionDetail {
+  if (!detail || typeof detail !== "object") return false;
+  const candidate = detail as { session?: { messages?: unknown } };
+  return Array.isArray(candidate.session?.messages);
 }
 
 export function useAskSSE(
@@ -45,9 +45,13 @@ export function useAskSSE(
     // Already subscribed to this session
     if (controllerRef.current) return;
 
+    let disposed = false;
+
     const controller = subscribeToSessionEvents(
       sessionId,
       (event: DesktopSessionEvent) => {
+        if (disposed) return;
+
         switch (event.type) {
           case "text_delta":
             useStreamingStore.getState().appendStreamingContent(event.content);
@@ -85,7 +89,13 @@ export function useAskSSE(
               ["clawwiki", "ask", "session", sessionId],
               (prev: DesktopSessionDetail | undefined) => {
                 const next = event.session;
-                if (!isUsableSessionDetail(next)) return prev ?? next;
+                if (!isUsableSessionDetail(next)) {
+                  console.warn(
+                    "[ask-sse] dropped malformed session snapshot",
+                    { sessionId },
+                  );
+                  return prev;
+                }
                 if (!isUsableSessionDetail(prev)) return next;
                 return {
                   ...next,
@@ -129,6 +139,8 @@ export function useAskSSE(
         }
       },
       (error) => {
+        if (disposed) return;
+
         console.warn("[ask-sse] connection error, falling back to polling", error.message);
         if (sessionId) {
           void queryClient.invalidateQueries({
@@ -144,6 +156,7 @@ export function useAskSSE(
     controllerRef.current = controller;
 
     return () => {
+      disposed = true;
       controller.abort();
       controllerRef.current = null;
       useStreamingStore.getState().clearStreamingContent();

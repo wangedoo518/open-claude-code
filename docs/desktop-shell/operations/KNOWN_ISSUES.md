@@ -3,7 +3,7 @@ title: Desktop Shell Known Issues
 doc_type: operation
 status: active
 owner: desktop-shell
-last_verified: 2026-04-27
+last_verified: 2026-04-28
 source_of_truth: true
 related:
   - docs/desktop-shell/operations/README.md
@@ -49,6 +49,9 @@ Current behavior:
 - Interrupting a streaming response keeps the page mounted.
 - The partial response remains visible with the stopped marker.
 - The composer becomes usable again and a new message can be sent.
+- Re-verified on 2026-04-28 with 25 interrupt attempts across sending, thinking,
+  tool-running, tool-waiting, and streaming windows: 0 error boundaries and 0
+  browser console errors.
 
 ### Header elapsed time stuck at `0.0s`
 

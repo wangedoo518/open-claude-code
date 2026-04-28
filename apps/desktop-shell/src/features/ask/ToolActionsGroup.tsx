@@ -104,8 +104,9 @@ export const ToolActionsGroup = memo(function ToolActionsGroup({
 }: ToolActionsGroupProps) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const wasStreamingRef = useRef(isStreaming);
+  const safeMessages = Array.isArray(messages) ? messages : [];
 
-  const entries = useMemo(() => pairToolMessages(messages), [messages]);
+  const entries = useMemo(() => pairToolMessages(safeMessages), [safeMessages]);
   const stats = useMemo(() => summarize(entries), [entries]);
 
   // Auto-collapse when streaming ends
