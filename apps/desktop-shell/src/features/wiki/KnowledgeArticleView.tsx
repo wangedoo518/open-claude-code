@@ -16,6 +16,7 @@
 import { ChevronLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 import { WikiArticle } from "./WikiArticle";
+import { WikiArticleRelationsPanel } from "./WikiArticleRelationsPanel";
 
 export function KnowledgeArticleView({ slug }: { slug: string }) {
   return (
@@ -31,7 +32,17 @@ export function KnowledgeArticleView({ slug }: { slug: string }) {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <WikiArticle slug={slug} />
+        <div className="mx-auto flex w-full max-w-[1040px] gap-8 px-6">
+          <article className="min-w-0 flex-1">
+            <WikiArticle slug={slug} />
+          </article>
+
+          <aside className="hidden w-64 flex-shrink-0 lg:block">
+            <div className="sticky top-8 py-6">
+              <WikiArticleRelationsPanel slug={slug} variant="sidebar" />
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );

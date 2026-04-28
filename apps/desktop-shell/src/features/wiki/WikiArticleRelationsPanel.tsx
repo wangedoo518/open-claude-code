@@ -25,17 +25,29 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Link2, Sparkles } from "lucide-react";
+import { ExternalLink, Link2, Network, Sparkles } from "lucide-react";
+import { Link } from "react-router-dom";
 
-import { getWikiPageGraph, type PageGraphNode, type RelatedPageHit } from "@/lib/tauri";
+import { getWikiPageGraph } from "@/lib/tauri";
+import { cn } from "@/lib/utils";
 import { navigateToWikiPage, type WikiNavContext } from "./navigate-helpers";
 import { WikiLineagePanel } from "./WikiLineagePanel";
 
 interface WikiArticleRelationsPanelProps {
   slug: string;
+  variant?: "default" | "sidebar";
 }
 
-export function WikiArticleRelationsPanel({ slug }: WikiArticleRelationsPanelProps) {
+type RelationItem = {
+  slug: string;
+  title: string;
+  reasons?: string[];
+};
+
+export function WikiArticleRelationsPanel({
+  slug,
+  variant = "default",
+}: WikiArticleRelationsPanelProps) {
   const { data } = useQuery({
     queryKey: ["wiki", "pages", "graph", slug] as const,
     queryFn: () => getWikiPageGraph(slug),
@@ -45,125 +57,138 @@ export function WikiArticleRelationsPanel({ slug }: WikiArticleRelationsPanelPro
   const outgoing = data?.outgoing ?? [];
   const backlinks = data?.backlinks ?? [];
   const related = data?.related ?? [];
-
-  // Sprint A: keep the empty state short so it does not interrupt
-  // the reading flow. P1 lineage still renders below it.
-  if (outgoing.length === 0 && backlinks.length === 0 && related.length === 0) {
-    return (
-      <section className="wiki-relations-panel mt-12 border-t border-[var(--color-border)] pt-6">
-        <div className="py-2 text-sm italic text-muted-foreground">
-          暂无关系
-        </div>
-        <WikiLineagePanel slug={slug} />
-      </section>
-    );
-  }
+  const isSidebar = variant === "sidebar";
+  const hasOutgoing = outgoing.length > 0;
+  const hasBacklinks = backlinks.length > 0;
+  const hasRelated = related.length > 0;
 
   return (
-    <section className="wiki-relations-panel mt-12 border-t border-[var(--color-border)] pt-6">
-      {outgoing.length > 0 && (
-        <RelationsNodeList
+    <section
+      className={cn(
+        "wiki-relations-panel",
+        isSidebar
+          ? "space-y-4 text-[13px]"
+          : "mt-12 border-t border-[var(--color-border)] pt-6 lg:hidden",
+      )}
+    >
+      {hasOutgoing && (
+        <RelationSection
           icon={<ExternalLink className="inline size-3" aria-hidden />}
-          labelZh="本页链接到"
-          labelEn="Outgoing"
+          title="链接到"
           items={outgoing}
           context="wiki-outgoing"
+          isSidebar={isSidebar}
         />
       )}
 
-      {backlinks.length > 0 && (
-        <RelationsNodeList
+      {hasBacklinks && (
+        <RelationSection
           icon={<Link2 className="inline size-3" aria-hidden />}
-          labelZh="链接到此页"
-          labelEn="Backlinks"
+          title="反链"
           items={backlinks}
           context="wiki-backlink"
+          isSidebar={isSidebar}
         />
       )}
 
-      {related.length > 0 && (
-        <RelatedList items={related} />
+      {hasRelated && (
+        <RelationSection
+          icon={<Sparkles className="inline size-3" aria-hidden />}
+          title="相关"
+          items={related}
+          context="wiki-related"
+          isSidebar={isSidebar}
+          showReasons
+        />
       )}
 
-      {/* P1 sprint — 4th section: lineage timeline. Rendered below the
-          existing G1 relations lists so provenance history is visible
-          on every wiki page without altering the G1 logic. */}
-      <WikiLineagePanel slug={slug} />
+      {!hasOutgoing && !hasBacklinks && !hasRelated && (
+        <div className={cn(
+          "italic text-muted-foreground",
+          isSidebar ? "text-xs" : "py-2 text-sm",
+        )}>
+          暂无关系
+        </div>
+      )}
+
+      <div className={cn(
+        "border-t border-[var(--color-border)]/70 pt-3",
+        isSidebar ? "mt-4" : "mt-6",
+      )}>
+        <Link
+          to={`/graph?focus=${encodeURIComponent(slug)}`}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-primary"
+        >
+          <Network className="size-3" strokeWidth={1.5} />
+          在图谱中查看
+        </Link>
+      </div>
+
+      {!isSidebar && <WikiLineagePanel slug={slug} />}
     </section>
   );
 }
 
-/* ── Plain link list (outgoing + backlinks share this shape) ────── */
-
-interface RelationsNodeListProps {
+interface RelationSectionProps {
   icon: React.ReactNode;
-  labelZh: string;
-  labelEn: string;
-  items: PageGraphNode[];
+  title: string;
+  items: RelationItem[];
   context: WikiNavContext;
+  isSidebar: boolean;
+  showReasons?: boolean;
 }
 
-function RelationsNodeList({
+function RelationSection({
   icon,
-  labelZh,
-  labelEn,
+  title,
   items,
   context,
-}: RelationsNodeListProps) {
+  isSidebar,
+  showReasons = false,
+}: RelationSectionProps) {
+  const limit = isSidebar ? 8 : 20;
+  const visibleItems = items.slice(0, limit);
+  const hiddenCount = Math.max(0, items.length - limit);
+
   return (
-    <div className="mb-5 last:mb-0">
-      <h3 className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-muted-foreground)]">
+    <section>
+      <h3
+        className={cn(
+          "mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+          !isSidebar && "mb-3",
+        )}
+      >
         {icon}
-        <span>
-          {labelZh} · {labelEn} ({items.length})
-        </span>
+        <span>{title}</span>
+        <span className="opacity-60">({items.length})</span>
       </h3>
       <ul className="space-y-1">
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <li key={item.slug}>
             <button
               type="button"
               onClick={() => navigateToWikiPage(item.slug, item.title, context)}
-              className="text-[13px] text-[var(--color-primary)] underline decoration-dotted underline-offset-2 hover:decoration-solid"
+              className={cn(
+                "block w-full truncate py-1 text-left text-sm text-foreground transition-colors hover:text-primary",
+                !isSidebar && "text-[13px]",
+              )}
+              title={item.title}
             >
               {item.title}
             </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/* ── Related list (title + reasons caption) ─────────────────────── */
-
-function RelatedList({ items }: { items: RelatedPageHit[] }) {
-  return (
-    <div className="mb-0">
-      <h3 className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-muted-foreground)]">
-        <Sparkles className="inline size-3" aria-hidden />
-        <span>相关页面 · Related ({items.length})</span>
-      </h3>
-      <ul className="space-y-2">
-        {items.map((item) => (
-          <li key={item.slug}>
-            <button
-              type="button"
-              onClick={() =>
-                navigateToWikiPage(item.slug, item.title, "wiki-related")
-              }
-              className="text-[13px] text-[var(--color-primary)] underline decoration-dotted underline-offset-2 hover:decoration-solid"
-            >
-              {item.title}
-            </button>
-            {item.reasons.length > 0 && (
-              <div className="mt-0.5 text-[11px] text-[var(--color-muted-foreground)] opacity-70">
+            {showReasons && item.reasons && item.reasons.length > 0 && (
+              <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground/70">
                 {item.reasons.join(" · ")}
               </div>
             )}
           </li>
         ))}
+        {hiddenCount > 0 && (
+          <li className="py-1 text-xs italic text-muted-foreground">
+            还有 {hiddenCount} 项…
+          </li>
+        )}
       </ul>
-    </div>
+    </section>
   );
 }
