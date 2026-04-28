@@ -54,6 +54,28 @@ const TOOL_DISABLED_DIRECT_ANSWER_INSTRUCTION: &str = "\
 本次请求已禁用工具。请直接基于对话回答，不要说你将搜索、抓取网页、读取文件、\
 运行命令或调用工具。";
 
+fn current_local_date_iso() -> String {
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    now.date()
+        .format(time::macros::format_description!("[year]-[month]-[day]"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn build_freshness_system_prompt() -> String {
+    build_freshness_system_prompt_for_date(&current_local_date_iso())
+}
+
+fn build_freshness_system_prompt_for_date(today: &str) -> String {
+    format!(
+        "当前日期（本机本地时间）：{today}。\n\
+         时间敏感任务规则：当用户说“今天”“当前”“实时”“最新”“最近”，或询问天气、新闻、价格、版本、发布信息等实时内容时，必须以这个日期为准。\n\
+         联网搜索结果可能包含旧网页、历史记录、缓存标题或旧快照；不要把旧日期当作今天。尤其不要把搜索结果里的 2025 年 7 月这类历史日期当作当前日期。\n\
+         如果当前用户本轮询问实时信息，即使历史对话里已有工具结果，也必须重新基于本轮工具结果判断；不要只复用历史工具结果。\n\
+         如果工具结果没有明确覆盖 {today} 的数据，请直接说明“未找到 {today} 的实时数据”，并提示用户查看官方或实时来源；不要编造当前天气、当前价格或当前发布状态。\n\
+         搜索实时信息时，优先使用包含当前日期、官方来源、权威天气/新闻/厂商页面的结果；对明显过期的结果必须标注为过期或忽略。"
+    )
+}
+
 /// Internal control tokens that may leak into content streams.
 ///
 /// Some providers, notably DeepSeek, use these markers to delimit structured
@@ -300,6 +322,27 @@ impl PromptIntent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolChoiceMode {
+    None,
+    Auto,
+    Required,
+}
+
+impl ToolChoiceMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ToolChoiceMode::None => "none",
+            ToolChoiceMode::Auto => "auto",
+            ToolChoiceMode::Required => "required",
+        }
+    }
+
+    fn allows_tools(self) -> bool {
+        !matches!(self, ToolChoiceMode::None)
+    }
+}
+
 fn classify_latest_user_prompt_intent(messages: &[ConversationMessage]) -> PromptIntent {
     latest_user_prompt(messages)
         .as_deref()
@@ -428,11 +471,19 @@ fn looks_like_broad_search_request(prompt: &str) -> bool {
             "current",
             "news",
             "weather",
+            "forecast",
+            "temperature",
             "stock price",
             "exchange rate",
             "\u{6700}\u{65b0}",
             "\u{4eca}\u{5929}",
             "\u{65b0}\u{95fb}",
+            "\u{5929}\u{6c14}",
+            "\u{6c14}\u{6e29}",
+            "\u{9884}\u{62a5}",
+            "\u{7a7a}\u{6c14}\u{8d28}\u{91cf}",
+            "\u{964d}\u{96e8}",
+            "\u{53f0}\u{98ce}",
         ],
     )
 }
@@ -707,6 +758,8 @@ fn build_turn_system_prompt(
         }
     }
 
+    parts.push(build_freshness_system_prompt());
+
     if let Some(policy) = tool_policy {
         parts.push(build_tool_policy_system_prompt(policy));
     }
@@ -725,7 +778,7 @@ fn build_openai_request_body(
     messages_for_request: &[serde_json::Value],
     tool_specs: Option<&[serde_json::Value]>,
     tool_policy: &ToolExposurePolicy,
-    allow_tools: bool,
+    tool_choice: ToolChoiceMode,
 ) -> serde_json::Value {
     let mut request_body = serde_json::json!({
         "model": model,
@@ -740,7 +793,7 @@ fn build_openai_request_body(
         return request_body;
     }
 
-    if !allow_tools {
+    if !tool_choice.allows_tools() {
         request_body["tool_choice"] = serde_json::Value::String("none".into());
         return request_body;
     }
@@ -762,7 +815,7 @@ fn build_openai_request_body(
         request_body["tool_choice"] = serde_json::Value::String("none".into());
     } else {
         request_body["tools"] = serde_json::Value::Array(filtered);
-        request_body["tool_choice"] = serde_json::Value::String("auto".into());
+        request_body["tool_choice"] = serde_json::Value::String(tool_choice.as_str().into());
     }
 
     request_body
@@ -793,7 +846,7 @@ pub struct StreamingTurnConfig {
     /// When `Some(non_empty)` and enabled for the prompt intent, the request
     /// body will include:
     ///   - `"tools": [...]` array
-    ///   - `"tool_choice": "auto"`
+    ///   - `"tool_choice": "auto"` or `"required"` for the first search turn
     ///
     /// When disabled for a final/text-only/policy-refusal turn, the request
     /// sets `"tool_choice": "none"`.
@@ -861,6 +914,15 @@ pub async fn run_streaming_turn(
             && !is_final_synthesis_turn
             && prompt_intent.allows_tools()
             && !prompt_needs_policy_refusal;
+        let tool_choice = if !allow_tools {
+            ToolChoiceMode::None
+        } else if turn_idx == 0 && prompt_intent == PromptIntent::Search {
+            // Time-sensitive/search requests should not be answered from stale
+            // conversation context. Force at least one fresh tool call first.
+            ToolChoiceMode::Required
+        } else {
+            ToolChoiceMode::Auto
+        };
         let turn_system_prompt = build_turn_system_prompt(
             config.system_prompt.as_deref(),
             should_inject_tool_policy.then_some(&tool_policy),
@@ -893,13 +955,19 @@ pub async fn run_streaming_turn(
                 );
             }
         }
+        if tool_choice == ToolChoiceMode::Required {
+            eprintln!(
+                "[openai_compat] turn {}: search intent requires a fresh tool call",
+                turn_idx
+            );
+        }
 
         let (new_messages, upstream_model, finish_reason) = execute_single_turn(
             http_client,
             &config,
             &openai_messages,
             &tool_policy,
-            allow_tools,
+            tool_choice,
             event_sender,
             session_id,
             cancel_token,
@@ -985,7 +1053,7 @@ async fn execute_single_turn(
     config: &StreamingTurnConfig,
     messages_for_request: &[serde_json::Value],
     tool_policy: &ToolExposurePolicy,
-    allow_tools: bool,
+    tool_choice: ToolChoiceMode,
     event_sender: &broadcast::Sender<DesktopSessionEvent>,
     session_id: &str,
     cancel_token: &CancellationToken,
@@ -998,7 +1066,7 @@ async fn execute_single_turn(
         messages_for_request,
         config.tool_specs.as_deref(),
         tool_policy,
-        allow_tools,
+        tool_choice,
     );
 
     let configured_tool_count = config.tool_specs.as_ref().map_or(0, Vec::len);
@@ -1006,16 +1074,17 @@ async fn execute_single_turn(
         .get("tools")
         .and_then(|tools| tools.as_array())
         .map_or(0, Vec::len);
-    let tool_execution_enabled = allow_tools && allowed_tool_count > 0;
-    if allow_tools && allowed_tool_count > 0 {
+    let tool_execution_enabled = tool_choice.allows_tools() && allowed_tool_count > 0;
+    if tool_choice.allows_tools() && allowed_tool_count > 0 {
         let dropped_count = configured_tool_count.saturating_sub(allowed_tool_count);
         eprintln!(
-            "[openai-compat-stream] session={session_id} tool policy: {} of {} tools allowed ({} filtered out)",
+            "[openai-compat-stream] session={session_id} tool policy: {} of {} tools allowed ({} filtered out), tool_choice={}",
             allowed_tool_count,
             configured_tool_count,
-            dropped_count
+            dropped_count,
+            tool_choice.as_str()
         );
-    } else if allow_tools && configured_tool_count > 0 {
+    } else if tool_choice.allows_tools() && configured_tool_count > 0 {
         eprintln!(
             "[openai-compat-stream] session={session_id} tool policy: all {} tools filtered out, request will be text-only",
             configured_tool_count
@@ -1576,6 +1645,22 @@ mod prompt_intent_tests {
     }
 
     #[test]
+    fn classifies_weather_questions_as_search() {
+        assert_eq!(
+            classify_prompt_intent("今天广州市的天气怎么样"),
+            PromptIntent::Search
+        );
+        assert_eq!(
+            classify_prompt_intent("广州天气怎么样"),
+            PromptIntent::Search
+        );
+        assert_eq!(
+            classify_prompt_intent("广州气温和空气质量"),
+            PromptIntent::Search
+        );
+    }
+
+    #[test]
     fn classifies_code_before_generic_writing() {
         assert_eq!(
             classify_prompt_intent("Write a Rust function that parses a URL"),
@@ -1666,10 +1751,27 @@ mod request_planning_tests {
             &user_messages(),
             Some(&tools),
             &ToolExposurePolicy::default(),
-            true,
+            ToolChoiceMode::Auto,
         );
 
         assert_eq!(body["tool_choice"], "auto");
+        let exposed_tools = body["tools"].as_array().expect("tools should be exposed");
+        assert_eq!(exposed_tools.len(), 1);
+        assert_eq!(exposed_tools[0]["function"]["name"], "WebSearch");
+    }
+
+    #[test]
+    fn required_tool_choice_forces_policy_allowed_tools() {
+        let tools = vec![tool_spec("WebSearch"), tool_spec("write_file")];
+        let body = build_openai_request_body(
+            "test-model",
+            &user_messages(),
+            Some(&tools),
+            &ToolExposurePolicy::default(),
+            ToolChoiceMode::Required,
+        );
+
+        assert_eq!(body["tool_choice"], "required");
         let exposed_tools = body["tools"].as_array().expect("tools should be exposed");
         assert_eq!(exposed_tools.len(), 1);
         assert_eq!(exposed_tools[0]["function"]["name"], "WebSearch");
@@ -1683,7 +1785,7 @@ mod request_planning_tests {
             &user_messages(),
             Some(&tools),
             &ToolExposurePolicy::default(),
-            false,
+            ToolChoiceMode::None,
         );
 
         assert_eq!(body["tool_choice"], "none");
@@ -1698,7 +1800,7 @@ mod request_planning_tests {
             &user_messages(),
             Some(&tools),
             &ToolExposurePolicy::default(),
-            true,
+            ToolChoiceMode::Auto,
         );
 
         assert_eq!(body["tool_choice"], "none");
@@ -1719,6 +1821,20 @@ mod request_planning_tests {
         assert!(prompt.contains("工具安全策略"));
         assert!(prompt.contains("最终整合轮"));
         assert!(prompt.contains("已禁用工具"));
+        assert!(prompt.contains("当前日期"));
+        assert!(prompt.contains("旧日期"));
+    }
+
+    #[test]
+    fn freshness_prompt_warns_about_stale_realtime_results() {
+        let prompt = build_freshness_system_prompt_for_date("2026-04-27");
+
+        assert!(prompt.contains("2026-04-27"));
+        assert!(prompt.contains("今天"));
+        assert!(prompt.contains("实时"));
+        assert!(prompt.contains("2025 年 7 月"));
+        assert!(prompt.contains("不要把旧日期当作今天"));
+        assert!(prompt.contains("未找到 2026-04-27 的实时数据"));
     }
 }
 
