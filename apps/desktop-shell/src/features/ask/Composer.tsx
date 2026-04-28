@@ -654,7 +654,6 @@ export function Composer({
   }, [showPermissionMenu]);
 
   const handleSend = useCallback(async () => {
-    console.log("[composer:handleSend] called, value:", value.slice(0, 100));
     const trimmed = value.trim();
     // Allow sending if there's text OR at least one attachment.
     if ((!trimmed && attachments.length === 0) || inputBlocked) return;
