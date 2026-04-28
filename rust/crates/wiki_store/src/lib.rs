@@ -51,6 +51,12 @@ use serde::{Deserialize, Serialize};
 // for LineageEvent / LineageRef lives in one discoverable namespace.
 pub mod provenance;
 
+// R1.2 reliability sprint — durable WeChat reply queue. Owns
+// `_wechat_outbox.json` under `{meta}/`. Exposed as `pub mod` so the
+// caller site (`wiki_store::wechat_outbox::append_outbox_entry`) stays
+// discoverable and the data model + state machine live in one file.
+pub mod wechat_outbox;
+
 /// Process-global guard that serializes read-modify-write access to
 /// `{meta}/inbox.json`. Addresses the TOCTOU race found by the
 /// S4/S5/S6 code review: without this guard, two concurrent callers
@@ -3976,8 +3982,10 @@ fn week_ago_date_string() -> String {
 
 /// Format an `i64` epoch-seconds value as `YYYY-MM-DDTHH:MM:SSZ`.
 /// Pure function with no globals — exposed `pub(crate)` so tests can
-/// pin specific timestamps without polluting the system clock.
-fn format_iso8601(epoch_secs: u64) -> String {
+/// pin specific timestamps without polluting the system clock, and so
+/// child modules (`wechat_outbox`) can stamp `next_retry_at` in the
+/// same shape without pulling `chrono` for one function.
+pub(crate) fn format_iso8601(epoch_secs: u64) -> String {
     // Days from 1970-01-01 (Thursday) to the start of `epoch_secs`'s day.
     let days = (epoch_secs / 86_400) as i64;
     let secs_of_day = epoch_secs % 86_400;
