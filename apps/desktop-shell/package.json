@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check:mojibake": "node scripts/check-mojibake.mjs",
+    "test:ask:esc": "node scripts/playwright/ask-esc-interrupt-regression.mjs",
     "prebuild": "npm run check:mojibake",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
@@ -62,6 +63,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4.1.4",
     "@tauri-apps/cli": "^2.5.0",
     "@types/react": "^19.1.2",
