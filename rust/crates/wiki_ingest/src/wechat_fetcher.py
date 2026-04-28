@@ -19,6 +19,8 @@ import os
 import re
 import subprocess
 import random
+import time
+from pathlib import Path
 
 
 def defuddle_extract(html: str, url: str) -> dict | None:
@@ -147,6 +149,146 @@ def find_local_chrome() -> str | None:
     return None
 
 
+def browser_args() -> list[str]:
+    return [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+    ]
+
+
+def browser_context_options() -> dict:
+    return {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "viewport": {"width": 1280, "height": 900},
+        "locale": "zh-CN",
+    }
+
+
+def dedicated_profile_dir() -> str:
+    """Profile for the visible WeChat fallback browser.
+
+    Defaults to this repository's rust/.claw-runtime directory instead of
+    the user's C: profile. Override with CLAW_WECHAT_BROWSER_PROFILE_DIR.
+    """
+    configured = os.environ.get("CLAW_WECHAT_BROWSER_PROFILE_DIR", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+    else:
+        # .../rust/crates/wiki_ingest/src/wechat_fetcher.py -> .../rust
+        path = Path(__file__).resolve().parents[3] / ".claw-runtime" / "wechat-browser-profile"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def is_antibot_page_text(text: str) -> bool:
+    markers = [
+        "环境异常",
+        "完成验证",
+        "请完成验证",
+        "访问频繁",
+        "安全验证",
+        "鐜寮傚父",
+        "瀹屾垚楠岃瘉",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def has_article_container(page) -> bool:
+    for sel in ["#js_content", ".rich_media_content", ".rich_media_title", "#activity-name"]:
+        try:
+            if page.query_selector(sel):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def navigate_article_page(page, url: str) -> bool:
+    for attempt in range(2):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            return True
+        except Exception:
+            try:
+                page.goto(url, wait_until="load", timeout=12000)
+                return True
+            except Exception:
+                if attempt == 0:
+                    page.wait_for_timeout(random.randint(1000, 3000))
+    return False
+
+
+def extract_article_from_page(page, url: str) -> dict:
+    try:
+        page.wait_for_selector(
+            "#js_content, .rich_media_content, article, body",
+            timeout=8000,
+        )
+    except Exception:
+        pass
+
+    page.wait_for_timeout(random.randint(800, 1600))
+
+    full_html = page.content()
+    article = defuddle_extract(full_html, url)
+    if not article:
+        article = css_selector_extract(page)
+    return article
+
+
+def fetch_with_persistent_browser(p, url: str, local_chrome: str | None) -> dict:
+    """Open a visible dedicated browser profile and wait for manual verification."""
+    launch_kwargs = {
+        **browser_context_options(),
+        "headless": False,
+        "args": browser_args(),
+    }
+    if local_chrome:
+        launch_kwargs["executable_path"] = local_chrome
+
+    context = p.chromium.launch_persistent_context(
+        dedicated_profile_dir(),
+        **launch_kwargs,
+    )
+    try:
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+        page = context.pages[0] if context.pages else context.new_page()
+        page.set_extra_http_headers({
+            "Referer": "https://mp.weixin.qq.com/",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        })
+
+        if not navigate_article_page(page, url):
+            return {"ok": False, "error": "页面加载失败"}
+
+        verify_timeout = int(os.environ.get("CLAW_WECHAT_MANUAL_VERIFY_TIMEOUT_SECS", "120"))
+        deadline = time.time() + max(15, verify_timeout)
+        while time.time() < deadline:
+            try:
+                page_text = page.inner_text("body")
+            except Exception:
+                page_text = ""
+            if has_article_container(page) and not is_antibot_page_text(page_text):
+                article = extract_article_from_page(page, url)
+                markdown = article.get("markdown", "")
+                if markdown and len(markdown) >= 50:
+                    return {
+                        "ok": True,
+                        "title": article.get("title", ""),
+                        "author": article.get("author", ""),
+                        "publish_time": article.get("published", ""),
+                        "markdown": markdown,
+                    }
+            page.wait_for_timeout(2000)
+
+        return {
+            "ok": False,
+            "error": f"真实浏览器验证超时：请在弹出的专用浏览器中完成微信验证后重试（profile: {dedicated_profile_dir()}）",
+        }
+    finally:
+        context.close()
+
+
 def main():
     if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")
@@ -176,7 +318,7 @@ def main():
                     browser = p.chromium.launch(
                         executable_path=local_chrome,
                         headless=True,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+                        args=browser_args()
                     )
                 except Exception:
                     pass
@@ -185,16 +327,12 @@ def main():
                 try:
                     browser = p.chromium.launch(
                         headless=True,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+                        args=browser_args()
                     )
                 except Exception as e:
                     json.dump({"ok": False, "error": f"无法启动浏览器: {e}"}, sys.stdout, ensure_ascii=False)
                     return
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 900},
-                locale="zh-CN",
-            )
+            context = browser.new_context(**browser_context_options())
             context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
             page = context.new_page()
             page.set_extra_http_headers({
@@ -238,6 +376,11 @@ def main():
 
             # Check for CAPTCHA
             page_text = page.inner_text("body")
+            if is_antibot_page_text(page_text):
+                browser.close()
+                result = fetch_with_persistent_browser(p, url, local_chrome)
+                json.dump(result, sys.stdout, ensure_ascii=False)
+                return
             if "环境异常" in page_text or "完成验证" in page_text:
                 json.dump({"ok": False, "error": "微信反爬验证触发"}, sys.stdout, ensure_ascii=False)
                 browser.close()
@@ -255,7 +398,8 @@ def main():
             browser.close()
 
             if not article.get("markdown") or len(article.get("markdown", "")) < 50:
-                json.dump({"ok": False, "error": "文章内容提取失败或内容过短"}, sys.stdout, ensure_ascii=False)
+                result = fetch_with_persistent_browser(p, url, local_chrome)
+                json.dump(result, sys.stdout, ensure_ascii=False)
                 return
 
             json.dump({

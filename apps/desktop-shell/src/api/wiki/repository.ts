@@ -35,6 +35,20 @@ import type {
   WikiStats,
 } from "@/api/wiki/types";
 
+export interface WechatRefetchResponse {
+  ok: boolean;
+  title?: string;
+  markdown?: string;
+  source?: string;
+  raw_id?: number;
+  inbox_id?: number | null;
+  dedupe?: boolean;
+  decision?: string;
+  reason?: string;
+  error?: string;
+  missing_prerequisite?: string;
+}
+
 /**
  * POST `/api/wiki/raw` — write a single entry under `~/.clawwiki/raw/`.
  *
@@ -67,6 +81,25 @@ export async function listRawEntries(): Promise<RawListResponse> {
  */
 export async function getRawEntry(id: number): Promise<RawDetailResponse> {
   return fetchJson<RawDetailResponse>(`/api/wiki/raw/${id}`);
+}
+
+export async function refetchWechatArticle(
+  url: string,
+): Promise<WechatRefetchResponse> {
+  const result = await fetchJson<WechatRefetchResponse>(
+    "/api/desktop/wechat-fetch",
+    {
+      method: "POST",
+      body: JSON.stringify({ url, ingest: true, force: true }),
+    },
+    600_000,
+  );
+  if (!result.ok) {
+    throw new Error(
+      result.error || result.reason || result.missing_prerequisite || "WeChat refetch failed",
+    );
+  }
+  return result;
 }
 
 // ── S4 Inbox ───────────────────────────────────────────────────

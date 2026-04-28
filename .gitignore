@@ -8,6 +8,8 @@ node_modules/
 dist/
 rust/target/
 rust/server*.log
+rust/server*.log.*.bak
+rust/.claw-runtime/
 apps/*/dist/
 apps/*/node_modules/
 apps/*/src-tauri/target/

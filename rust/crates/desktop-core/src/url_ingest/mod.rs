@@ -70,6 +70,9 @@ pub mod recent;
 
 pub use dedupe::{DedupeMode, DedupeResult, IngestDecision};
 
+const WECHAT_PLAYWRIGHT_MAX_ATTEMPTS: usize = 3;
+const WECHAT_PLAYWRIGHT_RETRY_DELAYS_MS: [u64; 2] = [2_000, 5_000];
+
 // ─────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────
@@ -394,11 +397,12 @@ pub async fn ingest_url(req: IngestRequest<'_>) -> IngestOutcome {
         None => canonical.contains("weixin.qq.com"),
     };
 
-    let fetch_result = run_adapter(&canonical, use_playwright, req.fetch_timeout).await;
+    let fetch_result =
+        fetch_and_validate_with_retry(&canonical, use_playwright, req.fetch_timeout).await;
 
     let ingest_result = match fetch_result {
-        Ok(r) => r,
-        Err(err) => {
+        FetchValidated::Ok(r) => r,
+        FetchValidated::FetchErr(err) => {
             // Detect "Playwright not installed" flavoured errors so the
             // UI can surface a dedicated install CTA. See
             // `detect_playwright_prereq` for the classifier.
@@ -414,20 +418,19 @@ pub async fn ingest_url(req: IngestRequest<'_>) -> IngestOutcome {
             push_recent_log(trimmed_url, &canonical, &req.origin_tag, &outcome, None);
             return outcome;
         }
+        FetchValidated::QualityErr(reason) => {
+            let outcome = if let Some(fallback) = req.allow_text_fallback.as_ref() {
+                write_fallback(fallback, &req.origin_tag, reason)
+            } else {
+                IngestOutcome::RejectedQuality { reason }
+            };
+            push_recent_log(trimmed_url, &canonical, &req.origin_tag, &outcome, None);
+            return outcome;
+        }
     };
 
     // Quality gate — unified with `desktop-core::maybe_enrich_url` and
     // `wechat_fetch_handler` so anti-bot pages never land in raw/.
-    if let Err(reason) = wiki_ingest::validate_fetched_content(&ingest_result.body) {
-        let outcome = if let Some(fallback) = req.allow_text_fallback.as_ref() {
-            write_fallback(fallback, &req.origin_tag, reason)
-        } else {
-            IngestOutcome::RejectedQuality { reason }
-        };
-        push_recent_log(trimmed_url, &canonical, &req.origin_tag, &outcome, None);
-        return outcome;
-    }
-
     // ── M4: compute content hash + second dedupe pass ────────────
     // Hash the cleaned body (already sanitised by the adapter). We
     // pass this into a second `dedupe::decide` so the decision tree
@@ -541,6 +544,97 @@ fn resolve_wiki_paths() -> Result<WikiPaths, String> {
     let root = wiki_store::default_root();
     wiki_store::init_wiki(&root).map_err(|e| format!("{e}"))?;
     Ok(WikiPaths::resolve(&root))
+}
+
+enum FetchValidated {
+    Ok(IngestResult),
+    FetchErr(IngestError),
+    QualityErr(String),
+}
+
+async fn fetch_and_validate_with_retry(
+    url: &str,
+    use_playwright: bool,
+    fetch_timeout: Duration,
+) -> FetchValidated {
+    let max_attempts = fetch_attempts_for(url, use_playwright);
+    let mut last_fetch_err: Option<IngestError> = None;
+    let mut last_quality_err: Option<String> = None;
+
+    for attempt_idx in 0..max_attempts {
+        if attempt_idx > 0 {
+            let delay = retry_delay_for_attempt(attempt_idx);
+            eprintln!(
+                "[url_ingest] retrying WeChat Playwright fetch attempt {}/{} after {}ms: {}",
+                attempt_idx + 1,
+                max_attempts,
+                delay.as_millis(),
+                url
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        match run_adapter(url, use_playwright, fetch_timeout).await {
+            Ok(candidate) => match wiki_ingest::validate_fetched_content(&candidate.body) {
+                Ok(()) => return FetchValidated::Ok(candidate),
+                Err(reason) => {
+                    if attempt_idx + 1 < max_attempts {
+                        eprintln!(
+                            "[url_ingest] WeChat Playwright quality rejected on attempt {}/{}: {}",
+                            attempt_idx + 1,
+                            max_attempts,
+                            reason
+                        );
+                    }
+                    last_quality_err = Some(reason);
+                }
+            },
+            Err(err) => {
+                if use_playwright && detect_playwright_prereq(&err).is_some() {
+                    return FetchValidated::FetchErr(err);
+                }
+                if attempt_idx + 1 < max_attempts {
+                    eprintln!(
+                        "[url_ingest] WeChat Playwright fetch failed on attempt {}/{}: {}",
+                        attempt_idx + 1,
+                        max_attempts,
+                        err
+                    );
+                }
+                last_fetch_err = Some(err);
+            }
+        }
+    }
+
+    if let Some(reason) = last_quality_err {
+        FetchValidated::QualityErr(reason)
+    } else if let Some(err) = last_fetch_err {
+        FetchValidated::FetchErr(err)
+    } else {
+        FetchValidated::FetchErr(IngestError::Parse(
+            "fetch failed without an adapter error".into(),
+        ))
+    }
+}
+
+fn fetch_attempts_for(url: &str, use_playwright: bool) -> usize {
+    if should_retry_wechat_playwright(url, use_playwright) {
+        WECHAT_PLAYWRIGHT_MAX_ATTEMPTS
+    } else {
+        1
+    }
+}
+
+fn should_retry_wechat_playwright(url: &str, use_playwright: bool) -> bool {
+    use_playwright && url.contains("weixin.qq.com")
+}
+
+fn retry_delay_for_attempt(attempt_idx: usize) -> Duration {
+    let delay_ms = WECHAT_PLAYWRIGHT_RETRY_DELAYS_MS
+        .get(attempt_idx.saturating_sub(1))
+        .copied()
+        .unwrap_or(*WECHAT_PLAYWRIGHT_RETRY_DELAYS_MS.last().unwrap_or(&0));
+    Duration::from_millis(delay_ms)
 }
 
 async fn run_adapter(
@@ -927,6 +1021,28 @@ mod tests {
             url: "https://example.com".into(),
         };
         assert!(detect_playwright_prereq(&err).is_none());
+    }
+
+    #[test]
+    fn wechat_playwright_fetch_retries_three_times() {
+        assert_eq!(
+            fetch_attempts_for("https://mp.weixin.qq.com/s/example", true),
+            WECHAT_PLAYWRIGHT_MAX_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn generic_urls_do_not_retry() {
+        assert_eq!(fetch_attempts_for("https://example.com/article", false), 1);
+        assert_eq!(fetch_attempts_for("https://example.com/article", true), 1);
+    }
+
+    #[test]
+    fn wechat_without_playwright_does_not_retry() {
+        assert_eq!(
+            fetch_attempts_for("https://mp.weixin.qq.com/s/example", false),
+            1
+        );
     }
 
     #[test]

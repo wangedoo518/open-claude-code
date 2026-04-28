@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Loader2,
   Inbox as InboxIcon,
@@ -29,6 +30,7 @@ import {
   CheckSquare,
   CheckSquare2,
   Pencil,
+  RefreshCw,
   Square,
   X,
   HelpCircle,
@@ -91,7 +93,7 @@ import {
   type QueueIntelligence,
 } from "@/features/inbox/queue-intelligence";
 import type { TargetCandidate } from "@/lib/tauri";
-import { fetchInboxCandidates } from "@/api/wiki/repository";
+import { fetchInboxCandidates, refetchWechatArticle } from "@/api/wiki/repository";
 
 /** Q2 — Layer 1 duplicate-guard trigger threshold (inclusive). */
 const DUPLICATE_GUARD_SCORE_THRESHOLD = 75;
@@ -117,6 +119,21 @@ export type IntelligentEntry = InboxEntry & {
 const inboxKeys = {
   list: () => ["wiki", "inbox", "list"] as const,
 };
+
+function isWechatUrl(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname.includes("weixin.qq.com");
+  } catch {
+    return false;
+  }
+}
+
+function firstWechatUrl(
+  ...urls: Array<string | null | undefined>
+): string | null {
+  return urls.find(isWechatUrl) ?? null;
+}
 
 /** 翻译 inbox entry status */
 function translateStatus(status: string): string {
@@ -1578,6 +1595,29 @@ function EntryDetail({
   });
   const rawEntry = rawQuery.data?.entry ?? null;
   const rawBody = rawQuery.data?.body ?? null;
+  const refetchWechatUrl = firstWechatUrl(
+    rawEntry?.canonical_url,
+    rawEntry?.source_url,
+    rawEntry?.original_url,
+    rawEntry?.slug,
+  );
+  const refetchWechatMutation = useMutation({
+    mutationFn: (url: string) => refetchWechatArticle(url),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["raw", entry.source_raw_id ?? null] });
+      if (typeof result.raw_id === "number") {
+        void queryClient.invalidateQueries({ queryKey: ["raw", result.raw_id] });
+        void queryClient.invalidateQueries({
+          queryKey: ["wiki", "raw", "detail", result.raw_id],
+        });
+      }
+      toast.success("微信原文已重新抓取");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "微信原文重新抓取失败");
+    },
+  });
 
   // Q2 — target-candidate query. Only fetched while the user is in a
   // decision state where the candidates actually matter (`update_existing`
@@ -1999,6 +2039,13 @@ function EntryDetail({
             originalUrl={rawEntry?.original_url ?? null}
             sourceUrl={rawEntry?.source_url ?? null}
             isLoading={rawQuery.isLoading}
+            refetchUrl={refetchWechatUrl}
+            isRefetching={refetchWechatMutation.isPending}
+            onRefetch={() => {
+              if (refetchWechatUrl) {
+                refetchWechatMutation.mutate(refetchWechatUrl);
+              }
+            }}
           />
         </WorkbenchSection>
 
@@ -2390,6 +2437,9 @@ function EvidenceSection({
   originalUrl,
   sourceUrl,
   isLoading,
+  refetchUrl,
+  isRefetching,
+  onRefetch,
 }: {
   entry: InboxEntry;
   rawBody: string | null;
@@ -2400,6 +2450,9 @@ function EvidenceSection({
   originalUrl: string | null;
   sourceUrl: string | null;
   isLoading: boolean;
+  refetchUrl: string | null;
+  isRefetching: boolean;
+  onRefetch: () => void;
 }) {
   const hasProposedDraft = Boolean(
     entry.proposed_title?.length ||
@@ -2437,6 +2490,23 @@ function EvidenceSection({
             在 Raw Library 打开 raw #{String(entry.source_raw_id).padStart(5, "0")}
             <ArrowRight className="size-3" />
           </Link>
+        )}
+        {refetchUrl && (
+          <button
+            type="button"
+            onClick={onRefetch}
+            disabled={isRefetching}
+            className="inline-flex items-center gap-1 rounded-md border border-primary/20 px-2 py-1 text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ fontSize: 11 }}
+            title="重新抓取微信原文"
+          >
+            {isRefetching ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3" />
+            )}
+            重新抓取微信原文
+          </button>
         )}
       </div>
 

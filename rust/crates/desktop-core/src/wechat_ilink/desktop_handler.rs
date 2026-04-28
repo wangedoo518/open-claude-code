@@ -27,7 +27,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio::time::timeout;
 
 use super::account;
-use super::client::IlinkClient;
+use super::client::{IlinkClient, IlinkError};
 use super::dedupe::{self, DedupeResult, WeChatEventKey};
 use super::handlers::{build_text_reply, extract_first_text};
 use super::ingest_config;
@@ -62,6 +62,11 @@ const MAX_REPLY_CHUNKS: usize = 10;
 /// traffic that arrives too quickly; 300 ms comfortably clears the
 /// observed rate limits while staying imperceptible to users.
 const INTER_CHUNK_DELAY: Duration = Duration::from_millis(300);
+
+/// Retry schedule for outbound iLink `sendmessage` calls. Inbound ingest can
+/// succeed while the final reply fails due to a transient network error; retry
+/// only the outbound send so we don't duplicate raw entries.
+const SEND_MESSAGE_RETRY_DELAYS_MS: &[u64] = &[800, 2_000, 5_000];
 
 /// `MessageHandler` that bridges WeChat messages to the desktop `DesktopState`.
 ///
@@ -286,7 +291,7 @@ impl MessageHandler for DesktopAgentHandler {
                     &context_token,
                     "（暂不支持非文本消息，请发送文字）",
                 );
-                if let Err(e) = client.send_message(reply).await {
+                if let Err(e) = send_message_with_retry(client, reply, "non-text-reply").await {
                     eprintln!("[wechat agent] reply send failed: {e}");
                 }
                 return Ok(());
@@ -427,7 +432,7 @@ impl MessageHandler for DesktopAgentHandler {
 
             if let Some(reply_text) = url_ingest_reply {
                 let reply = build_text_reply(&from_user_id, &context_token, &reply_text);
-                match client.send_message(reply).await {
+                match send_message_with_retry(&client, reply, "url-ingest-reply").await {
                     Ok(()) => {
                         eprintln!("[wechat agent] url ingest reply sent: openid={from_user_id}");
                     }
@@ -448,7 +453,7 @@ impl MessageHandler for DesktopAgentHandler {
                         &context_token,
                         &format!("⚠️ 创建会话失败: {e}"),
                     );
-                    let _ = client.send_message(reply).await;
+                    let _ = send_message_with_retry(&client, reply, "session-create-error").await;
                     return;
                 }
             };
@@ -504,7 +509,7 @@ impl MessageHandler for DesktopAgentHandler {
                 };
 
                 let reply = build_text_reply(&from_user_id, &context_token, &body);
-                match client.send_message(reply).await {
+                match send_message_with_retry(&client, reply, "assistant-reply-chunk").await {
                     Ok(()) => {
                         eprintln!(
                             "[wechat agent] sent chunk {}/{} ({} chars)",
@@ -543,6 +548,54 @@ impl MessageHandler for DesktopAgentHandler {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Send an outbound iLink message with short retries for transient transport
+/// failures. This protects the already-successful ingest path from losing its
+/// user-visible acknowledgement when `sendmessage` flakes.
+async fn send_message_with_retry(
+    client: &IlinkClient,
+    msg: WeixinMessage,
+    label: &str,
+) -> Result<(), IlinkError> {
+    let max_attempts = SEND_MESSAGE_RETRY_DELAYS_MS.len() + 1;
+
+    for attempt_idx in 0..max_attempts {
+        match client.send_message(msg.clone()).await {
+            Ok(()) => {
+                if attempt_idx > 0 {
+                    eprintln!(
+                        "[wechat agent] sendmessage recovered ({label}) on attempt {}/{}",
+                        attempt_idx + 1,
+                        max_attempts
+                    );
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                let attempt_no = attempt_idx + 1;
+                if attempt_no >= max_attempts || !should_retry_ilink_send_error(&err) {
+                    return Err(err);
+                }
+
+                let delay_ms = SEND_MESSAGE_RETRY_DELAYS_MS[attempt_idx];
+                eprintln!(
+                    "[wechat agent] sendmessage failed ({label}) attempt {attempt_no}/{max_attempts}: {err}; retrying in {delay_ms}ms"
+                );
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+        }
+    }
+
+    unreachable!("send_message_with_retry loop always returns");
+}
+
+fn should_retry_ilink_send_error(err: &IlinkError) -> bool {
+    match err {
+        IlinkError::Http(_) | IlinkError::Timeout => true,
+        IlinkError::Status { status, .. } => *status == 408 || *status == 429 || *status >= 500,
+        IlinkError::InvalidBaseUrl(_) | IlinkError::Json(_) | IlinkError::Api { .. } => false,
+    }
+}
 
 /// Pull all text blocks out of an assistant `DesktopConversationMessage`.
 /// Returns `None` if the message has no role/text content we want to
@@ -648,13 +701,12 @@ fn ingest_wechat_text_to_wiki(
                         crate::url_ingest::IngestRequest {
                             url: &url_clone,
                             origin_tag: origin_clone,
-                            // WeChat article HTML usually carries the
-                            // server-rendered #js_content payload. Prefer
-                            // the faster HTTP extractor here; Playwright's
-                            // network-idle wait is brittle for public-account
-                            // pages and used to hit the outer 60s guard.
-                            prefer_playwright: Some(false),
-                            fetch_timeout: std::time::Duration::from_secs(60),
+                            // Auto-route mp.weixin.qq.com through Playwright
+                            // so the dedicated browser-profile fallback can
+                            // handle WeChat anti-bot pages. Non-WeChat URLs
+                            // still use the generic HTTP extractor.
+                            prefer_playwright: None,
+                            fetch_timeout: std::time::Duration::from_secs(180),
                             allow_text_fallback: Some(crate::url_ingest::TextFallback {
                                 slug_seed: slug_clone,
                                 fallback_body: fallback_clone,

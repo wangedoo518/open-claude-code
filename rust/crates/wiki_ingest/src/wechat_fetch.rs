@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
-const TIMEOUT_SECS: u64 = 90;
+const TIMEOUT_SECS: u64 = 180;
 const MAX_OUTPUT_BYTES: usize = 5 * 1024 * 1024;
 
 fn worker_script_path() -> std::path::PathBuf {

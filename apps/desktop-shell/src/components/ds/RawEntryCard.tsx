@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Loader2,
   MessageCircleQuestion,
+  RefreshCw,
   Sparkles,
   Trash2,
   X,
@@ -25,12 +26,14 @@ export interface RawEntryCardProps {
   isDeleting: boolean;
   batchMode?: boolean;
   isOrganizing?: boolean;
+  isRefetching?: boolean;
   onToggleSelect: () => void;
   onToggleExpand: () => void;
   onClearExpand: () => void;
   onDelete: () => void;
   onAsk: () => void;
   onOrganize?: () => void;
+  onRefetchWechat?: () => void;
   onBeginDragSelect?: () => void;
   onDragSelect?: () => void;
   expandedContent?: ReactNode;
@@ -232,12 +235,14 @@ export function RawEntryCard({
   isDeleting,
   batchMode = false,
   isOrganizing = false,
+  isRefetching = false,
   onToggleSelect,
   onToggleExpand,
   onClearExpand,
   onDelete,
   onAsk,
   onOrganize,
+  onRefetchWechat,
   onBeginDragSelect,
   onDragSelect,
   expandedContent,
@@ -368,6 +373,26 @@ export function RawEntryCard({
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
                 <Sparkles className="size-3.5" />
+              )}
+            </button>
+          )}
+
+          {onRefetchWechat && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRefetchWechat();
+              }}
+              disabled={isRefetching}
+              className="raw-entry-card-v2-action raw-entry-card-v2-action--refetch"
+              title="重新抓取微信原文"
+              aria-label="重新抓取微信原文"
+            >
+              {isRefetching ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
               )}
             </button>
           )}

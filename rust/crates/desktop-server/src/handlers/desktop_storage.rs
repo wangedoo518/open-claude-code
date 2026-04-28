@@ -253,7 +253,7 @@ pub(crate) async fn wechat_fetch_handler(
         url,
         origin_tag: "wechat-fetch".into(),
         prefer_playwright: Some(true),
-        fetch_timeout: std::time::Duration::from_secs(60),
+        fetch_timeout: std::time::Duration::from_secs(180),
         allow_text_fallback: None,
         force: body.force,
     })

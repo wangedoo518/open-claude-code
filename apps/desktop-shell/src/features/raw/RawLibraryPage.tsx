@@ -9,6 +9,7 @@ import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
+import { toast } from "sonner";
 import {
   Loader2,
   FileText,
@@ -26,7 +27,13 @@ import {
   ChevronDown,
   Sparkles,
 } from "lucide-react";
-import { listRawEntries, getRawEntry, triggerAbsorb, listInboxEntries } from "@/api/wiki/repository";
+import {
+  listRawEntries,
+  getRawEntry,
+  triggerAbsorb,
+  listInboxEntries,
+  refetchWechatArticle,
+} from "@/api/wiki/repository";
 import { ingestText } from "@/features/ingest/adapters/text";
 import { ingestUrl, type IngestUrlResult } from "@/features/ingest/adapters/url";
 import { fetchJson } from "@/lib/desktop/transport";
@@ -83,6 +90,20 @@ function isWechatMessage(entry: RawEntry): boolean {
 
 function isLinkEntry(entry: RawEntry): boolean {
   return Boolean(entry.source_url || entry.canonical_url || entry.original_url) || entry.source.includes("url") || entry.source === "url";
+}
+
+function isWechatUrl(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname.includes("weixin.qq.com");
+  } catch {
+    return false;
+  }
+}
+
+function wechatUrlFromRawEntry(entry: RawEntry): string | null {
+  const candidates = [entry.canonical_url, entry.source_url, entry.original_url, entry.slug];
+  return candidates.find(isWechatUrl) ?? null;
 }
 
 function isPendingEntry(entry: RawEntry): boolean {
@@ -198,6 +219,29 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
     mutationFn: async (ids: number[]) => triggerAbsorb(ids),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
+    },
+  });
+
+  const refetchWechatMutation = useMutation({
+    mutationFn: async (entry: RawEntry) => {
+      const url = wechatUrlFromRawEntry(entry);
+      if (!url) throw new Error("这条素材没有可重新抓取的微信链接");
+      return refetchWechatArticle(url);
+    },
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: rawKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "inbox"] });
+      if (typeof result.raw_id === "number") {
+        setExpandedId(result.raw_id);
+        void queryClient.invalidateQueries({ queryKey: rawKeys.detail(result.raw_id) });
+        void queryClient.invalidateQueries({
+          queryKey: ["wiki", "raw", "detail", result.raw_id],
+        });
+      }
+      toast.success("微信原文已重新抓取");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "微信原文重新抓取失败");
     },
   });
 
@@ -523,6 +567,12 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
           onSelectAll={selectAllVisible}
           onOrganize={(ids) => organizeMutation.mutate(ids)}
           organizingIds={organizingIds}
+          onRefetchWechat={(entry) => refetchWechatMutation.mutate(entry)}
+          refetchingRawId={
+            refetchWechatMutation.isPending
+              ? (refetchWechatMutation.variables?.id ?? null)
+              : null
+          }
         />
       </div>
     </div>
@@ -882,6 +932,8 @@ interface CardListProps {
   onSelectAll: () => void;
   onOrganize: (ids: number[]) => void;
   organizingIds: Set<number>;
+  onRefetchWechat: (entry: RawEntry) => void;
+  refetchingRawId: number | null;
 }
 
 function CardList({
@@ -899,6 +951,8 @@ function CardList({
   onSelectAll,
   onOrganize,
   organizingIds,
+  onRefetchWechat,
+  refetchingRawId,
 }: CardListProps) {
   const navigate = useNavigate();
   const [isDragSelecting, setIsDragSelecting] = useState(false);
@@ -991,6 +1045,12 @@ function CardList({
             onDelete={() => onDelete(entry.id)}
             onAsk={() => handleAsk(entry)}
             onOrganize={() => onOrganize([entry.id])}
+            onRefetchWechat={
+              wechatUrlFromRawEntry(entry)
+                ? () => onRefetchWechat(entry)
+                : undefined
+            }
+            isRefetching={refetchingRawId === entry.id}
             onBeginDragSelect={() => {
               if (!selectedIds.has(entry.id)) {
                 onToggleSelect(entry.id);

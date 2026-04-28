@@ -487,11 +487,11 @@ impl KefuDesktopHandler {
         let outcome = crate::url_ingest::ingest_url(crate::url_ingest::IngestRequest {
             url,
             origin_tag: origin.clone(),
-            // Prefer the HTTP extractor for WeChat articles. It avoids
-            // Playwright's brittle network-idle waits while preserving the
-            // quality gate before anything is written.
-            prefer_playwright: Some(false),
-            fetch_timeout: std::time::Duration::from_secs(60),
+            // Auto-route mp.weixin.qq.com through Playwright so the dedicated
+            // browser-profile fallback can handle WeChat anti-bot pages.
+            // Non-WeChat URLs still use the generic HTTP extractor.
+            prefer_playwright: None,
+            fetch_timeout: std::time::Duration::from_secs(180),
             // kefu has never supported a text-fallback path —
             // `allow_text_fallback: None` keeps the original v2
             // contract of "fetch fails → tell user to copy/paste".
