@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -10,9 +10,11 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
-import { getWikiGraph, listWikiPages } from "@/api/wiki/repository";
-import type { WikiPageSummary } from "@/api/wiki/types";
+import { getWikiGraph, listWikiPages, searchWikiPages } from "@/api/wiki/repository";
+import type { WikiPageSummary, WikiSearchHit } from "@/api/wiki/types";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ConfidenceBadge } from "./components/ConfidenceBadge";
+import { SearchHighlight } from "./components/SearchHighlight";
 
 type SortMode = "recent" | "oldest" | "words" | "refs";
 type FilterMode = "all" | "concept" | "derived";
@@ -113,11 +115,49 @@ function pageKindLabel(page: WikiPageSummary): string {
   return "知识页";
 }
 
+function includesQuery(value: string | null | undefined, query: string): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!value || !normalized) return false;
+  return value.toLocaleLowerCase().includes(normalized);
+}
+
+function searchHitSourceLabel(hit: WikiSearchHit, query: string): string {
+  if (includesQuery(hit.page.title, query)) return "标题";
+  if (includesQuery(hit.page.summary, query)) return "摘要";
+  if (includesQuery(hit.page.slug, query)) return "路径";
+  if (hit.snippet.trim()) return "正文";
+  return "相关内容";
+}
+
+function searchHitSummary(hit: WikiSearchHit): string {
+  const snippet = hit.snippet.trim();
+  return snippet || displaySummary(hit.page);
+}
+
+function SearchEmptyState({ query }: { query: string }) {
+  return (
+    <div className="ds-empty-state ds-empty-state--compact py-8">
+      <div className="ds-empty-title">未找到「{query}」相关页面</div>
+      <p className="ds-empty-desc mt-2">
+        试试{" "}
+        <Link to="/ask" className="underline text-primary">
+          问 AI
+        </Link>
+        ，它可能基于你已有的素材给出答案。
+      </p>
+    </div>
+  );
+}
+
 export function KnowledgePagesList() {
   const navigate = useNavigate();
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const rawSearchTerm = searchTerm.trim();
+  const debouncedQuery = useDebouncedValue(rawSearchTerm, 250);
+  const isSearching = rawSearchTerm.length > 0;
+  const isDebouncingSearch = isSearching && rawSearchTerm !== debouncedQuery;
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<GroupKey, boolean>>({
     today: true,
@@ -136,7 +176,14 @@ export function KnowledgePagesList() {
   const graphQuery = useQuery({
     queryKey: ["wiki", "graph", "page-list-degrees"],
     queryFn: () => getWikiGraph(),
-    enabled: sortMode === "refs",
+    enabled: sortMode === "refs" && !isSearching,
+    staleTime: 30_000,
+  });
+
+  const searchQuery = useQuery({
+    queryKey: ["wiki", "search", debouncedQuery],
+    queryFn: () => searchWikiPages(debouncedQuery),
+    enabled: debouncedQuery.length > 0,
     staleTime: 30_000,
   });
 
@@ -161,17 +208,12 @@ export function KnowledgePagesList() {
   }, [graphQuery.data]);
 
   const displayPages = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
     return [...pages]
       .filter((page) => {
         const kind = classifyPage(page);
         if (filterMode === "concept" && kind !== "concept") return false;
         if (filterMode === "derived" && kind !== "derived") return false;
-        if (!q) return true;
-        return [page.title, page.summary, page.slug, pageKindLabel(page)]
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
+        return true;
       })
       .sort((a, b) => {
         if (sortMode === "oldest") return toTime(a.created_at) - toTime(b.created_at);
@@ -183,7 +225,12 @@ export function KnowledgePagesList() {
         }
         return toTime(b.created_at) - toTime(a.created_at);
       });
-  }, [degreeById, filterMode, pages, searchTerm, sortMode]);
+  }, [degreeById, filterMode, pages, sortMode]);
+
+  const searchHits: WikiSearchHit[] = useMemo(
+    () => searchQuery.data?.hits ?? [],
+    [searchQuery.data],
+  );
 
   const groupedPages = useMemo(() => {
     const groups: Record<GroupKey, WikiPageSummary[]> = {
@@ -205,8 +252,10 @@ export function KnowledgePagesList() {
 
   const total = listQuery.data?.total_count ?? pages.length;
   const largeList = pages.length >= 50;
-  const searchActive = searchTerm.trim().length > 0;
-  const defaultFocusedSlug = displayPages[1]?.slug ?? displayPages[0]?.slug ?? null;
+  const visibleCount = isSearching ? searchHits.length : displayPages.length;
+  const defaultFocusedSlug = isSearching
+    ? searchHits[0]?.page.slug ?? null
+    : displayPages[1]?.slug ?? displayPages[0]?.slug ?? null;
   const activeFocusedSlug = focusedSlug ?? defaultFocusedSlug;
 
   if (listQuery.isLoading) {
@@ -280,8 +329,8 @@ export function KnowledgePagesList() {
         <div className="ds-kb-header-main">
           <h2 className="ds-kb-h">已整理的知识页面</h2>
           <p className="ds-kb-sub">
-            共 <b>{total}</b> 个页面 · 按当前筛选显示 {displayPages.length} 个
-            {largeList ? " · 已启用分组折叠" : ""}
+            共 <b>{total}</b> 个页面 · 按当前筛选显示 {visibleCount} 个
+            {largeList && !isSearching ? " · 已启用分组折叠" : ""}
           </p>
         </div>
 
@@ -324,7 +373,104 @@ export function KnowledgePagesList() {
         </div>
       </div>
 
-      {displayPages.length === 0 ? (
+      {isSearching ? (
+        <div className="ds-kb-groups" aria-label="搜索结果">
+          {isDebouncingSearch || searchQuery.isFetching ? (
+            <div className="flex items-center gap-2 py-3 text-[12px] text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" strokeWidth={1.5} />
+              搜索中…
+            </div>
+          ) : null}
+
+          {searchQuery.error ? (
+            <div className="ds-kb-error">
+              搜索失败：
+              {searchQuery.error instanceof Error
+                ? searchQuery.error.message
+                : String(searchQuery.error)}
+            </div>
+          ) : null}
+
+          {!isDebouncingSearch &&
+          !searchQuery.isFetching &&
+          !searchQuery.error &&
+          searchHits.length === 0 ? (
+            <SearchEmptyState query={rawSearchTerm} />
+          ) : null}
+
+          {searchHits.length > 0 ? (
+            <section className="ds-kb-group" aria-label="搜索命中页面">
+              <div className="ds-kb-group-head" aria-hidden="true">
+                <span>找到 {searchQuery.data?.total_matches ?? searchHits.length} 个相关页面</span>
+                <span className="ds-kb-count-badge">{searchHits.length}</span>
+              </div>
+              <ul className="ds-kb-list">
+                {searchHits.map((hit, index) => {
+                  const page = hit.page;
+                  const target = `/wiki/${encodeURIComponent(page.slug)}`;
+                  const kind = classifyPage(page);
+                  const untitled = isUntitledPage(page);
+                  const focused = activeFocusedSlug === page.slug;
+                  const summary = searchHitSummary(hit);
+                  return (
+                    <li key={page.slug}>
+                      <button
+                        type="button"
+                        className="ds-kb-item"
+                        data-focused={focused}
+                        style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
+                        onFocus={() => setFocusedSlug(page.slug)}
+                        onMouseEnter={() => setFocusedSlug(page.slug)}
+                        onClick={() => navigate(target)}
+                      >
+                        <span className="ds-kb-item-pin" aria-hidden="true" />
+                        <span className="ds-kb-icon" data-kind={kind}>
+                          {untitled ? (
+                            <Sparkles className="size-4" strokeWidth={1.5} />
+                          ) : (
+                            <FileText className="size-4" strokeWidth={1.5} />
+                          )}
+                        </span>
+                        <span className="ds-kb-body">
+                          <span className="ds-kb-title-row">
+                            <SearchHighlight
+                              text={displayTitle(page)}
+                              query={debouncedQuery || rawSearchTerm}
+                              className="ds-kb-title"
+                            />
+                            <span className="ds-kb-type" data-kind={kind}>
+                              {pageKindLabel(page)}
+                            </span>
+                          </span>
+                          <SearchHighlight
+                            text={summary}
+                            query={debouncedQuery || rawSearchTerm}
+                            className="ds-kb-summary"
+                          />
+                          <span className="ds-kb-meta-row">
+                            <span className="ds-kb-meta-source">
+                              <Search className="size-3" strokeWidth={1.4} />
+                              命中：{searchHitSourceLabel(hit, debouncedQuery || rawSearchTerm)}
+                            </span>
+                            <span>{formatKnowledgeTime(page.created_at)}</span>
+                            <span>{estimateWords(page.byte_size)}</span>
+                            <ConfidenceBadge confidence={page.confidence} />
+                          </span>
+                        </span>
+                        <ChevronRight
+                          className="ds-kb-chevron size-4"
+                          strokeWidth={1.5}
+                          aria-hidden="true"
+                        />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      ) : displayPages.length === 0 ? (
         <div className="ds-empty-state ds-empty-state--compact">
           <div className="ds-empty-title">没有找到匹配页面</div>
           <p className="ds-empty-desc">换一个关键词，或切回「全部」筛选。</p>
@@ -334,13 +480,13 @@ export function KnowledgePagesList() {
           {GROUPS.map(({ key, label }) => {
             const items = groupedPages[key];
             if (items.length === 0) return null;
-            const expanded = !largeList || searchActive || expandedGroups[key];
+            const expanded = !largeList || expandedGroups[key];
             return (
               <section className="ds-kb-group" key={key} aria-label={`${label}页面`}>
                 <button
                   type="button"
                   className="ds-kb-group-head"
-                  disabled={!largeList || searchActive}
+                  disabled={!largeList}
                   onClick={() =>
                     setExpandedGroups((current) => ({
                       ...current,
@@ -350,7 +496,7 @@ export function KnowledgePagesList() {
                 >
                   <span>{label}</span>
                   <span className="ds-kb-count-badge">{items.length}</span>
-                  {largeList && !searchActive ? (
+                  {largeList ? (
                     <ChevronDown
                       className="size-3"
                       strokeWidth={1.5}

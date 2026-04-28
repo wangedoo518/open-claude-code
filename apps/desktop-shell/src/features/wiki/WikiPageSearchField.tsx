@@ -44,6 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 import { searchWikiPages } from "@/api/wiki/repository";
 import type { WikiSearchHit } from "@/api/wiki/types";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 export interface WikiPageSearchFieldProps {
   /** Currently selected slug (controlled). Empty/undefined → unselected. */
@@ -61,16 +62,6 @@ export interface WikiPageSearchFieldProps {
 const DEBOUNCE_MS = 300;
 const MIN_QUERY = 1;
 const RESULT_LIMIT = 20;
-
-/** Tiny local debounce — kept inline to avoid cross-feature imports. */
-function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
-}
 
 export function WikiPageSearchField({
   value,

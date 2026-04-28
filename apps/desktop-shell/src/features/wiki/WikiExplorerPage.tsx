@@ -68,6 +68,7 @@ import {
   searchWikiPages,
 } from "@/api/wiki/repository";
 import type { WikiPageSummary, WikiSearchHit } from "@/api/wiki/types";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 /**
  * Selection state for the left pane. Concept pages are identified
@@ -95,20 +96,6 @@ const wikiKeys = {
   log: () => ["wiki", "log"] as const,
   search: (q: string) => ["wiki", "search", q] as const,
 };
-
-/**
- * Debounce a string value. Used so the search query only fires a
- * request once the user has stopped typing for `delay` ms. Saves
- * one request per keystroke on short queries.
- */
-function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // ACTIVE PATH — WikiTab (v2 multi-tab browser)
