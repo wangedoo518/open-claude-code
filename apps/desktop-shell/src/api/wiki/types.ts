@@ -270,6 +270,7 @@ export interface WikiPageSummary {
   summary: string;
   purpose?: string[];
   expressed_in?: string[];
+  source_refs?: string[];
   source_raw_id?: number | null;
   created_at: string;
   byte_size: number;

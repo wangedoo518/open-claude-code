@@ -3489,6 +3489,10 @@ pub struct WikiPageSummary {
     /// `doc:<slug>`. Empty means the page has not yet been explicitly used.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expressed_in: Vec<String>,
+    /// Source references from frontmatter `source_refs`, e.g. `raw:00001`
+    /// or `wiki:another-page`. Empty means lineage is only implicit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_refs: Vec<String>,
     /// Optional raw/ entry id that seeded this page.
     pub source_raw_id: Option<u32>,
     /// ISO-8601 datetime from the frontmatter.
@@ -4456,6 +4460,7 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 summary,
                 purpose,
                 expressed_in,
+                source_refs,
                 source_raw_id,
                 created_at,
                 last_verified,
@@ -4474,6 +4479,7 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 summary,
                 purpose,
                 expressed_in,
+                source_refs,
                 source_raw_id,
                 created_at,
                 byte_size: metadata.len(),
@@ -4652,6 +4658,7 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
         _t_summary,
         _t_purpose,
         _t_expressed_in,
+        _t_source_refs,
         target_source_raw,
         _t_created,
         _t_last_verified,
@@ -4788,8 +4795,16 @@ pub fn get_page_graph(paths: &WikiPaths, target_slug: &str) -> Result<PageGraph>
     let content =
         fs::read_to_string(&target_path).map_err(|e| WikiStoreError::io(target_path.clone(), e))?;
     let body = strip_frontmatter(&content);
-    let (title, summary, _purpose, _expressed_in, _source_raw, _created_at, _last_verified) =
-        parse_wiki_frontmatter_fields(&content);
+    let (
+        title,
+        summary,
+        _purpose,
+        _expressed_in,
+        _source_refs,
+        _source_raw,
+        _created_at,
+        _last_verified,
+    ) = parse_wiki_frontmatter_fields(&content);
     let summary_opt = if summary.is_empty() {
         None
     } else {
@@ -4939,6 +4954,7 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
             summary,
             purpose,
             expressed_in,
+            source_refs,
             source_raw_id,
             created_at,
             last_verified,
@@ -4979,6 +4995,7 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
                 summary,
                 purpose,
                 expressed_in,
+                source_refs,
                 source_raw_id,
                 created_at,
                 byte_size: metadata.len(),
@@ -5088,8 +5105,16 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
     let content =
         fs::read_to_string(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
     let metadata = fs::metadata(path).map_err(|e| WikiStoreError::io(path.to_path_buf(), e))?;
-    let (title, summary, purpose, expressed_in, source_raw_id, created_at, last_verified) =
-        parse_wiki_frontmatter_fields(&content);
+    let (
+        title,
+        summary,
+        purpose,
+        expressed_in,
+        source_refs,
+        source_raw_id,
+        created_at,
+        last_verified,
+    ) = parse_wiki_frontmatter_fields(&content);
     let confidence = content
         .lines()
         .find(|l| l.trim_start().starts_with("confidence:"))
@@ -5101,6 +5126,7 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         summary,
         purpose,
         expressed_in,
+        source_refs,
         source_raw_id,
         created_at,
         byte_size: metadata.len(),
@@ -5110,15 +5136,16 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
     })
 }
 
-/// Pull `title`, `summary`, `source_raw_id`, `created_at` out of the
+/// Pull `title`, `summary`, lineage refs, and timestamps out of the
 /// YAML frontmatter of a wiki page. Tolerant of missing fields —
-/// returns empty strings / `None` rather than erroring. Same
-/// defensive posture as `parse_frontmatter_fields` for raw entries.
+/// returns empty strings / empty vectors / `None` rather than erroring.
+/// Same defensive posture as `parse_frontmatter_fields` for raw entries.
 fn parse_wiki_frontmatter_fields(
     content: &str,
 ) -> (
     String,
     String,
+    Vec<String>,
     Vec<String>,
     Vec<String>,
     Option<u32>,
@@ -5129,12 +5156,14 @@ fn parse_wiki_frontmatter_fields(
     let mut summary = String::new();
     let mut purpose: Vec<String> = Vec::new();
     let mut expressed_in: Vec<String> = Vec::new();
+    let mut source_refs: Vec<String> = Vec::new();
     let mut source_raw_id: Option<u32> = None;
     let mut created_at = String::new();
     let mut last_verified: Option<String> = None;
     let mut in_frontmatter = false;
     let mut collecting_purpose = false;
     let mut collecting_expressed_in = false;
+    let mut collecting_source_refs = false;
     for line in content.lines() {
         if line == "---" {
             if in_frontmatter {
@@ -5165,6 +5194,15 @@ fn parse_wiki_frontmatter_fields(
                 collecting_expressed_in = false;
             }
         }
+        if collecting_source_refs {
+            if let Some(rest) = trimmed.strip_prefix("- ") {
+                push_expressed_ref_value(&mut source_refs, rest);
+                continue;
+            }
+            if !line.starts_with(' ') && !line.starts_with('\t') {
+                collecting_source_refs = false;
+            }
+        }
         if let Some(rest) = line.strip_prefix("title: ") {
             title = rest.to_string();
         } else if let Some(rest) = line.strip_prefix("summary: ") {
@@ -5175,6 +5213,9 @@ fn parse_wiki_frontmatter_fields(
         } else if let Some(rest) = line.strip_prefix("expressed_in:") {
             collecting_expressed_in = true;
             parse_inline_expressed_ref_values(&mut expressed_in, rest);
+        } else if let Some(rest) = line.strip_prefix("source_refs:") {
+            collecting_source_refs = true;
+            parse_inline_expressed_ref_values(&mut source_refs, rest);
         } else if let Some(rest) = line.strip_prefix("source_raw_id: ") {
             source_raw_id = rest.trim().parse().ok();
         } else if let Some(rest) = line.strip_prefix("created_at: ") {
@@ -5188,6 +5229,7 @@ fn parse_wiki_frontmatter_fields(
         summary,
         purpose,
         expressed_in,
+        source_refs,
         source_raw_id,
         created_at,
         last_verified,
@@ -8636,7 +8678,7 @@ mod tests {
     #[test]
     fn parse_wiki_frontmatter_extracts_purpose_lenses() {
         let content = "---\ntype: concept\nstatus: draft\ntitle: T\nsummary: S\npurpose:\n  - writing\n  - research\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
-        let (_title, _summary, purpose, _expressed_in, _raw, _created, _verified) =
+        let (_title, _summary, purpose, _expressed_in, _source_refs, _raw, _created, _verified) =
             parse_wiki_frontmatter_fields(content);
         assert_eq!(purpose, vec!["writing", "research"]);
     }
@@ -8644,9 +8686,17 @@ mod tests {
     #[test]
     fn parse_wiki_frontmatter_extracts_expressed_refs() {
         let content = "---\ntype: concept\nstatus: active\ntitle: T\nsummary: S\npurpose: [writing]\nexpressed_in:\n  - ask:session-123\n  - doc:project-memo\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
-        let (_title, _summary, _purpose, expressed_in, _raw, _created, _verified) =
+        let (_title, _summary, _purpose, expressed_in, _source_refs, _raw, _created, _verified) =
             parse_wiki_frontmatter_fields(content);
         assert_eq!(expressed_in, vec!["ask:session-123", "doc:project-memo"]);
+    }
+
+    #[test]
+    fn parse_wiki_frontmatter_extracts_source_refs() {
+        let content = "---\ntype: concept\nstatus: active\ntitle: T\nsummary: S\npurpose: [research]\nsource_refs:\n  - raw:00001\n  - wiki:transformer\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
+        let (_title, _summary, _purpose, _expressed_in, source_refs, _raw, _created, _verified) =
+            parse_wiki_frontmatter_fields(content);
+        assert_eq!(source_refs, vec!["raw:00001", "wiki:transformer"]);
     }
 
     #[test]
@@ -8706,6 +8756,7 @@ mod tests {
         assert_eq!(summary.summary, "Updated");
         assert_eq!(summary.purpose, vec!["personal", "research"]);
         assert_eq!(summary.expressed_in, vec!["ask:session-123"]);
+        assert_eq!(summary.source_refs, vec!["raw:00001"]);
         assert_eq!(summary.source_raw_id, Some(7));
         assert_eq!(body.trim(), "Updated body.");
     }

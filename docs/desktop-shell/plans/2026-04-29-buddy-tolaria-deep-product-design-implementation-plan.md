@@ -448,9 +448,24 @@ Tolaria-inspired Buddy design.
   through `vault_git_diff(staged=true)` but rejected by
   `vault_git_discard_hunk`.
 
+## Implemented Slice 34
+
+- Wiki `source_refs` are now first-class summary metadata rather than only a
+  save-time validation field: list, backlink, search, graph-adjacent reads, and
+  page detail parsing all preserve the frontmatter lineage refs.
+- Wiki Article displays `source_refs` as compact source chips near the page
+  metadata, giving users a low-friction way to see where a knowledge page came
+  from without opening YAML.
+- Direct-edit fallback Markdown now includes `source_refs` alongside
+  `expressed_in`, so pages created or repaired through the editor keep both
+  Tolaria-style lineage directions visible.
+- Rust coverage verifies `source_refs` parsing and confirms full-frontmatter
+  edits expose the preserved source refs in `WikiPageSummary`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
+- `cd rust && cargo test -p wiki_store source_refs`
 - `cd apps/desktop-shell/src-tauri && cargo check`
 - `cd rust && cargo check --workspace`
 - `cd rust && cargo test -p wiki_store`

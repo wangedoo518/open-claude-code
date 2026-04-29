@@ -505,9 +505,7 @@ pub async fn execute_maintain(
         MaintainAction::UpdateExisting {
             target_page_slug,
             purpose_lenses,
-        } => {
-            update_existing(paths, inbox_id, &target_page_slug, &purpose_lenses)
-        }
+        } => update_existing(paths, inbox_id, &target_page_slug, &purpose_lenses),
         MaintainAction::Reject { reason } => reject(paths, inbox_id, &reason),
     }
 }
@@ -3858,6 +3856,7 @@ mod tests {
             summary: "A neural network architecture".to_string(),
             purpose: Vec::new(),
             expressed_in: Vec::new(),
+            source_refs: Vec::new(),
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -3882,6 +3881,7 @@ mod tests {
             summary: "A neural network".to_string(),
             purpose: Vec::new(),
             expressed_in: Vec::new(),
+            source_refs: Vec::new(),
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -3904,6 +3904,7 @@ mod tests {
             summary: "Core concepts of neural networks".to_string(),
             purpose: Vec::new(),
             expressed_in: Vec::new(),
+            source_refs: Vec::new(),
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,

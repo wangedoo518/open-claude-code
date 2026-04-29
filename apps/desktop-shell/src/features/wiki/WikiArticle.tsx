@@ -8,7 +8,15 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import { CheckCircle2, GitBranch, Loader2, MessageCircleQuestion, Pencil, X } from "lucide-react";
+import {
+  CheckCircle2,
+  GitBranch,
+  Link2,
+  Loader2,
+  MessageCircleQuestion,
+  Pencil,
+  X,
+} from "lucide-react";
 
 import { getVaultGitStatus, getWikiPage, putWikiPage } from "@/api/wiki/repository";
 import type { WikiPageSummary } from "@/api/wiki/types";
@@ -100,11 +108,15 @@ function buildEditableMarkdown(summary: WikiPageSummary, body: string): string {
   const expressedInBlock = expressedIn.length
     ? `expressed_in:\n${expressedIn.map((reference) => `  - ${reference}`).join("\n")}\n`
     : "expressed_in: []\n";
+  const sourceRefs = summary.source_refs ?? [];
+  const sourceRefsBlock = sourceRefs.length
+    ? `source_refs:\n${sourceRefs.map((reference) => `  - ${reference}`).join("\n")}\n`
+    : "source_refs: []\n";
   const sourceRaw =
     typeof summary.source_raw_id === "number"
       ? `source_raw_id: ${summary.source_raw_id}\n`
       : "";
-  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${expressedInBlock}${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
+  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${expressedInBlock}${sourceRefsBlock}${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
 }
 
 interface DraftValidation {
@@ -354,6 +366,7 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   const editableMarkdown = data.content ?? buildEditableMarkdown(summary, body);
   const purpose = summary.purpose ?? [];
   const expressedIn = summary.expressed_in ?? [];
+  const sourceRefs = summary.source_refs ?? [];
 
   const handleEdit = () => {
     setDraft(editableMarkdown);
@@ -479,7 +492,9 @@ export function WikiArticle({ slug }: WikiArticleProps) {
       </h1>
 
       {/* Metadata row — component-spec.md §3.3 */}
-      <div className="mb-6 flex items-center gap-2 text-[11px] text-muted-foreground">
+      <div
+        className={`${sourceRefs.length > 0 ? "mb-3" : "mb-6"} flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground`}
+      >
         <span className={`rounded px-2 py-0.5 text-[10px] font-medium ${categoryStyle}`}>
           {localizePageKind(category)}
         </span>
@@ -541,6 +556,30 @@ export function WikiArticle({ slug }: WikiArticleProps) {
           编辑
         </button>
       </div>
+
+      {sourceRefs.length > 0 && (
+        <div
+          className="mb-6 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground"
+          aria-label="来源引用"
+        >
+          <Link2 className="size-3.5 shrink-0 text-primary" />
+          <span className="shrink-0 font-medium text-foreground/80">来源</span>
+          {sourceRefs.slice(0, 5).map((reference, index) => (
+            <span
+              key={`${reference}-${index}`}
+              className="max-w-[220px] truncate rounded bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+              title={reference}
+            >
+              {reference}
+            </span>
+          ))}
+          {sourceRefs.length > 5 && (
+            <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium">
+              +{sourceRefs.length - 5}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Summary */}
       {summary.summary && (
