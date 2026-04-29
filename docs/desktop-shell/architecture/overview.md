@@ -70,6 +70,10 @@ This document answers: how `desktop-shell` is currently organized.
   `apps/desktop-shell/src/features/purpose/purpose-lenses.ts`; the default
   frontmatter values are `writing`, `building`, `operating`, `learning`,
   `personal`, and `research`.
+- Home/Pulse reads `GET /api/wiki/pages` alongside stats/patrol/Git state to
+  render a weekly Purpose Lens digest: each default lens shows new absorbed
+  pages, reusable/expressible pages, and recent page titles, with a warning
+  when wiki pages lack `purpose`.
 - Ask Purpose mode is carried on
   `POST /api/desktop/sessions/{id}/messages` as optional `purpose` values.
   The Rust layer normalizes the slugs, stores them on

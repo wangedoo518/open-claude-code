@@ -17,7 +17,7 @@ const routes = [
   {
     name: "Home / Pulse",
     hash: "/",
-    mustContain: ["Home / Pulse", "外脑", "最近 Git 操作"],
+    mustContain: ["Home / Pulse", "外脑", "本周目的流动", "Smoke Edit Page", "最近 Git 操作"],
     check: async (page) => {
       await runStatusBarLinkCheck(page);
       await runCommandPaletteManifestCheck(page);
@@ -114,6 +114,7 @@ async function seedWikiEditPage() {
   const status = await response.json();
   const conceptsDir = path.join(status.vault_path, "wiki", "concepts");
   await mkdir(conceptsDir, { recursive: true });
+  const createdAt = new Date().toISOString();
   await writeFile(
     path.join(conceptsDir, `${SMOKE_SLUG}.md`),
     `---
@@ -125,7 +126,7 @@ title: Smoke Edit Page
 summary: Browser smoke fixture for wiki editing
 purpose:
   - learning
-created_at: 2026-04-29T00:00:00Z
+created_at: ${createdAt}
 ---
 
 Original smoke body.

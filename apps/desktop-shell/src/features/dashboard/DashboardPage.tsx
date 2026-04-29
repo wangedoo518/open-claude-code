@@ -23,9 +23,27 @@ import {
   getVaultGitStatus,
   getPatrolReport,
   getWikiStats,
+  listWikiPages,
   listInboxEntries,
 } from "@/api/wiki/repository";
-import type { VaultGitAuditEntry } from "@/api/wiki/types";
+import type { VaultGitAuditEntry, WikiPageSummary } from "@/api/wiki/types";
+import {
+  PURPOSE_LENSES,
+  type PurposeLensId,
+} from "@/features/purpose/purpose-lenses";
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const EXPRESSIBLE_CATEGORIES = new Set(["concept", "people", "topic", "compare"]);
+
+type PurposeDigestItem = {
+  id: PurposeLensId;
+  label: string;
+  output: string;
+  weeklyCount: number;
+  readyCount: number;
+  totalCount: number;
+  recentPages: Array<Pick<WikiPageSummary, "slug" | "title" | "created_at">>;
+};
 
 export function DashboardPage() {
   const statsQuery = useQuery({
@@ -64,12 +82,22 @@ export function DashboardPage() {
     staleTime: 10_000,
     refetchInterval: 20_000,
   });
+  const pagesQuery = useQuery({
+    queryKey: ["wiki", "pages", "pulse-purpose"],
+    queryFn: () => listWikiPages(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
 
   const pendingInbox = inboxQuery.data?.pending_count ?? 0;
   const stats = statsQuery.data;
   const patrol = patrolQuery.data;
   const git = gitQuery.data;
   const latestGitAudit = gitAuditQuery.data?.entries[0] ?? null;
+  const purposeDigest = useMemo(
+    () => buildPurposeDigest(pagesQuery.data?.pages ?? []),
+    [pagesQuery.data?.pages],
+  );
   const activeExternalAiGrants =
     externalAiQuery.data?.grants.filter((grant) => grant.enabled).length ?? 0;
   const schemaViolations = patrol?.summary.schema_violations ?? 0;
@@ -122,7 +150,11 @@ export function DashboardPage() {
   const gitRisk = git?.dirty ? git.changed_count : 0;
   const totalRisks = pendingInbox + schemaViolations + stalePages + orphanPages + gitRisk;
   const isLoading =
-    statsQuery.isLoading || inboxQuery.isLoading || patrolQuery.isLoading || gitQuery.isLoading;
+    statsQuery.isLoading ||
+    inboxQuery.isLoading ||
+    patrolQuery.isLoading ||
+    gitQuery.isLoading ||
+    pagesQuery.isLoading;
   const headline =
     totalRisks > 0
       ? `外脑体检发现 ${totalRisks} 项需要处理`
@@ -206,6 +238,12 @@ export function DashboardPage() {
           />
         </section>
 
+        <PurposeWeeklyDigest
+          items={purposeDigest.items}
+          missingPurposeCount={purposeDigest.missingPurposeCount}
+          loading={pagesQuery.isLoading}
+        />
+
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="rounded-lg border border-border bg-card px-5 py-5">
             <div className="flex items-center gap-2">
@@ -281,6 +319,175 @@ export function DashboardPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+function buildPurposeDigest(pages: WikiPageSummary[]): {
+  items: PurposeDigestItem[];
+  missingPurposeCount: number;
+} {
+  const now = Date.now();
+  const byId = new Map<PurposeLensId, PurposeDigestItem>(
+    PURPOSE_LENSES.map((lens) => [
+      lens.id,
+      {
+        id: lens.id,
+        label: lens.zhLabel,
+        output: lens.output,
+        weeklyCount: 0,
+        readyCount: 0,
+        totalCount: 0,
+        recentPages: [],
+      },
+    ]),
+  );
+  let missingPurposeCount = 0;
+
+  for (const page of pages) {
+    const purposeIds = (page.purpose ?? []).filter((id): id is PurposeLensId =>
+      byId.has(id as PurposeLensId),
+    );
+    if (!purposeIds.length) {
+      missingPurposeCount += 1;
+      continue;
+    }
+
+    const isRecent = isWithinLastWeek(page.created_at, now);
+    const isReady = isExpressiblePage(page);
+    for (const purpose of purposeIds) {
+      const item = byId.get(purpose);
+      if (!item) continue;
+      item.totalCount += 1;
+      if (isReady) item.readyCount += 1;
+      if (isRecent) {
+        item.weeklyCount += 1;
+        item.recentPages.push({
+          slug: page.slug,
+          title: page.title || page.slug,
+          created_at: page.created_at,
+        });
+      }
+    }
+  }
+
+  const items = Array.from(byId.values()).map((item) => ({
+    ...item,
+    recentPages: item.recentPages
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+      .slice(0, 2),
+  }));
+
+  return { items, missingPurposeCount };
+}
+
+function isWithinLastWeek(value: string, now: number): boolean {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  return timestamp <= now && now - timestamp <= WEEK_MS;
+}
+
+function isExpressiblePage(page: WikiPageSummary): boolean {
+  if (page.category && EXPRESSIBLE_CATEGORIES.has(page.category)) return true;
+  return (page.confidence ?? 0) >= 0.6;
+}
+
+function PurposeWeeklyDigest({
+  items,
+  missingPurposeCount,
+  loading,
+}: {
+  items: PurposeDigestItem[];
+  missingPurposeCount: number;
+  loading: boolean;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <HeartPulse className="size-4 text-primary" />
+            <h2 className="text-[15px] font-medium">本周目的流动</h2>
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+            每个 purpose 本周吸收了什么、还能表达什么。
+          </p>
+        </div>
+        <Link
+          to="/wiki"
+          className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-card px-3 text-[12px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+        >
+          打开 Knowledge
+          <ArrowRight className="size-3.5" />
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-4 text-[12px] text-muted-foreground">
+          正在读取 purpose lens…
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((item) => (
+            <Link
+              key={item.id}
+              to={`/wiki?purpose=${item.id}`}
+              className="min-h-[158px] rounded-lg border border-border bg-card px-4 py-4 transition-colors hover:border-primary/40 hover:bg-muted/30"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[14px] font-medium">{item.label}</div>
+                  <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                    {item.output}
+                  </div>
+                </div>
+                <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-[12px]">
+                <DigestMetric label="本周吸收" value={item.weeklyCount} />
+                <DigestMetric label="可表达" value={item.readyCount} />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {item.recentPages.length ? (
+                  item.recentPages.map((page) => (
+                    <div
+                      key={`${item.id}-${page.slug}`}
+                      className="min-w-0 truncate rounded bg-muted/50 px-2 py-1.5 text-[12px] text-muted-foreground"
+                    >
+                      {page.title}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded bg-muted/50 px-2 py-1.5 text-[12px] leading-5 text-muted-foreground">
+                    本周暂无新增，可从已有 {item.totalCount} 页继续提炼。
+                  </div>
+                )}
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {missingPurposeCount > 0 ? (
+        <Link
+          to="/wiki"
+          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-4 py-3 text-[12px] text-foreground"
+        >
+          <span>
+            有 {missingPurposeCount} 页缺少 purpose lens，建议进入 Knowledge 补齐。
+          </span>
+          <ArrowRight className="size-3.5 shrink-0" />
+        </Link>
+      ) : null}
+    </section>
+  );
+}
+
+function DigestMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md bg-muted/50 px-2.5 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-[18px] font-semibold leading-none">{value}</div>
+    </div>
   );
 }
 

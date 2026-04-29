@@ -354,6 +354,19 @@ Tolaria-inspired Buddy design.
   normalization plus non-leakage of hidden purpose instructions into session
   history.
 
+## Implemented Slice 27
+
+- Home/Pulse now renders a weekly Purpose Lens digest directly below the
+  external-brain health cards, showing what each purpose absorbed this week,
+  how many pages are ready to express, and the latest absorbed page titles.
+- The digest uses the same `PURPOSE_LENSES` vocabulary as frontmatter,
+  Knowledge filters, and Ask Purpose mode, keeping `writing`, `building`,
+  `operating`, `learning`, `personal`, and `research` aligned across the app.
+- Pages without a valid `purpose` are surfaced as a Knowledge follow-up item
+  from the Home screen instead of being hidden inside patrol details.
+- Browser smoke now seeds a current-week learning page and verifies the Home
+  Purpose Lens digest renders that absorbed wiki page.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
