@@ -17,6 +17,7 @@ import type {
   ExternalAiWriteGrantResponse,
   ExternalAiWritePolicy,
   ExternalAiWriteRevokeResponse,
+  GuidanceFilesResponse,
   InboxEntry,
   InboxListResponse,
   InboxResolveAction,
@@ -401,6 +402,11 @@ export async function getWikiStats(): Promise<WikiStats> {
 /** GET `/api/wiki/schema/templates` — schema templates (§2.9). */
 export async function getSchemaTemplates(): Promise<SchemaTemplate[]> {
   return fetchJson<SchemaTemplate[]>("/api/wiki/schema/templates");
+}
+
+/** GET `/api/wiki/guidance` — root/schema guidance file status for Rules Studio. */
+export async function getGuidanceFiles(): Promise<GuidanceFilesResponse> {
+  return fetchJson<GuidanceFilesResponse>("/api/wiki/guidance");
 }
 
 /**

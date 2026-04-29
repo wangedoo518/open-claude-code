@@ -6056,6 +6056,24 @@ pub struct TemplateFieldInfo {
     pub description: String,
 }
 
+/// API-facing guidance file metadata for Rules Studio.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GuidanceFilesResponse {
+    pub vault_path: String,
+    pub files: Vec<GuidanceFileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GuidanceFileInfo {
+    pub id: String,
+    pub label: String,
+    pub relative_path: String,
+    pub file_path: String,
+    pub exists: bool,
+    pub byte_size: u64,
+    pub first_heading: Option<String>,
+}
+
 /// Chinese display label for a built-in template category.
 /// Unknown categories fall back to the raw category string.
 fn template_display_name(category: &str) -> String {
@@ -6109,6 +6127,82 @@ pub fn load_schema_template_infos(paths: &WikiPaths) -> Result<Vec<SchemaTemplat
     }
     out.sort_by(|a, b| a.category.cmp(&b.category));
     Ok(out)
+}
+
+pub fn load_guidance_file_infos(paths: &WikiPaths) -> Result<GuidanceFilesResponse> {
+    let files = [
+        (
+            "root-agents",
+            "Root AGENTS.md",
+            "AGENTS.md",
+            paths.root.join("AGENTS.md"),
+        ),
+        (
+            "root-claude",
+            "Root CLAUDE.md",
+            "CLAUDE.md",
+            paths.root.join("CLAUDE.md"),
+        ),
+        (
+            "schema-agents",
+            "Schema AGENTS.md",
+            "schema/AGENTS.md",
+            paths.schema.join("AGENTS.md"),
+        ),
+        (
+            "schema-claude",
+            "Schema CLAUDE.md",
+            "schema/CLAUDE.md",
+            paths.schema_claude_md.clone(),
+        ),
+    ];
+
+    let mut out = Vec::new();
+    for (id, label, relative_path, path) in files {
+        out.push(load_guidance_file_info(id, label, relative_path, path)?);
+    }
+
+    Ok(GuidanceFilesResponse {
+        vault_path: paths.root.display().to_string(),
+        files: out,
+    })
+}
+
+fn load_guidance_file_info(
+    id: &str,
+    label: &str,
+    relative_path: &str,
+    path: PathBuf,
+) -> Result<GuidanceFileInfo> {
+    let exists = path.is_file();
+    let byte_size = if exists {
+        fs::metadata(&path)
+            .map_err(|e| WikiStoreError::io(path.clone(), e))?
+            .len()
+    } else {
+        0
+    };
+    let first_heading = if exists {
+        let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+        content
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(|line| line.trim_start_matches('#').trim().to_string())
+            .filter(|line| !line.is_empty())
+    } else {
+        None
+    };
+
+    Ok(GuidanceFileInfo {
+        id: id.to_string(),
+        label: label.to_string(),
+        relative_path: relative_path.to_string(),
+        file_path: path.to_string_lossy().to_string(),
+        exists,
+        byte_size,
+        first_heading,
+    })
 }
 
 /// Convert YAML frontmatter keys into `TemplateFieldInfo` entries.
@@ -10454,6 +10548,33 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
         let infos = load_schema_template_infos(&paths).unwrap();
         assert!(infos.is_empty());
+    }
+
+    #[test]
+    fn load_guidance_file_infos_returns_root_and_schema_shims() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let infos = load_guidance_file_infos(&paths).unwrap();
+        assert_eq!(infos.files.len(), 4);
+
+        let by_path: HashMap<&str, &GuidanceFileInfo> = infos
+            .files
+            .iter()
+            .map(|file| (file.relative_path.as_str(), file))
+            .collect();
+        for relative in ["AGENTS.md", "CLAUDE.md", "schema/AGENTS.md", "schema/CLAUDE.md"] {
+            let file = by_path
+                .get(relative)
+                .unwrap_or_else(|| panic!("missing guidance file {relative}"));
+            assert!(file.exists, "{relative} should exist");
+            assert!(file.byte_size > 0, "{relative} should have content");
+            assert!(
+                file.first_heading.is_some(),
+                "{relative} should expose a first heading"
+            );
+        }
     }
 
     // ── v2 wiki_stats tests ─────────────────────────────────────

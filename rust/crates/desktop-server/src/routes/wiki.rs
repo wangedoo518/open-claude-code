@@ -91,6 +91,7 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/wiki/schema/templates",
             get(get_schema_templates_handler),
         )
+        .route("/api/wiki/guidance", get(get_guidance_files_handler))
         .route("/api/wiki/git/status", get(get_vault_git_status_handler))
         .route("/api/wiki/git/diff", get(get_vault_git_diff_handler))
         .route("/api/wiki/git/audit", get(get_vault_git_audit_handler))

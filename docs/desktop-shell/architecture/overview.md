@@ -44,7 +44,8 @@ This document answers: how `desktop-shell` is currently organized.
 - `apps/desktop-shell/src/features/schema/SchemaEditorPage.tsx` owns Rules
   Studio. It keeps Advanced YAML / CodeMirror folded by default, reads live
   Git/Vault status, renders the `schema/templates/*.md` template catalog by
-  default, and invalidates Git state after schema saves.
+  default, renders root/schema guidance file status from `GET /api/wiki/guidance`,
+  and invalidates Git state after schema saves.
 - Feature modules own UI and feature-specific orchestration.
 - Neutral API clients under `apps/desktop-shell/src/api/` own cross-feature
   HTTP/SSE surfaces. Common Wiki repository access lives under
@@ -92,8 +93,8 @@ This document answers: how `desktop-shell` is currently organized.
   `desktop`, `wiki`, `wechat`, and `internal`.
 - `rust/crates/desktop-server/src/handlers/` owns migrated handler bodies by
   domain. Landed slices include `handlers/wiki_reports.rs` for Wiki cleanup,
-  breakdown, patrol, absorb-log, backlinks index, stats, patrol report, and
-  schema template endpoints, plus `handlers/wiki_tasks.rs` for absorb/query task endpoints and
+  breakdown, patrol, absorb-log, backlinks index, stats, patrol report, schema
+  template, and guidance status endpoints, plus `handlers/wiki_tasks.rs` for absorb/query task endpoints and
   absorb progress SSE, plus `handlers/provider_runtime.rs` for Codex
   runtime/auth and providers.json CRUD endpoints, plus
   `handlers/desktop_sessions.rs` for desktop/ask session lifecycle, source

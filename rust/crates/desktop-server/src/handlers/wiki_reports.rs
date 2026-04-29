@@ -480,3 +480,19 @@ pub(crate) async fn get_schema_templates_handler() -> Result<Json<serde_json::Va
         serde_json::to_value(&infos).unwrap_or(serde_json::json!([])),
     ))
 }
+
+/// GET /api/wiki/guidance - root/schema guidance file status for Rules Studio.
+pub(crate) async fn get_guidance_files_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let infos = wiki_store::load_guidance_file_infos(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("GUIDANCE_STATUS_FAILED: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(&infos).unwrap_or_else(|_| serde_json::json!({ "files": [] })),
+    ))
+}

@@ -236,6 +236,19 @@ Tolaria-inspired Buddy design.
 - Browser smoke now asserts Rules Studio exposes concrete concept and research
   template paths before the Advanced YAML / CodeMirror panel is opened.
 
+## Implemented Slice 18
+
+- Added `GET /api/wiki/guidance` for Rules Studio to inspect root and schema
+  guidance files without opening the Advanced editor.
+- The endpoint reports `AGENTS.md`, `CLAUDE.md`, `schema/AGENTS.md`, and
+  `schema/CLAUDE.md` existence, byte size, absolute path, relative path, and
+  first heading.
+- Rules Studio now renders a default Guidance catalog so users can see the
+  root shims that external AI and CLI agents read before writing.
+- Rust coverage verifies the four seeded guidance files exist after
+  `init_wiki`, and browser smoke asserts the Guidance catalog appears on
+  `/rules`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

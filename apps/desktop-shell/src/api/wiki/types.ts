@@ -566,6 +566,21 @@ export interface SchemaTemplateField {
   description: string;
 }
 
+export interface GuidanceFilesResponse {
+  vault_path: string;
+  files: GuidanceFileInfo[];
+}
+
+export interface GuidanceFileInfo {
+  id: string;
+  label: string;
+  relative_path: string;
+  file_path: string;
+  exists: boolean;
+  byte_size: number;
+  first_heading?: string | null;
+}
+
 /** POST /api/wiki/absorb response (§2.1). */
 export interface AbsorbTaskResponse {
   task_id: string;
