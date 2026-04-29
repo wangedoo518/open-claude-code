@@ -37,10 +37,35 @@ import {
   CheckCircle2,
   Bot,
   FileCode2,
+  GitBranch,
 } from "lucide-react";
-import { getSchemaTemplates, getWikiSchema, putWikiSchema } from "@/api/wiki/repository";
+import {
+  getSchemaTemplates,
+  getVaultGitStatus,
+  getWikiSchema,
+  putWikiSchema,
+} from "@/api/wiki/repository";
 import { Button } from "@/components/ui/button";
 import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
+
+function rulesGitStatusLabel(
+  git:
+    | {
+        git_available: boolean;
+        initialized: boolean;
+        dirty: boolean;
+        changed_count: number;
+      }
+    | undefined,
+  hasError: boolean,
+) {
+  if (hasError) return "Git 状态不可用";
+  if (!git) return "检查中";
+  if (!git.git_available) return "未安装 Git";
+  if (!git.initialized) return "Git 未启用";
+  if (git.dirty) return `${git.changed_count} 改动待 checkpoint`;
+  return "当前 clean";
+}
 
 export function SchemaEditorPage() {
   const queryClient = useQueryClient();
@@ -53,6 +78,12 @@ export function SchemaEditorPage() {
     queryKey: ["wiki", "schema", "templates"] as const,
     queryFn: () => getSchemaTemplates(),
     staleTime: 60_000,
+  });
+  const gitQuery = useQuery({
+    queryKey: ["wiki", "git", "rules"],
+    queryFn: () => getVaultGitStatus(),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -74,6 +105,7 @@ export function SchemaEditorPage() {
       setIsEditing(false);
       setSavedAt(Date.now());
       void queryClient.invalidateQueries({ queryKey: ["wiki", "schema"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
   });
 
@@ -137,6 +169,7 @@ export function SchemaEditorPage() {
             source={schemaQuery.data.source}
             byteSize={schemaQuery.data.byte_size}
             templateCount={templatesQuery.data?.length ?? 0}
+            gitStatus={rulesGitStatusLabel(gitQuery.data, Boolean(gitQuery.error))}
             isEditing={isEditing}
             draft={draft}
             onDraftChange={setDraft}
@@ -159,6 +192,7 @@ interface SchemaBodyProps {
   source: "disk";
   byteSize: number;
   templateCount: number;
+  gitStatus: string;
   isEditing: boolean;
   draft: string;
   onDraftChange: (next: string) => void;
@@ -176,6 +210,7 @@ function SchemaBody({
   source,
   byteSize,
   templateCount,
+  gitStatus,
   isEditing,
   draft,
   onDraftChange,
@@ -211,6 +246,19 @@ function SchemaBody({
           <div className="text-[12px] leading-5 text-muted-foreground">
             外部 AI 首期允许受控写入 <code>wiki/</code>、
             <code>schema/templates</code> 与 root guidance；自动写入分为本次会话有效和永久规则。
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border/50 bg-card px-4 py-3">
+        <div className="flex items-start gap-2">
+          <GitBranch className="mt-0.5 size-4 text-primary" />
+          <div className="text-[12px] leading-5 text-muted-foreground">
+            <div className="font-medium text-foreground">Git checkpoint</div>
+            <div>
+              Rules 保存会产生普通 Buddy Vault diff；当前状态：
+              <span className="ml-1 text-foreground">{gitStatus}</span>
+            </div>
           </div>
         </div>
       </div>

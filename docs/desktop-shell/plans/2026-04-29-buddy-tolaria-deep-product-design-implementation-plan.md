@@ -213,6 +213,16 @@ Tolaria-inspired Buddy design.
 - Browser smoke now visits `/inbox` and asserts the Vault checkpoint metric is
   visible.
 
+## Implemented Slice 16
+
+- Rules Studio now reads live Buddy Vault Git status and shows a compact
+  `Git checkpoint` block before the Advanced YAML / CodeMirror editor.
+- Saving `schema/CLAUDE.md` now invalidates `wiki/git` queries so Rules,
+  Home/Pulse, StatusBar, Connections, and Inbox converge on the same
+  checkpoint pressure.
+- Browser smoke now asserts Rules Studio renders the Git checkpoint surface
+  while keeping Advanced YAML / CodeMirror folded by default.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

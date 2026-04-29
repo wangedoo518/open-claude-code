@@ -20,7 +20,7 @@ const routes = [
   {
     name: "Rules Studio",
     hash: "/rules",
-    mustContain: ["Rules Studio", "Advanced YAML / CodeMirror"],
+    mustContain: ["Rules Studio", "Advanced YAML / CodeMirror", "Git checkpoint"],
     check: async (page) => {
       const advanced = page
         .locator("details")
