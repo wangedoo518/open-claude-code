@@ -78,6 +78,12 @@ const routes = [
     mustContain: ["INBOX", "Vault", "checkpoint"],
   },
   {
+    name: "Ask Purpose Lens",
+    hash: "/ask",
+    mustContain: ["ASK", "目的：自动"],
+    check: runAskPurposeLensUiCheck,
+  },
+  {
     name: "Knowledge",
     hash: "/wiki",
     mustContain: ["知识"],
@@ -418,6 +424,51 @@ async function runRulesFileEditCheck() {
   }
 }
 
+async function runAskPurposeLensApiCheck() {
+  const created = await fetchJson("/api/desktop/sessions", {
+    method: "POST",
+    body: JSON.stringify({ title: "Smoke Purpose Lens" }),
+  });
+  const sessionId = created.session.id;
+  const appended = await fetchJson(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: "请用一句话说明 Buddy 的研究用途。",
+      mode: "follow_up",
+      purpose: ["Research", "research", "bad space"],
+    }),
+  });
+
+  const basis = appended.session.context_basis;
+  if (!basis || !Array.isArray(basis.purpose_lenses)) {
+    throw new Error("ask purpose smoke expected context_basis.purpose_lenses");
+  }
+  if (basis.purpose_lenses.length !== 1 || basis.purpose_lenses[0] !== "research") {
+    throw new Error(`ask purpose smoke expected normalized research lens, got ${JSON.stringify(basis.purpose_lenses)}`);
+  }
+
+  const userMessage = appended.session.session.messages.find((message) => message.role === "user");
+  const userBlocks = JSON.stringify(userMessage?.blocks ?? []);
+  if (!userBlocks.includes("Buddy 的研究用途")) {
+    throw new Error("ask purpose smoke expected the original user message to persist");
+  }
+  if (userBlocks.includes("Purpose Lens")) {
+    throw new Error("ask purpose smoke leaked the hidden purpose instruction into user history");
+  }
+}
+
+async function runAskPurposeLensUiCheck(page) {
+  const purposeButton = page.getByRole("button", { name: /Purpose Lens：自动匹配/ });
+  await purposeButton.waitFor({ state: "visible", timeout: 10_000 });
+  await purposeButton.click();
+  await page.getByRole("menuitemradio", { name: /研究 · Research/ }).click();
+  await page.waitForFunction(
+    () => document.body.innerText.includes("目的：研究"),
+    null,
+    { timeout: 10_000 },
+  );
+}
+
 async function runWikiEditCheck(page) {
   const updatedContent = `---
 type: concept
@@ -462,6 +513,7 @@ async function run() {
   await runGitLineDiscardCheck();
   await runGitChangeBlockDiscardCheck();
   await runRulesFileEditCheck();
+  await runAskPurposeLensApiCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const page = await browser.newPage();

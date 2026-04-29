@@ -115,7 +115,7 @@ export interface UseAskSessionResult {
    */
   onSend: (
     text: string,
-    options?: { mode?: ContextMode },
+    options?: { mode?: ContextMode; purpose?: string[] },
   ) => Promise<void>;
   /**
    * Forget the current session and start a new one on the next
@@ -279,12 +279,14 @@ export function useAskSession(): UseAskSessionResult {
       sessionId,
       text,
       mode,
+      purpose,
     }: {
       sessionId: string;
       text: string;
       mode?: ContextMode;
+      purpose?: string[];
     }) => {
-      return appendMessage(sessionId, text, mode ? { mode } : undefined);
+      return appendMessage(sessionId, text, { mode, purpose });
     },
     onSuccess: (response, variables) => {
       if (!isUsableSessionDetail(response.session)) {
@@ -308,7 +310,7 @@ export function useAskSession(): UseAskSessionResult {
   });
 
   const onSend = useCallback(
-    async (text: string, options?: { mode?: ContextMode }) => {
+    async (text: string, options?: { mode?: ContextMode; purpose?: string[] }) => {
       // Lazy-create path: only reach createSession when the user
       // actually wants to send something and has no session yet.
       //
@@ -333,6 +335,7 @@ export function useAskSession(): UseAskSessionResult {
         sessionId: idToUse,
         text,
         mode: options?.mode,
+        purpose: options?.purpose,
       });
     },
     [activeId, sendMutation, ensureMutation]

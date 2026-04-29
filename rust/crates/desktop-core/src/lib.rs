@@ -1001,6 +1001,12 @@ pub struct AppendDesktopMessageRequest {
     /// `"follow_up" | "source_first" | "combine"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<ContextMode>,
+    /// Purpose Lens values that should shape this Ask turn. The
+    /// backend normalizes and validates these slugs before including
+    /// them in prompt context, so older clients can omit the field and
+    /// external clients cannot inject arbitrary prompt text here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -3831,11 +3837,15 @@ impl DesktopState {
         session_id: &str,
         message: String,
         mode: Option<crate::ask_context::ContextMode>,
+        purpose: Option<Vec<String>>,
     ) -> Result<DesktopSessionDetail, DesktopStateError> {
         // A1: resolve the effective context mode. `None` (old HTTP
         // bodies, WeChat bridges, scheduled tasks, dispatch items)
         // maps to FollowUp so legacy behaviour is preserved.
         let user_mode = mode.unwrap_or_default();
+        let purpose_lenses =
+            crate::ask_context::normalize_purpose_lenses(purpose.unwrap_or_default());
+        let purpose_instruction = crate::ask_context::purpose_instruction_block(&purpose_lenses);
 
         // A2: peek at the session binding (if any) before we start
         // URL enrichment. Resolution fails gracefully — on any
@@ -4026,7 +4036,8 @@ impl DesktopState {
                 effective_mode,
                 history_turns_included,
                 source_bytes,
-            );
+            )
+            .with_purpose_lenses(purpose_lenses.clone());
             // A2: attach the bound source to the basis so the UI chip
             // can render without subscribing to extra events. A2 path
             // (explicit SessionSourceBinding) wins over A3 auto-bind
@@ -4275,6 +4286,7 @@ impl DesktopState {
                 &project_path,
                 &bound_prefix_for_openai,
                 marker_for_openai,
+                purpose_instruction.as_deref(),
                 has_enrichment.then(|| enriched.as_str()),
                 auto_bound_source.as_ref(),
             );
@@ -4508,6 +4520,9 @@ impl DesktopState {
                 if let Some(marker) = crate::ask_context::boundary_marker_for(effective_mode) {
                     system_prompt_text.push_str(marker);
                 }
+                if let Some(instruction) = &purpose_instruction {
+                    system_prompt_text.push_str(instruction);
+                }
                 if has_enrichment {
                     eprintln!(
                         "[live_turn] injecting url_context: {} chars into system_prompt (agentic, mode={:?})",
@@ -4730,32 +4745,26 @@ impl DesktopState {
                     if r.is_article {
                         crate::ask_context::binding::format_bound_source(s, &r.body)
                     } else {
-                        crate::ask_context::binding::format_archived_link_sentinel(
-                            s,
-                            r.kind_label,
-                        )
+                        crate::ask_context::binding::format_archived_link_sentinel(s, r.kind_label)
                     }
                 });
-                let fallback_url_context = match (&bound_prefix, has_enrichment) {
-                    (Some(bind), true) => Some(match marker_for_fallback {
-                        Some(m) => format!("{bind}{m}\n\n{enriched}"),
-                        None => format!("{bind}{enriched}"),
-                    }),
-                    (Some(bind), false) => Some(match marker_for_fallback {
-                        Some(m) => format!("{bind}{m}"),
-                        None => bind.clone(),
-                    }),
-                    (None, true) => Some(match marker_for_fallback {
-                        Some(m) => format!("{m}\n\n{enriched}"),
-                        None => enriched.clone(),
-                    }),
-                    (None, false) => {
-                        // No enrichment and no binding: if we still
-                        // have a marker (e.g. SourceFirst without a
-                        // URL), surface it as a standalone url_context
-                        // block so it shapes the LLM's answer.
-                        marker_for_fallback.map(std::string::ToString::to_string)
-                    }
+                let mut fallback_parts: Vec<String> = Vec::new();
+                if let Some(bind) = &bound_prefix {
+                    fallback_parts.push(bind.clone());
+                }
+                if let Some(marker) = marker_for_fallback {
+                    fallback_parts.push(marker.to_string());
+                }
+                if let Some(instruction) = &purpose_instruction {
+                    fallback_parts.push(instruction.clone());
+                }
+                if has_enrichment {
+                    fallback_parts.push(enriched.clone());
+                }
+                let fallback_url_context = if fallback_parts.is_empty() {
+                    None
+                } else {
+                    Some(fallback_parts.join("\n\n"))
                 };
 
                 // A4 — append the Grounded Mode instruction block to
@@ -5051,7 +5060,7 @@ impl DesktopState {
             // per-task mode selector today). Passing `None` keeps
             // the legacy behaviour unchanged.
             match self
-                .append_user_message(session_id, task.prompt.clone(), None)
+                .append_user_message(session_id, task.prompt.clone(), None, None)
                 .await
             {
                 Ok(session) => ScheduledTaskRunOutcome::success(
@@ -5070,7 +5079,7 @@ impl DesktopState {
                 .await;
 
             match self
-                .append_user_message(&session.id, task.prompt.clone(), None)
+                .append_user_message(&session.id, task.prompt.clone(), None, None)
                 .await
             {
                 Ok(session) => ScheduledTaskRunOutcome::success(
@@ -5117,7 +5126,7 @@ impl DesktopState {
             }
         };
 
-        self.append_user_message(&target_session_id, item.body.clone(), None)
+        self.append_user_message(&target_session_id, item.body.clone(), None, None)
             .await?;
         Ok(target_session_id)
     }
@@ -7685,6 +7694,7 @@ fn build_system_prompt_for_openai_compat(
     _project_path: &str,
     bound_prefix: &Option<String>,
     marker: Option<&'static str>,
+    purpose_instruction: Option<&str>,
     enrichment: Option<&str>,
     auto_bound_source: Option<&crate::ask_context::binding::SourceRef>,
 ) -> String {
@@ -7700,6 +7710,9 @@ fn build_system_prompt_for_openai_compat(
     }
     if let Some(m) = marker {
         parts.push(m.to_string());
+    }
+    if let Some(instruction) = purpose_instruction {
+        parts.push(instruction.to_string());
     }
     if let Some(content) = enrichment {
         parts.push(content.to_string());
@@ -8695,8 +8708,10 @@ mod tests {
                 AppendDesktopMessageRequest {
                     message: "Hook up the session view.".to_string(),
                     mode: None,
+                    purpose: None,
                 }
                 .message,
+                None,
                 None,
             )
             .await
@@ -9499,7 +9514,7 @@ mod tests {
             })
             .await;
         state
-            .append_user_message(&kept.id, "hello".to_string(), None)
+            .append_user_message(&kept.id, "hello".to_string(), None, None)
             .await
             .expect("append should succeed");
 

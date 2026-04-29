@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { ContextBasis } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import { purposeLensLabel } from "@/features/purpose/purpose-lenses";
 
 interface ContextBasisLabelProps {
   basis: ContextBasis | null | undefined;
@@ -53,9 +54,12 @@ export function ContextBasisLabel({
   className,
 }: ContextBasisLabelProps) {
   if (!basis) return null;
+  const purposeText = basis.purpose_lenses?.length
+    ? `目的：${basis.purpose_lenses.map(purposeLensLabel).join(" / ")}`
+    : "";
 
   // follow_up: hidden unless the caller explicitly opts in.
-  if (basis.mode === "follow_up" && !forceShowFollowUp) return null;
+  if (basis.mode === "follow_up" && !forceShowFollowUp && !purposeText) return null;
 
   let icon: React.ReactNode;
   let text: string;
@@ -79,9 +83,13 @@ export function ContextBasisLabel({
       tone = "text-muted-foreground";
       break;
   }
+  if (purposeText) {
+    text = `${purposeText} · ${text}`;
+  }
 
   const tooltipLines: string[] = [
     `mode: ${basis.mode}`,
+    `purpose_lenses: ${basis.purpose_lenses?.length ? basis.purpose_lenses.join(", ") : "—"}`,
     `history_turns_included: ${basis.history_turns_included}`,
     `source_included: ${basis.source_included}`,
     basis.source_token_hint != null

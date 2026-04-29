@@ -55,7 +55,7 @@ export async function createSession(payload: {
 export async function appendMessage(
   sessionId: string,
   message: string,
-  options?: { mode?: ContextMode },
+  options?: { mode?: ContextMode; purpose?: string[] },
 ): Promise<AppendDesktopMessageResponse> {
   // A1 sprint — optional `mode` field added to the body when the caller
   // provides one. Worker A's contract treats the field as optional and
@@ -63,6 +63,7 @@ export async function appendMessage(
   // callers keep working.
   const body: Record<string, unknown> = { message };
   if (options?.mode) body.mode = options.mode;
+  if (options?.purpose?.length) body.purpose = options.purpose;
   return fetchJson<AppendDesktopMessageResponse>(
     `/api/desktop/sessions/${sessionId}/messages`,
     {

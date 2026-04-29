@@ -338,6 +338,22 @@ Tolaria-inspired Buddy design.
 - Browser smoke verifies the StatusBar renders actionable links for Inbox,
   Git, and external AI.
 
+## Implemented Slice 26
+
+- Ask now exposes a compact Purpose Lens selector in the Composer, defaulting
+  to automatic cross-purpose behavior and allowing the user to constrain a turn
+  to writing, building, operating, learning, personal, or research.
+- `POST /api/desktop/sessions/{id}/messages` accepts optional `purpose`
+  values, normalizes and deduplicates them server-side, writes them into
+  `ContextBasis.purpose_lenses`, and injects a short Purpose Lens instruction
+  into OpenAI-compatible, agentic, and fallback prompt paths without polluting
+  the persisted user message.
+- Assistant context labels now surface selected purpose values, including
+  follow-up turns that would otherwise hide the context-basis chip.
+- Browser smoke now verifies the Ask Purpose Lens UI, and the API smoke checks
+  normalization plus non-leakage of hidden purpose instructions into session
+  history.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

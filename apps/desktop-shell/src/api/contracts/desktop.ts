@@ -242,6 +242,11 @@ export interface ContextBasis {
    *     degraded to a pre-A2 unbound turn).
    */
   bound_source_is_article?: boolean | null;
+  /**
+   * Purpose Lens slugs selected for this turn. Empty/absent means Ask
+   * used the default cross-purpose behavior.
+   */
+  purpose_lenses?: string[];
 }
 
 /* ──────────────────────────────────────────────────────────────────

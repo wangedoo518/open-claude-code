@@ -197,7 +197,7 @@ interface AskWorkbenchProps {
   errorMessage?: string;
   onSend: (
     message: string,
-    options?: { mode?: ContextMode },
+    options?: { mode?: ContextMode; purpose?: string[] },
   ) => void | Promise<void>;
   onStop?: () => void;
   onCreateSession?: () => void;
@@ -889,7 +889,7 @@ export function AskWorkbench({
   // Wrap onSend: detect ? prefix → wiki query; detect URLs → fetch; else → session send
   const handleSendWithUrlFetch = useCallback(async (
     message: string,
-    options?: { mode?: ContextMode },
+    options?: { mode?: ContextMode; purpose?: string[] },
   ) => {
     // ?-prefix: route to /query (wiki knowledge Q&A)
     const trimmed = message.trimStart();

@@ -57,9 +57,11 @@ import {
 import { fetchJson } from "@/lib/desktop/transport";
 import { ResponseModeChip } from "./ResponseModeChip";
 import { SourceBindingChip } from "./SourceBindingChip";
+import { PurposeLensChip } from "./PurposeLensChip";
 import { classifyContextMode, extractFirstUrl } from "./mode-classifier";
 import type { ContextMode, SessionSourceBinding } from "@/lib/tauri";
 import type { ConversationTurnStatus } from "./useConversationTurnState";
+import type { PurposeLensId } from "@/features/purpose/purpose-lenses";
 import { CapabilityHint } from "./CapabilityHint";
 import { ModelCapabilityCard } from "./ModelCapabilityCard";
 import { ModelCapabilityIndicator } from "./ModelCapabilityIndicator";
@@ -214,7 +216,7 @@ interface ComposerProps {
    */
   onSend: (
     message: string,
-    options?: { mode?: ContextMode },
+    options?: { mode?: ContextMode; purpose?: string[] },
   ) => void | Promise<void>;
   onStop?: () => void;
   isBusy?: boolean;
@@ -289,6 +291,7 @@ export function Composer({
   // is set when the user clicks the ResponseModeChip to force a
   // particular mode; null means "trust the auto-detected value".
   const [overrideMode, setOverrideMode] = useState<ContextMode | null>(null);
+  const [selectedPurpose, setSelectedPurpose] = useState<PurposeLensId | null>(null);
   const classification = useMemo(
     () => classifyContextMode(value, { selectedSourceId }),
     [value, selectedSourceId],
@@ -710,7 +713,10 @@ export function Composer({
     refocusAfterSendRef.current = true;
     resetComposer();
     setOverrideMode(null);
-    await onSend(finalMessage, { mode: modeToSend });
+    await onSend(finalMessage, {
+      mode: modeToSend,
+      ...(selectedPurpose ? { purpose: [selectedPurpose] } : {}),
+    });
     scheduleTextareaFocus();
   }, [
     value,
@@ -720,6 +726,7 @@ export function Composer({
     resetComposer,
     overrideMode,
     classification.mode,
+    selectedPurpose,
     scheduleTextareaFocus,
   ]);
 
@@ -1101,6 +1108,12 @@ export function Composer({
               mode={effectiveMode}
               confidence={classification.confidence}
               onChange={(next) => setOverrideMode(next === classification.mode ? null : next)}
+            />
+
+            <PurposeLensChip
+              value={selectedPurpose}
+              onChange={setSelectedPurpose}
+              disabled={inputBlocked}
             />
           </div>
 

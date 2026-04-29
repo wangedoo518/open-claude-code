@@ -187,6 +187,16 @@ pub struct ContextBasis {
     /// for non-binding turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_source_is_article: Option<bool>,
+    /// Purpose Lens values selected for this turn. Empty means the
+    /// backend should use the default cross-purpose behaviour.
+    ///
+    /// The UI sends the same controlled vocabulary used by wiki
+    /// frontmatter (`writing`, `building`, `operating`, `learning`,
+    /// `personal`, `research`) while still allowing future
+    /// organization-specific lowercase slugs. Values are normalized
+    /// and validated before they reach this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub purpose_lenses: Vec<String>,
 }
 
 impl ContextBasis {
@@ -212,6 +222,7 @@ impl ContextBasis {
             auto_bound: false,
             grounding_applied: false,
             bound_source_is_article: None,
+            purpose_lenses: Vec::new(),
         }
     }
 
@@ -266,6 +277,16 @@ impl ContextBasis {
         self.bound_source_is_article = is_article;
         self
     }
+
+    /// Stamp the Purpose Lens values that shaped this turn. The caller
+    /// passes already-normalized slugs; storing them on ContextBasis
+    /// lets the UI explain why the answer was framed as writing,
+    /// building, research, etc.
+    #[must_use]
+    pub fn with_purpose_lenses(mut self, lenses: Vec<String>) -> Self {
+        self.purpose_lenses = lenses;
+        self
+    }
 }
 
 /// Rough token hint from byte length. `bytes / 4` approximates
@@ -274,6 +295,53 @@ impl ContextBasis {
 #[must_use]
 pub fn approximate_tokens_from_bytes(bytes: usize) -> usize {
     bytes / 4
+}
+
+/// Normalize user-supplied Purpose Lens slugs before they are used in
+/// prompts or echoed to the UI. We intentionally keep this stricter
+/// than YAML frontmatter parsing because this path is an HTTP request
+/// body that can be hit by external tools.
+#[must_use]
+pub fn normalize_purpose_lenses<I, S>(raw: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out: Vec<String> = Vec::new();
+    for item in raw {
+        let lens = item.as_ref().trim().to_ascii_lowercase();
+        if lens.is_empty() || lens.len() > 32 {
+            continue;
+        }
+        if !lens
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        {
+            continue;
+        }
+        if !out.iter().any(|existing| existing == &lens) {
+            out.push(lens);
+        }
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// Prompt block for Ask Purpose mode. This is intentionally short:
+/// the lens should shape source selection, output form, and caveats
+/// without overwhelming the normal system prompt or changing the
+/// user's visible message history.
+#[must_use]
+pub fn purpose_instruction_block(lenses: &[String]) -> Option<String> {
+    if lenses.is_empty() {
+        return None;
+    }
+    let joined = lenses.join(", ");
+    Some(format!(
+        "\n\n---\n# Purpose Lens\n\n本轮回答限定到以下目的：{joined}。\n请优先选择与这些 purpose 相关的知识、模板和表达方式；如果材料不足，先说明缺口，再给出该目的下可直接使用的下一步。"
+    ))
 }
 
 /// `SourceFirst` boundary marker. Injected into the system prompt
@@ -550,6 +618,28 @@ mod tests {
             cb.starts_with("新素材：以下是用户刚提供的来源"),
             "Combine must also use 新素材 prefix"
         );
+    }
+
+    #[test]
+    fn purpose_lenses_normalize_and_dedupe_for_prompt_safety() {
+        let lenses = normalize_purpose_lenses([
+            " Research ",
+            "research",
+            "personal",
+            "bad space",
+            "../prompt",
+            "building",
+        ]);
+        assert_eq!(lenses, vec!["research", "personal", "building"]);
+    }
+
+    #[test]
+    fn purpose_instruction_block_names_selected_lenses() {
+        let lenses = vec!["research".to_string(), "building".to_string()];
+        let block = purpose_instruction_block(&lenses).expect("purpose block");
+        assert!(block.contains("Purpose Lens"));
+        assert!(block.contains("research, building"));
+        assert!(block.contains("可直接使用的下一步"));
     }
 
     /// Extra: ContextBasis builder fills fields consistently.

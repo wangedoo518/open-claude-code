@@ -70,6 +70,11 @@ This document answers: how `desktop-shell` is currently organized.
   `apps/desktop-shell/src/features/purpose/purpose-lenses.ts`; the default
   frontmatter values are `writing`, `building`, `operating`, `learning`,
   `personal`, and `research`.
+- Ask Purpose mode is carried on
+  `POST /api/desktop/sessions/{id}/messages` as optional `purpose` values.
+  The Rust layer normalizes the slugs, stores them on
+  `ContextBasis.purpose_lenses`, and injects the Purpose Lens instruction into
+  every Ask runtime path without changing the persisted user message.
 - Wiki and Rules advanced editors use CodeMirror 6 through
   `apps/desktop-shell/src/components/CodeMirrorEditor.tsx`.
 - Shared UI and utility layer

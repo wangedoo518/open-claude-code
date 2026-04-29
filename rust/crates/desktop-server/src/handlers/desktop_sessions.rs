@@ -60,7 +60,7 @@ pub(crate) async fn append_message(
 ) -> ApiResult<Json<AppendDesktopMessageResponse>> {
     let session = state
         .desktop()
-        .append_user_message(&id, payload.message, payload.mode)
+        .append_user_message(&id, payload.message, payload.mode, payload.purpose)
         .await
         .map_err(into_api_error)?;
     Ok(Json(AppendDesktopMessageResponse { session }))
