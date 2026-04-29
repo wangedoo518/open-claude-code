@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   Bot,
   CheckCircle2,
@@ -79,16 +80,19 @@ export function BuddyStatusBar() {
           icon={HeartPulse}
           label={healthTone === "success" ? "外脑健康" : `待处理 ${pending + riskCount}`}
           tone={healthTone}
+          to="/"
         />
         <StatusItem
           icon={Inbox}
           label={`Inbox ${pending}`}
           tone={pending > 0 ? "warning" : "muted"}
+          to="/inbox"
         />
         <StatusItem
           icon={GitBranch}
           label={gitLabel}
           tone={gitTone}
+          to="/connections#git"
         />
       </div>
       <div className="ds-status-bar-right">
@@ -97,6 +101,7 @@ export function BuddyStatusBar() {
           label={permissionConfig.label}
           tone="muted"
           style={permissionConfig.color ? { color: permissionConfig.color } : undefined}
+          to="/settings?tab=permissions"
         />
         <StatusItem
           icon={Bot}
@@ -106,13 +111,20 @@ export function BuddyStatusBar() {
               : "外部 AI 只读"
           }
           tone={activeExternalAiGrants > 0 ? "warning" : "muted"}
+          to="/connections#external-ai"
         />
-        <StatusItem icon={Shield} label="session / permanent" tone="muted" />
+        <StatusItem
+          icon={Shield}
+          label="session / permanent"
+          tone="muted"
+          to="/connections#external-ai"
+        />
         {stats && (
           <StatusItem
             icon={CheckCircle2}
             label={`${stats.wiki_count} 页 / ${stats.raw_count} 素材`}
             tone="muted"
+            to="/wiki"
           />
         )}
       </div>
@@ -148,16 +160,36 @@ function StatusItem({
   label,
   tone,
   style,
+  to,
 }: {
   icon: LucideIcon;
   label: string;
   tone: "success" | "warning" | "muted";
   style?: CSSProperties;
+  to?: string;
 }) {
-  return (
-    <span className="ds-status-item" data-tone={tone} style={style}>
+  const content = (
+    <>
       <Icon className="size-3" />
       <span>{label}</span>
+    </>
+  );
+  if (to) {
+    return (
+      <Link
+        className="ds-status-item"
+        data-tone={tone}
+        style={style}
+        to={to}
+        title={label}
+      >
+        {content}
+      </Link>
+    );
+  }
+  return (
+    <span className="ds-status-item" data-tone={tone} style={style}>
+      {content}
     </span>
   );
 }

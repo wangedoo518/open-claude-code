@@ -1005,7 +1005,10 @@ export function ConnectionsPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <section
+          id="external-ai"
+          className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"
+        >
           <div className="rounded-lg border border-border bg-card px-5 py-5">
             <div className="flex items-center gap-2">
               <LockKeyhole className="size-4 text-primary" />

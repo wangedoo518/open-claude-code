@@ -326,6 +326,18 @@ Tolaria-inspired Buddy design.
 - Added ambient Vitest-style contract tests that type-check today and will run
   directly once the desktop-shell test harness is wired.
 
+## Implemented Slice 25
+
+- BuddyStatusBar items now behave as Tolaria-style one-click workbench
+  entrypoints instead of passive labels.
+- Health opens Home/Pulse, Inbox opens `/inbox`, Git opens the Connections Git
+  section, permission opens Settings permissions, external-AI/session badges
+  open the Connections authorization section, and the page/raw count opens
+  Knowledge.
+- Connections now exposes an `external-ai` anchor for status-bar deep links.
+- Browser smoke verifies the StatusBar renders actionable links for Inbox,
+  Git, and external AI.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

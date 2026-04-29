@@ -3348,7 +3348,17 @@
   min-width: 0;
   align-items: center;
   gap: 4px;
+  border-radius: 4px;
+  padding: 2px 3px;
   white-space: nowrap;
+}
+
+a.ds-status-item {
+  text-decoration: none;
+}
+
+a.ds-status-item:hover {
+  background: color-mix(in srgb, currentColor 9%, transparent);
 }
 
 .ds-status-item[data-tone="success"] {

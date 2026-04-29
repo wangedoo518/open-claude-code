@@ -18,7 +18,10 @@ const routes = [
     name: "Home / Pulse",
     hash: "/",
     mustContain: ["Home / Pulse", "外脑", "最近 Git 操作"],
-    check: runCommandPaletteManifestCheck,
+    check: async (page) => {
+      await runStatusBarLinkCheck(page);
+      await runCommandPaletteManifestCheck(page);
+    },
   },
   {
     name: "Rules Studio",
@@ -366,6 +369,28 @@ async function runCommandPaletteManifestCheck(page) {
     { timeout: 10_000 },
   );
   await page.keyboard.press("Escape");
+}
+
+async function runStatusBarLinkCheck(page) {
+  await page.waitForFunction(
+    () => {
+      const links = Array.from(document.querySelectorAll("a.ds-status-item"));
+      const hasInbox = links.some(
+        (link) => link.textContent?.includes("Inbox") && link.getAttribute("href")?.includes("/inbox"),
+      );
+      const hasGit = links.some(
+        (link) => link.textContent?.includes("Git") && link.getAttribute("href")?.includes("/connections#git"),
+      );
+      const hasExternalAi = links.some(
+        (link) =>
+          link.textContent?.includes("外部 AI") &&
+          link.getAttribute("href")?.includes("/connections#external-ai"),
+      );
+      return hasInbox && hasGit && hasExternalAi;
+    },
+    null,
+    { timeout: 10_000 },
+  );
 }
 
 async function runRulesFileEditCheck() {
