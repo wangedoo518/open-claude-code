@@ -70,6 +70,19 @@ Tolaria-inspired Buddy design.
 - The Buddy Tolaria browser smoke now seeds a real wiki page fixture and
   verifies the CodeMirror edit/save path through `/wiki/{slug}`.
 
+## Implemented Slice 4
+
+- Added remote Buddy Vault sync endpoints:
+  `POST /api/wiki/git/pull` and `POST /api/wiki/git/push`.
+- Pull uses fast-forward-only Git sync and Push sets the upstream on first
+  push when a remote exists but no upstream is configured.
+- Remote sync is blocked while the Vault is dirty, forcing the user to create
+  a checkpoint before pull/push.
+- Connections exposes Pull/Push controls beside refresh and surfaces remote
+  sync success or failure in the Vault panel.
+- Rust coverage now exercises push-to-bare-remote, fast-forward pull, and
+  dirty-worktree sync rejection.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -80,7 +93,7 @@ Tolaria-inspired Buddy design.
 
 ## Future Hardening
 
-- Add remote pull/push/conflict handling once Buddy exposes remote connection
-  setup in Connections.
 - Add line-level diff selection and apply/discard actions after the Vault
   checkpoint model has reviewer-approved interaction rules.
+- Add remote setup/edit UI in Connections once the team finalizes how Buddy
+  should store and redact remote URLs.

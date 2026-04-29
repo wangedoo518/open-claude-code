@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  Download,
   FileText,
   GitBranch,
   LockKeyhole,
@@ -10,6 +11,7 @@ import {
   RefreshCw,
   Save,
   ShieldAlert,
+  Upload,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -21,6 +23,8 @@ import {
   getExternalAiWritePolicy,
   getVaultGitDiff,
   getVaultGitStatus,
+  pullVaultGit,
+  pushVaultGit,
   revokeExternalAiWriteGrant,
 } from "@/api/wiki/repository";
 import type { ExternalAiWriteGrant, VaultGitStatus } from "@/api/wiki/types";
@@ -66,6 +70,7 @@ export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [commitMessage, setCommitMessage] = useState("");
   const [diffStaged, setDiffStaged] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
   const [permanentNote, setPermanentNote] = useState("");
   const gitQuery = useQuery({
@@ -107,6 +112,23 @@ export function ConnectionsPage() {
     mutationFn: (message: string) => commitVaultGit(message),
     onSuccess: () => {
       setCommitMessage("");
+      setSyncMessage(null);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
+  const pullMutation = useMutation({
+    mutationFn: pullVaultGit,
+    onSuccess: (result) => {
+      setSyncMessage(result.summary || "Pull completed.");
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
+  const pushMutation = useMutation({
+    mutationFn: pushVaultGit,
+    onSuccess: (result) => {
+      setSyncMessage(result.summary || "Push completed.");
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
   });
@@ -150,6 +172,15 @@ export function ConnectionsPage() {
     if (!git?.dirty) return "Checkpoint Buddy Vault";
     return `Checkpoint Buddy Vault: ${git.changed_count} changes`;
   }, [git?.changed_count, git?.dirty]);
+  const syncPending = pullMutation.isPending || pushMutation.isPending;
+  const canRemoteSync = Boolean(
+    git?.git_available && git.initialized && git.remote_connected && !git.dirty,
+  );
+  const syncDisabledReason = !git?.remote_connected
+    ? "先配置 Git remote"
+    : git?.dirty
+      ? "先创建 checkpoint"
+      : null;
   const connectionCards = CONNECTIONS.map((item) => {
     if (item.id === "git") {
       return { ...item, status: gitBadge.label, tone: gitBadge.tone };
@@ -168,6 +199,18 @@ export function ConnectionsPage() {
     const message = (commitMessage || suggestedCommitMessage).trim();
     if (!message || commitMutation.isPending) return;
     commitMutation.mutate(message);
+  }
+
+  function handlePull() {
+    if (!canRemoteSync || syncPending) return;
+    setSyncMessage(null);
+    pullMutation.mutate();
+  }
+
+  function handlePush() {
+    if (!canRemoteSync || syncPending) return;
+    setSyncMessage(null);
+    pushMutation.mutate();
   }
 
   function handleSessionGrant() {
@@ -252,16 +295,47 @@ export function ConnectionsPage() {
                 Buddy 把 Vault 写入都落到普通 Git diff 上：先看状态，再做 checkpoint。
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
-              }}
-              className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-[12px] text-muted-foreground hover:bg-muted"
-            >
-              <RefreshCw className="size-3.5" />
-              刷新
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handlePull}
+                disabled={!canRemoteSync || syncPending}
+                title={syncDisabledReason ?? "Fast-forward pull"}
+                className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-[12px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {pullMutation.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Download className="size-3.5" />
+                )}
+                Pull
+              </button>
+              <button
+                type="button"
+                onClick={handlePush}
+                disabled={!canRemoteSync || syncPending}
+                title={syncDisabledReason ?? "Push checkpoints"}
+                className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-[12px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {pushMutation.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Upload className="size-3.5" />
+                )}
+                Push
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSyncMessage(null);
+                  void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+                }}
+                className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-[12px] text-muted-foreground hover:bg-muted"
+              >
+                <RefreshCw className="size-3.5" />
+                刷新
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
@@ -417,6 +491,28 @@ export function ConnectionsPage() {
                       {commitMutation.error instanceof Error
                         ? commitMutation.error.message
                         : "Checkpoint failed"}
+                    </p>
+                  )}
+                  <div className="mt-3 rounded-md border border-border/60 bg-card px-2.5 py-2 text-[11px] leading-5 text-muted-foreground">
+                    <div className="font-medium text-foreground">Remote sync</div>
+                    <div>
+                      {canRemoteSync
+                        ? "工作区干净，可执行 fast-forward pull 或 push。"
+                        : syncDisabledReason ?? "正在读取 remote 状态"}
+                    </div>
+                  </div>
+                  {(pullMutation.error || pushMutation.error) && (
+                    <p className="mt-2 text-[11px] leading-5 text-[var(--color-warning)]">
+                      {pullMutation.error instanceof Error
+                        ? pullMutation.error.message
+                        : pushMutation.error instanceof Error
+                          ? pushMutation.error.message
+                          : "Remote sync failed"}
+                    </p>
+                  )}
+                  {syncMessage && (
+                    <p className="mt-2 max-h-20 overflow-auto rounded-md bg-muted px-2 py-1.5 text-[11px] leading-5 text-muted-foreground">
+                      {syncMessage}
                     </p>
                   )}
                 </div>

@@ -2087,6 +2087,44 @@ pub(crate) async fn commit_vault_git_handler(
     ))
 }
 
+pub(crate) async fn pull_vault_git_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let result = wiki_store::vault_git_pull(&paths).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git pull failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+pub(crate) async fn push_vault_git_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let result = wiki_store::vault_git_push(&paths).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git push failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 pub(crate) async fn get_external_ai_write_policy_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;

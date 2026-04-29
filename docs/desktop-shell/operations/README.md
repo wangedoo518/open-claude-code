@@ -36,6 +36,10 @@ design, tests, review discipline, or documentation.
 - Do not rely on a later cleanup branch to satisfy minimum quality gates.
 - When changing Buddy Vault, Git, Rules Studio, external AI writes, or schema
   semantics, update architecture/tokens/operations docs in the same slice.
+- Buddy Vault remote sync must preserve a clean-worktree checkpoint discipline:
+  pull/push only after local changes are committed, pull with fast-forward-only
+  semantics, and surface Git non-fast-forward/conflict output instead of
+  auto-merging.
 - When copying Tolaria source, include provenance, license preservation, tests,
   and documentation in the same main-only slice.
 

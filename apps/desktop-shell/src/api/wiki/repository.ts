@@ -31,6 +31,7 @@ import type {
   VaultGitCommitResult,
   VaultGitDiff,
   VaultGitStatus,
+  VaultGitSyncResult,
   WikiApproveWithWriteResponse,
   WikiGraphResponse,
   WikiPageDetailResponse,
@@ -453,6 +454,20 @@ export async function commitVaultGit(message: string): Promise<VaultGitCommitRes
   return fetchJson<VaultGitCommitResult>("/api/wiki/git/commit", {
     method: "POST",
     body: JSON.stringify({ message }),
+  });
+}
+
+/** POST `/api/wiki/git/pull` — fast-forward Buddy Vault from its remote. */
+export async function pullVaultGit(): Promise<VaultGitSyncResult> {
+  return fetchJson<VaultGitSyncResult>("/api/wiki/git/pull", {
+    method: "POST",
+  });
+}
+
+/** POST `/api/wiki/git/push` — push Buddy Vault checkpoints to its remote. */
+export async function pushVaultGit(): Promise<VaultGitSyncResult> {
+  return fetchJson<VaultGitSyncResult>("/api/wiki/git/push", {
+    method: "POST",
   });
 }
 

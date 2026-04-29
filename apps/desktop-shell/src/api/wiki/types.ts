@@ -465,6 +465,13 @@ export interface VaultGitCommitResult {
   status: VaultGitStatus;
 }
 
+export interface VaultGitSyncResult {
+  ok: boolean;
+  operation: "pull" | "push" | string;
+  summary: string;
+  status: VaultGitStatus;
+}
+
 export type ExternalAiGrantLevel = "session" | "permanent";
 
 export interface ExternalAiWriteGrant {

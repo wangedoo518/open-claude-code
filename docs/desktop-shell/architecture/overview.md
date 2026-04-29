@@ -96,10 +96,12 @@ This document answers: how `desktop-shell` is currently organized.
   `human-edit-wiki-page` to the wiki log.
 - Buddy Vault Git is a first-class HTTP surface:
   `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
-  `POST /api/wiki/git/commit` wrap `wiki_store::vault_git_*` helpers for live
-  status, diff preview, and checkpoint commits. Diff previews return a combined
-  patch plus file-level sections, including staged tracked changes and
-  unstaged untracked files.
+  `POST /api/wiki/git/commit`, `POST /api/wiki/git/pull`, and
+  `POST /api/wiki/git/push` wrap `wiki_store::vault_git_*` helpers for live
+  status, diff preview, checkpoint commits, and remote synchronization. Diff
+  previews return a combined patch plus file-level sections, including staged
+  tracked changes and unstaged untracked files. Remote sync requires a clean
+  Vault; pull is fast-forward-only and push establishes upstream on first use.
 - External AI controlled-write authorization is stored under
   `.clawwiki/external-ai-write-policy.json`. The desktop server exposes
   `GET /api/wiki/external-ai/write-policy`,

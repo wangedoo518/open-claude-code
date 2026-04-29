@@ -664,6 +664,14 @@ pub struct VaultGitCommitResult {
     pub status: VaultGitStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitSyncResult {
+    pub ok: bool,
+    pub operation: String,
+    pub summary: String,
+    pub status: VaultGitStatus,
+}
+
 fn git_binary_available() -> bool {
     matches!(
         std::process::Command::new("git").arg("--version").output(),
@@ -689,6 +697,34 @@ fn run_git(root: &Path, args: &[&str]) -> Result<String> {
             "git {} failed: {}",
             args.join(" "),
             detail
+        )))
+    }
+}
+
+fn run_git_summary(root: &Path, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|e| WikiStoreError::io(root.to_path_buf(), e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let summary = match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{stdout}\n{stderr}"),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (true, true) => String::new(),
+    };
+
+    if output.status.success() {
+        Ok(summary)
+    } else {
+        Err(WikiStoreError::Invalid(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            summary
         )))
     }
 }
@@ -1049,6 +1085,70 @@ pub fn vault_git_commit(paths: &WikiPaths, message: &str) -> Result<VaultGitComm
     Ok(VaultGitCommitResult {
         ok: true,
         commit,
+        summary,
+        status,
+    })
+}
+
+fn clean_remote_sync_status(paths: &WikiPaths, operation: &str) -> Result<VaultGitStatus> {
+    let status = vault_git_status(paths)?;
+    if !status.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+    if !status.remote_connected {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault has no Git remote configured".to_string(),
+        ));
+    }
+    if status.branch.as_deref().unwrap_or_default().is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault branch is not available".to_string(),
+        ));
+    }
+    if status.dirty {
+        return Err(WikiStoreError::Invalid(format!(
+            "Buddy Vault must be clean before git {operation}; create a checkpoint first"
+        )));
+    }
+    Ok(status)
+}
+
+pub fn vault_git_pull(paths: &WikiPaths) -> Result<VaultGitSyncResult> {
+    let status = clean_remote_sync_status(paths, "pull")?;
+    let branch = status.branch.as_deref().unwrap_or("main");
+    let summary = if status.upstream.is_some() {
+        run_git_summary(&paths.root, &["pull", "--ff-only"])?
+    } else {
+        run_git_summary(&paths.root, &["pull", "--ff-only", "origin", branch])?
+    };
+    let status = vault_git_status(paths)?;
+    Ok(VaultGitSyncResult {
+        ok: true,
+        operation: "pull".to_string(),
+        summary,
+        status,
+    })
+}
+
+pub fn vault_git_push(paths: &WikiPaths) -> Result<VaultGitSyncResult> {
+    let status = clean_remote_sync_status(paths, "push")?;
+    let branch = status.branch.as_deref().unwrap_or("main");
+    let summary = if status.upstream.is_some() {
+        run_git_summary(&paths.root, &["push"])?
+    } else {
+        run_git_summary(&paths.root, &["push", "-u", "origin", branch])?
+    };
+    let status = vault_git_status(paths)?;
+    Ok(VaultGitSyncResult {
+        ok: true,
+        operation: "push".to_string(),
         summary,
         status,
     })
@@ -8345,6 +8445,35 @@ mod tests {
         Some((tmp, paths))
     }
 
+    fn init_bare_git_remote() -> tempfile::TempDir {
+        let remote = tempdir().unwrap();
+        let output = std::process::Command::new("git")
+            .arg("init")
+            .arg("--bare")
+            .arg("--initial-branch=main")
+            .arg(remote.path())
+            .output()
+            .unwrap();
+        if !output.status.success() {
+            let fallback = std::process::Command::new("git")
+                .arg("init")
+                .arg("--bare")
+                .arg(remote.path())
+                .output()
+                .unwrap();
+            assert!(
+                fallback.status.success(),
+                "git init --bare failed: {}",
+                String::from_utf8_lossy(&fallback.stderr)
+            );
+        }
+        remote
+    }
+
+    fn git_path_arg(path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+
     #[test]
     fn vault_git_status_reports_fresh_seeded_repo_changes() {
         let Some((_tmp, paths)) = git_test_paths() else {
@@ -8445,6 +8574,88 @@ mod tests {
             .sections
             .iter()
             .any(|section| section.kind == "staged" && section.path == "schema/CLAUDE.md"));
+    }
+
+    #[test]
+    fn vault_git_push_sets_upstream_and_updates_remote() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let remote = init_bare_git_remote();
+        run_git(&paths.root, &["remote", "add", "origin", &git_path_arg(remote.path())]).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let pushed = vault_git_push(&paths).unwrap();
+        assert!(pushed.ok);
+        assert_eq!(pushed.operation, "push");
+        assert_eq!(pushed.status.ahead, 0);
+        assert!(pushed.status.upstream.as_deref().unwrap_or("").contains("origin"));
+
+        let remote_head = std::process::Command::new("git")
+            .arg("-C")
+            .arg(remote.path())
+            .args(["rev-parse", "--verify", "refs/heads/main"])
+            .output()
+            .unwrap();
+        assert!(
+            remote_head.status.success(),
+            "remote main was not pushed: {}",
+            String::from_utf8_lossy(&remote_head.stderr)
+        );
+    }
+
+    #[test]
+    fn vault_git_pull_fast_forwards_clean_vault() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let remote = init_bare_git_remote();
+        run_git(&paths.root, &["remote", "add", "origin", &git_path_arg(remote.path())]).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+        vault_git_push(&paths).unwrap();
+
+        let clone = tempdir().unwrap();
+        let clone_output = std::process::Command::new("git")
+            .arg("clone")
+            .arg(remote.path())
+            .arg(clone.path())
+            .output()
+            .unwrap();
+        assert!(
+            clone_output.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&clone_output.stderr)
+        );
+        run_git(clone.path(), &["config", "user.name", "Buddy Test"]).unwrap();
+        run_git(clone.path(), &["config", "user.email", "buddy-test@example.local"]).unwrap();
+        let remote_schema = format!("{}\n\n## Remote fast-forward\n", CLAUDE_MD_TEMPLATE);
+        fs::write(clone.path().join("schema").join("CLAUDE.md"), remote_schema).unwrap();
+        run_git(clone.path(), &["add", "schema/CLAUDE.md"]).unwrap();
+        run_git(clone.path(), &["commit", "--no-gpg-sign", "-m", "Remote update"]).unwrap();
+        run_git(clone.path(), &["push"]).unwrap();
+
+        let pulled = vault_git_pull(&paths).unwrap();
+        assert!(pulled.ok);
+        assert_eq!(pulled.operation, "pull");
+        assert_eq!(pulled.status.behind, 0);
+        assert!(fs::read_to_string(paths.schema.join("CLAUDE.md"))
+            .unwrap()
+            .contains("Remote fast-forward"));
+    }
+
+    #[test]
+    fn vault_git_pull_rejects_dirty_vault() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let remote = init_bare_git_remote();
+        run_git(&paths.root, &["remote", "add", "origin", &git_path_arg(remote.path())]).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+        vault_git_push(&paths).unwrap();
+
+        overwrite_schema_claude_md(&paths, "dirty local change").unwrap();
+        let err = vault_git_pull(&paths).unwrap_err();
+        assert!(err.to_string().contains("must be clean before git pull"));
     }
 
     #[test]
