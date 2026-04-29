@@ -124,15 +124,18 @@ This document answers: how `desktop-shell` is currently organized.
   `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
   `POST /api/wiki/git/commit`, `POST /api/wiki/git/pull`, and
   `POST /api/wiki/git/push`, `POST /api/wiki/git/remote`, and
-  `POST /api/wiki/git/discard`, and `POST /api/wiki/git/discard-hunk` wrap
+  `POST /api/wiki/git/discard`, `POST /api/wiki/git/discard-hunk`, and
+  `POST /api/wiki/git/discard-line` wrap
   `wiki_store::vault_git_*` helpers for live status, diff preview, checkpoint
   commits, remote synchronization, remote setup, single-path discard, and
-  tracked unstaged hunk discard. Diff previews return a combined patch plus
-  file-level sections, including staged tracked changes and unstaged untracked
-  files. Sections include hunk and line metadata so the UI can inspect
-  add/remove/context ranges without reparsing raw patches. Hunk discard is
-  server-validated against the current diff and uses reverse Git patch apply
-  after a dry-run check; it does not accept arbitrary client-supplied patches.
+  tracked unstaged hunk or standalone-added-line discard. Diff previews return
+  a combined patch plus file-level sections, including staged tracked changes
+  and unstaged untracked files. Sections include hunk and line metadata so the
+  UI can inspect add/remove/context ranges without reparsing raw patches. Hunk
+  discard is server-validated against the current diff and uses reverse Git
+  patch apply after a dry-run check; line discard validates the current hunk,
+  line text, and working-tree line number before removing only an eligible
+  added line. Neither endpoint accepts arbitrary client-supplied patches.
   Remote sync requires a clean Vault; pull is fast-forward-only and push
   establishes upstream on first use. Status responses may include the preferred
   remote name and a redacted remote URL; Buddy never echoes plaintext URL

@@ -517,6 +517,7 @@ export interface VaultGitAuditEntry {
   summary: string;
   path?: string | null;
   hunk_index?: number | null;
+  line_index?: number | null;
   commit?: string | null;
   remote?: string | null;
 }

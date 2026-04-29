@@ -10,6 +10,7 @@ const API_BASE = process.env.BUDDY_API_BASE ?? "http://127.0.0.1:4357";
 const HEADLESS = process.env.BUDDY_HEADLESS !== "false";
 const SMOKE_SLUG = "smoke-edit-page";
 const HUNK_SMOKE_PATH = "wiki/concepts/smoke-hunk-discard.md";
+const LINE_SMOKE_PATH = "wiki/concepts/smoke-line-discard.md";
 
 const routes = [
   {
@@ -58,6 +59,7 @@ const routes = [
       "Pull",
       "Push",
       "保存 origin",
+      "丢弃新增行",
       "丢弃 Hunk",
       "丢弃文件",
       "最近 Git 操作",
@@ -129,6 +131,20 @@ function hunkSmokeBody(topLine, bottomLine) {
       lines.push(bottomLine);
     } else {
       lines.push(`line ${String(lineNumber).padStart(2, "0")}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function lineSmokeBody(topInserted = false, bottomInserted = false) {
+  const lines = [];
+  for (let lineNumber = 1; lineNumber <= 80; lineNumber += 1) {
+    lines.push(`line ${String(lineNumber).padStart(2, "0")}`);
+    if (lineNumber === 2 && topInserted) {
+      lines.push("line 02 inserted");
+    }
+    if (lineNumber === 70 && bottomInserted) {
+      lines.push("line 70 inserted");
     }
   }
   return `${lines.join("\n")}\n`;
@@ -211,6 +227,63 @@ async function runGitAuditCheck() {
   }
 }
 
+async function runGitLineDiscardCheck() {
+  const status = await fetchJson("/api/wiki/git/status");
+  const absolutePath = path.join(status.vault_path, LINE_SMOKE_PATH);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, lineSmokeBody(false, false), "utf8");
+
+  await fetchJson("/api/wiki/git/commit", {
+    method: "POST",
+    body: JSON.stringify({ message: "Smoke line discard baseline" }),
+  });
+
+  await writeFile(absolutePath, lineSmokeBody(true, true), "utf8");
+
+  const diff = await fetchJson("/api/wiki/git/diff");
+  const section = diff.sections.find((candidate) => candidate.path === LINE_SMOKE_PATH);
+  if (!section) {
+    throw new Error(`line discard smoke expected a diff section for ${LINE_SMOKE_PATH}`);
+  }
+  const selected = section.hunks
+    .flatMap((hunk, hunkIndex) =>
+      hunk.lines.map((line, lineIndex) => ({ hunk, hunkIndex, line, lineIndex })),
+    )
+    .find((candidate) => candidate.line.kind === "add" && candidate.line.text === "line 02 inserted");
+  if (!selected) {
+    throw new Error("line discard smoke expected inserted-line metadata");
+  }
+
+  await fetchJson("/api/wiki/git/discard-line", {
+    method: "POST",
+    body: JSON.stringify({
+      path: LINE_SMOKE_PATH,
+      hunk_index: selected.hunkIndex,
+      line_index: selected.lineIndex,
+      hunk_header: selected.hunk.header,
+      line_text: selected.line.text,
+      new_line: selected.line.new_line,
+    }),
+  });
+
+  const content = await readFile(absolutePath, "utf8");
+  if (content.includes("line 02 inserted")) {
+    throw new Error("line discard smoke did not remove the selected added line");
+  }
+  if (!content.includes("line 70 inserted")) {
+    throw new Error("line discard smoke removed an unrelated added line");
+  }
+
+  const audit = await fetchJson("/api/wiki/git/audit?limit=5");
+  const latest = audit.entries[0];
+  if (!latest || latest.operation !== "discard-line" || latest.path !== LINE_SMOKE_PATH) {
+    throw new Error("line discard smoke expected latest git audit operation to be discard-line");
+  }
+  if (latest.hunk_index !== selected.hunkIndex || latest.line_index !== selected.lineIndex) {
+    throw new Error("line discard smoke did not record hunk/line metadata");
+  }
+}
+
 async function runRulesFileEditCheck() {
   const targetPath = "schema/policies/naming.md";
   const before = await fetchJson(`/api/wiki/rules/file?path=${encodeURIComponent(targetPath)}`);
@@ -277,6 +350,7 @@ async function run() {
   await seedWikiEditPage();
   await runGitHunkDiscardCheck();
   await runGitAuditCheck();
+  await runGitLineDiscardCheck();
   await runRulesFileEditCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });

@@ -743,6 +743,7 @@ pub struct VaultGitAuditEntry {
     pub summary: String,
     pub path: Option<String>,
     pub hunk_index: Option<usize>,
+    pub line_index: Option<usize>,
     pub commit: Option<String>,
     pub remote: Option<String>,
 }
@@ -1092,6 +1093,7 @@ fn record_vault_git_audit(
     summary: &str,
     path: Option<&str>,
     hunk_index: Option<usize>,
+    line_index: Option<usize>,
     commit: Option<&str>,
     remote: Option<&str>,
 ) {
@@ -1101,6 +1103,7 @@ fn record_vault_git_audit(
         summary: summary.to_string(),
         path: path.map(str::to_string),
         hunk_index,
+        line_index,
         commit: commit.map(str::to_string),
         remote: remote.map(str::to_string),
     };
@@ -1429,6 +1432,61 @@ fn hunk_patch_from_section(
     Ok(format!("{header_lines}{hunk_lines}"))
 }
 
+fn is_change_line_kind(kind: &str) -> bool {
+    kind == "add" || kind == "remove"
+}
+
+fn is_standalone_added_line(hunk: &VaultGitDiffHunk, line_index: usize) -> bool {
+    let Some(line) = hunk.lines.get(line_index) else {
+        return false;
+    };
+    if line.kind != "add" {
+        return false;
+    }
+
+    let mut start = line_index;
+    while start > 0 && is_change_line_kind(&hunk.lines[start - 1].kind) {
+        start -= 1;
+    }
+    let mut end = line_index + 1;
+    while end < hunk.lines.len() && is_change_line_kind(&hunk.lines[end].kind) {
+        end += 1;
+    }
+
+    !hunk.lines[start..end]
+        .iter()
+        .any(|candidate| candidate.kind == "remove")
+}
+
+fn remove_exact_line(content: &str, line_number: u32, expected_text: &str) -> Result<String> {
+    if line_number == 0 {
+        return Err(WikiStoreError::Invalid(
+            "line number must be one-based".to_string(),
+        ));
+    }
+
+    let mut lines: Vec<&str> = content.split_inclusive('\n').collect();
+    if content.is_empty() {
+        lines.clear();
+    }
+
+    let index = usize::try_from(line_number - 1).unwrap_or(usize::MAX);
+    let Some(actual) = lines.get(index) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "line is no longer present in Buddy Vault: {line_number}"
+        )));
+    };
+    let actual_text = actual.trim_end_matches('\n').trim_end_matches('\r');
+    if actual_text != expected_text {
+        return Err(WikiStoreError::Invalid(
+            "line no longer matches the current Buddy Vault diff".to_string(),
+        ));
+    }
+
+    lines.remove(index);
+    Ok(lines.join(""))
+}
+
 pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
     let git_available = git_binary_available();
     let initialized = paths.root.join(".git").exists()
@@ -1608,6 +1666,7 @@ pub fn vault_git_commit(paths: &WikiPaths, message: &str) -> Result<VaultGitComm
         if summary.is_empty() { message } else { &summary },
         None,
         None,
+        None,
         Some(&commit),
         None,
     );
@@ -1665,6 +1724,7 @@ pub fn vault_git_pull(paths: &WikiPaths) -> Result<VaultGitSyncResult> {
         None,
         None,
         None,
+        None,
         status.remote_name.as_deref(),
     );
     Ok(VaultGitSyncResult {
@@ -1688,6 +1748,7 @@ pub fn vault_git_push(paths: &WikiPaths) -> Result<VaultGitSyncResult> {
         paths,
         "push",
         &summary,
+        None,
         None,
         None,
         None,
@@ -1734,6 +1795,7 @@ pub fn vault_git_set_remote(
         paths,
         "remote",
         &format!("{remote} -> {}", redact_remote_url(url)),
+        None,
         None,
         None,
         None,
@@ -1789,6 +1851,7 @@ pub fn vault_git_discard_path(paths: &WikiPaths, path: &str) -> Result<VaultGitD
         "discard-path",
         &summary,
         Some(&path),
+        None,
         None,
         None,
         None,
@@ -1864,11 +1927,132 @@ pub fn vault_git_discard_hunk(
         Some(hunk_index),
         None,
         None,
+        None,
     );
     Ok(VaultGitDiscardResult {
         ok: true,
         path: path.clone(),
         mode: "hunk".to_string(),
+        summary,
+        status,
+    })
+}
+
+pub fn vault_git_discard_added_line(
+    paths: &WikiPaths,
+    path: &str,
+    hunk_index: usize,
+    line_index: usize,
+    hunk_header: Option<&str>,
+    line_text: Option<&str>,
+    new_line: Option<u32>,
+) -> Result<VaultGitDiscardResult> {
+    let path = validate_git_relative_path(path)?;
+    let status = vault_git_status(paths)?;
+    if !status.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+    let Some(change) = status.changes.iter().find(|change| change.path == path) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "path is not dirty in Buddy Vault: {path}"
+        )));
+    };
+    if change.xy == "??" || change.unstaged == " " {
+        return Err(WikiStoreError::Invalid(
+            "line discard only supports tracked unstaged changes".to_string(),
+        ));
+    }
+
+    let diff = vault_git_diff(paths, false)?;
+    let Some(section) = diff
+        .sections
+        .iter()
+        .find(|section| section.kind == "tracked" && section.path == path)
+    else {
+        return Err(WikiStoreError::Invalid(format!(
+            "tracked unstaged diff not found for {path}"
+        )));
+    };
+    let Some(hunk) = section.hunks.get(hunk_index) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "hunk index is not dirty in Buddy Vault: {hunk_index}"
+        )));
+    };
+    if let Some(expected_header) = hunk_header {
+        if expected_header != hunk.header {
+            return Err(WikiStoreError::Invalid(
+                "hunk no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+    let Some(line) = hunk.lines.get(line_index) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "line index is not dirty in Buddy Vault: {line_index}"
+        )));
+    };
+    if line.kind != "add" {
+        return Err(WikiStoreError::Invalid(
+            "line discard only supports added lines".to_string(),
+        ));
+    }
+    if !is_standalone_added_line(hunk, line_index) {
+        return Err(WikiStoreError::Invalid(
+            "line discard only supports standalone added lines; discard the hunk to restore replacements"
+                .to_string(),
+        ));
+    }
+    if let Some(expected_text) = line_text {
+        if expected_text != line.text {
+            return Err(WikiStoreError::Invalid(
+                "line no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+    if let Some(expected_new_line) = new_line {
+        if Some(expected_new_line) != line.new_line {
+            return Err(WikiStoreError::Invalid(
+                "line number no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+    let Some(line_number) = line.new_line else {
+        return Err(WikiStoreError::Invalid(
+            "added line is missing a working-tree line number".to_string(),
+        ));
+    };
+
+    let target = paths.root.join(&path);
+    let content = fs::read_to_string(&target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+    let next_content = remove_exact_line(&content, line_number, &line.text)?;
+    fs::write(&target, next_content).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+
+    let status = vault_git_status(paths)?;
+    let summary = format!(
+        "Discarded added line {} in hunk {} for {path}",
+        line_index + 1,
+        hunk_index + 1
+    );
+    record_vault_git_audit(
+        paths,
+        "discard-line",
+        &summary,
+        Some(&path),
+        Some(hunk_index),
+        Some(line_index),
+        None,
+        None,
+    );
+    Ok(VaultGitDiscardResult {
+        ok: true,
+        path: path.clone(),
+        mode: "line".to_string(),
         summary,
         status,
     })
@@ -9938,6 +10122,103 @@ mod tests {
         assert!(untracked
             .to_string()
             .contains("hunk discard only supports tracked unstaged changes"));
+    }
+
+    #[test]
+    fn vault_git_discard_added_line_removes_only_selected_line() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let page = paths.wiki.join("concepts").join("line-discard.md");
+        let base = hunk_test_body("line 02", "line 70");
+        fs::write(&page, &base).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let changed = base
+            .replace("line 02\n", "line 02\nline 02 inserted\n")
+            .replace("line 70\n", "line 70\nline 70 inserted\n");
+        fs::write(&page, changed).unwrap();
+
+        let diff = vault_git_diff(&paths, false).unwrap();
+        let section = diff
+            .sections
+            .iter()
+            .find(|section| section.path == "wiki/concepts/line-discard.md")
+            .expect("line discard diff section");
+        let (hunk_index, hunk, line_index, line) = section
+            .hunks
+            .iter()
+            .enumerate()
+            .find_map(|(hunk_index, hunk)| {
+                hunk.lines
+                    .iter()
+                    .enumerate()
+                    .find(|(_, line)| line.kind == "add" && line.text == "line 02 inserted")
+                    .map(|(line_index, line)| (hunk_index, hunk, line_index, line))
+            })
+            .expect("inserted line metadata");
+
+        let discarded = vault_git_discard_added_line(
+            &paths,
+            "wiki/concepts/line-discard.md",
+            hunk_index,
+            line_index,
+            Some(&hunk.header),
+            Some(&line.text),
+            line.new_line,
+        )
+        .unwrap();
+        assert!(discarded.ok);
+        assert_eq!(discarded.mode, "line");
+        assert!(discarded.status.dirty);
+
+        let content = fs::read_to_string(&page).unwrap();
+        assert!(!content.contains("line 02 inserted"));
+        assert!(content.contains("line 70 inserted"));
+
+        let audit = vault_git_audit_log(&paths, 10).unwrap();
+        assert!(audit.entries.iter().any(|entry| {
+            entry.operation == "discard-line"
+                && entry.path.as_deref() == Some("wiki/concepts/line-discard.md")
+                && entry.hunk_index == Some(hunk_index)
+                && entry.line_index == Some(line_index)
+        }));
+    }
+
+    #[test]
+    fn vault_git_discard_added_line_rejects_replacement_edits() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let page = paths.wiki.join("concepts").join("line-replace.md");
+        fs::write(&page, hunk_test_body("line 02", "line 70")).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        fs::write(&page, hunk_test_body("line 02 changed", "line 70")).unwrap();
+        let diff = vault_git_diff(&paths, false).unwrap();
+        let section = diff
+            .sections
+            .iter()
+            .find(|section| section.path == "wiki/concepts/line-replace.md")
+            .expect("replacement diff section");
+        let (line_index, line) = section.hunks[0]
+            .lines
+            .iter()
+            .enumerate()
+            .find(|(_, line)| line.kind == "add" && line.text == "line 02 changed")
+            .expect("replacement added line");
+
+        let err = vault_git_discard_added_line(
+            &paths,
+            "wiki/concepts/line-replace.md",
+            0,
+            line_index,
+            Some(&section.hunks[0].header),
+            Some(&line.text),
+            line.new_line,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("standalone added lines"));
     }
 
     #[test]

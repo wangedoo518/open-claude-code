@@ -22,6 +22,7 @@ import {
   addExternalAiWriteGrant,
   commitVaultGit,
   discardVaultGitHunk,
+  discardVaultGitLine,
   discardVaultGitPath,
   getExternalAiWritePolicy,
   getVaultGitAudit,
@@ -79,12 +80,18 @@ const WRITE_SCOPES = [
 
 const EMPTY_HUNKS: VaultGitDiffHunk[] = [];
 
+interface SelectedDiffLine {
+  hunkIndex: number;
+  lineIndex: number;
+}
+
 export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [commitMessage, setCommitMessage] = useState("");
   const [diffStaged, setDiffStaged] = useState(false);
   const [selectedDiffKey, setSelectedDiffKey] = useState<string | null>(null);
   const [selectedHunkIndex, setSelectedHunkIndex] = useState<number | null>(null);
+  const [selectedDiffLine, setSelectedDiffLine] = useState<SelectedDiffLine | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
@@ -154,6 +161,7 @@ export function ConnectionsPage() {
   }, [diffSections, selectedDiffKey]);
   useEffect(() => {
     setSelectedHunkIndex(null);
+    setSelectedDiffLine(null);
   }, [selectedDiffKey, diffStaged]);
   useEffect(() => {
     if (selectedHunkIndex === null) return;
@@ -161,6 +169,17 @@ export function ConnectionsPage() {
       setSelectedHunkIndex(null);
     }
   }, [selectedDiffSection, selectedHunkIndex]);
+  useEffect(() => {
+    if (!selectedDiffLine) return;
+    if (!selectedDiffSection?.hunks[selectedDiffLine.hunkIndex]?.lines[selectedDiffLine.lineIndex]) {
+      setSelectedDiffLine(null);
+    }
+  }, [
+    selectedDiffLine?.hunkIndex,
+    selectedDiffLine?.lineIndex,
+    selectedDiffLine,
+    selectedDiffSection,
+  ]);
 
   const commitMutation = useMutation({
     mutationFn: (message: string) => commitVaultGit(message),
@@ -214,6 +233,17 @@ export function ConnectionsPage() {
     mutationFn: discardVaultGitHunk,
     onSuccess: (result) => {
       setSelectedHunkIndex(null);
+      setSelectedDiffLine(null);
+      setSyncMessage(result.summary);
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
+    },
+  });
+  const discardLineMutation = useMutation({
+    mutationFn: discardVaultGitLine,
+    onSuccess: (result) => {
+      setSelectedDiffLine(null);
       setSyncMessage(result.summary);
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
@@ -266,6 +296,12 @@ export function ConnectionsPage() {
   const selectedHunks = selectedDiffSection?.hunks ?? EMPTY_HUNKS;
   const selectedHunk =
     selectedHunkIndex === null ? null : selectedHunks[selectedHunkIndex] ?? null;
+  const selectedLineHunk =
+    selectedDiffLine === null ? null : selectedHunks[selectedDiffLine.hunkIndex] ?? null;
+  const selectedLine =
+    selectedDiffLine === null || !selectedLineHunk
+      ? null
+      : selectedLineHunk.lines[selectedDiffLine.lineIndex] ?? null;
   const previewHunks = selectedHunk ? [selectedHunk] : selectedHunks;
   const selectedLineStats = useMemo(() => {
     const lines = selectedHunk
@@ -282,6 +318,15 @@ export function ConnectionsPage() {
       (diffStaged ? "No staged diff." : git?.dirty ? "No unstaged diff." : "No diff.");
   const canDiscardSelectedHunk = Boolean(
     selectedDiffSection?.kind === "tracked" && selectedHunk && !diffStaged,
+  );
+  const canSelectDiffLine = Boolean(selectedDiffSection?.kind === "tracked" && !diffStaged);
+  const canDiscardSelectedLine = Boolean(
+    canSelectDiffLine &&
+      selectedDiffLine &&
+      selectedLine &&
+      selectedLineHunk &&
+      isStandaloneAddedLine(selectedLineHunk, selectedDiffLine.lineIndex) &&
+      !discardLineMutation.isPending,
   );
   const canSetRemote = Boolean(git?.git_available && git.initialized && remoteUrl.trim());
   const canRemoteSync = Boolean(
@@ -356,6 +401,31 @@ export function ConnectionsPage() {
       path: selectedDiffSection.path,
       hunk_index: selectedHunkIndex,
       hunk_header: selectedHunk.header,
+    });
+  }
+
+  function handleDiscardSelectedLine() {
+    if (
+      !selectedDiffSection ||
+      !selectedDiffLine ||
+      !selectedLineHunk ||
+      !selectedLine ||
+      !canDiscardSelectedLine
+    ) {
+      return;
+    }
+    const lineLabel = selectedLine.new_line ? `L${selectedLine.new_line}` : "选中行";
+    const confirmed = window.confirm(
+      `只丢弃 ${selectedDiffSection.path} 的新增行 ${lineLabel}？`,
+    );
+    if (!confirmed) return;
+    discardLineMutation.mutate({
+      path: selectedDiffSection.path,
+      hunk_index: selectedDiffLine.hunkIndex,
+      line_index: selectedDiffLine.lineIndex,
+      hunk_header: selectedLineHunk.header,
+      line_text: selectedLine.text,
+      new_line: selectedLine.new_line ?? null,
     });
   }
 
@@ -562,6 +632,24 @@ export function ConnectionsPage() {
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         type="button"
+                        onClick={handleDiscardSelectedLine}
+                        disabled={!canDiscardSelectedLine}
+                        title={
+                          canSelectDiffLine
+                            ? "选择独立新增行后可用"
+                            : "仅支持未暂存 tracked diff"
+                        }
+                        className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {discardLineMutation.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                        丢弃新增行
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleDiscardSelectedHunk}
                         disabled={!canDiscardSelectedHunk || discardHunkMutation.isPending}
                         title={
@@ -604,6 +692,7 @@ export function ConnectionsPage() {
                               onClick={() => {
                                 setDiffStaged(id === "staged");
                                 setSelectedHunkIndex(null);
+                                setSelectedDiffLine(null);
                               }}
                               className={`h-6 rounded px-2 text-[11px] ${
                                 active
@@ -631,6 +720,13 @@ export function ConnectionsPage() {
                           index={
                             selectedHunkIndex === null ? index : selectedHunkIndex
                           }
+                          selectedLine={selectedDiffLine}
+                          lineSelectionEnabled={canSelectDiffLine}
+                          onSelectLine={(lineIndex) => {
+                            const hunkIndex =
+                              selectedHunkIndex === null ? index : selectedHunkIndex;
+                            setSelectedDiffLine({ hunkIndex, lineIndex });
+                          }}
                         />
                       ))}
                     </div>
@@ -648,6 +744,11 @@ export function ConnectionsPage() {
                             {selectedLineStats.removed}
                           </span>
                         ) : null}
+                        {selectedLine ? (
+                          <span>
+                            Selected L{selectedLine.new_line ?? "?"}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-1">
                         {diffSections.slice(0, 8).map((section) => {
@@ -660,6 +761,7 @@ export function ConnectionsPage() {
                               onClick={() => {
                                 setSelectedDiffKey(key);
                                 setSelectedHunkIndex(null);
+                                setSelectedDiffLine(null);
                               }}
                               className={`max-w-full truncate rounded border px-1.5 py-0.5 font-mono ${
                                 active
@@ -682,7 +784,10 @@ export function ConnectionsPage() {
                         <div className="flex flex-wrap gap-1 pt-1">
                           <button
                             type="button"
-                            onClick={() => setSelectedHunkIndex(null)}
+                            onClick={() => {
+                              setSelectedHunkIndex(null);
+                              setSelectedDiffLine(null);
+                            }}
                             className={`rounded border px-1.5 py-0.5 ${
                               selectedHunkIndex === null
                                 ? "border-primary bg-primary text-primary-foreground"
@@ -697,7 +802,10 @@ export function ConnectionsPage() {
                               <button
                                 key={`${hunk.header}-${index}`}
                                 type="button"
-                                onClick={() => setSelectedHunkIndex(index)}
+                                onClick={() => {
+                                  setSelectedHunkIndex(index);
+                                  setSelectedDiffLine(null);
+                                }}
                                 className={`max-w-[220px] truncate rounded border px-1.5 py-0.5 font-mono ${
                                   active
                                     ? "border-primary bg-primary text-primary-foreground"
@@ -718,12 +826,14 @@ export function ConnectionsPage() {
                       ) : null}
                     </div>
                   ) : null}
-                  {(discardMutation.error || discardHunkMutation.error) && (
+                  {(discardMutation.error || discardHunkMutation.error || discardLineMutation.error) && (
                     <p className="border-t border-border/60 px-3 py-2 text-[11px] leading-5 text-[var(--color-warning)]">
                       {discardMutation.error instanceof Error
                         ? discardMutation.error.message
                         : discardHunkMutation.error instanceof Error
                           ? discardHunkMutation.error.message
+                        : discardLineMutation.error instanceof Error
+                          ? discardLineMutation.error.message
                         : "Discard failed"}
                     </p>
                   )}
@@ -965,6 +1075,26 @@ function summarizeDiffLines(lines: VaultGitDiffLine[]): { added: number; removed
   );
 }
 
+function isChangeLineKind(kind: string): boolean {
+  return kind === "add" || kind === "remove";
+}
+
+function isStandaloneAddedLine(hunk: VaultGitDiffHunk, lineIndex: number): boolean {
+  const line = hunk.lines[lineIndex];
+  if (!line || line.kind !== "add") return false;
+
+  let start = lineIndex;
+  while (start > 0 && isChangeLineKind(hunk.lines[start - 1].kind)) {
+    start -= 1;
+  }
+  let end = lineIndex + 1;
+  while (end < hunk.lines.length && isChangeLineKind(hunk.lines[end].kind)) {
+    end += 1;
+  }
+
+  return !hunk.lines.slice(start, end).some((candidate) => candidate.kind === "remove");
+}
+
 function formatDiffHunkPreview(hunk: VaultGitDiffHunk): string {
   return [
     hunk.header,
@@ -981,7 +1111,19 @@ function diffLineMarker(kind: string): string {
   return " ";
 }
 
-function DiffHunkBlock({ hunk, index }: { hunk: VaultGitDiffHunk; index: number }) {
+function DiffHunkBlock({
+  hunk,
+  index,
+  selectedLine,
+  lineSelectionEnabled,
+  onSelectLine,
+}: {
+  hunk: VaultGitDiffHunk;
+  index: number;
+  selectedLine: SelectedDiffLine | null;
+  lineSelectionEnabled: boolean;
+  onSelectLine: (lineIndex: number) => void;
+}) {
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
@@ -995,6 +1137,11 @@ function DiffHunkBlock({ hunk, index }: { hunk: VaultGitDiffHunk; index: number 
           <DiffLineRow
             key={`${line.kind}-${line.old_line ?? ""}-${line.new_line ?? ""}-${lineIndex}`}
             line={line}
+            selected={
+              selectedLine?.hunkIndex === index && selectedLine.lineIndex === lineIndex
+            }
+            selectable={lineSelectionEnabled && isStandaloneAddedLine(hunk, lineIndex)}
+            onSelect={() => onSelectLine(lineIndex)}
           />
         ))}
       </div>
@@ -1002,10 +1149,26 @@ function DiffHunkBlock({ hunk, index }: { hunk: VaultGitDiffHunk; index: number 
   );
 }
 
-function DiffLineRow({ line }: { line: VaultGitDiffLine }) {
+function DiffLineRow({
+  line,
+  selected,
+  selectable,
+  onSelect,
+}: {
+  line: VaultGitDiffLine;
+  selected: boolean;
+  selectable: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <div
-      className={`grid grid-cols-[42px_42px_20px_minmax(0,1fr)] border-t border-border/30 leading-5 ${diffLineClass(line.kind)}`}
+    <button
+      type="button"
+      onClick={selectable ? onSelect : undefined}
+      aria-pressed={selected}
+      aria-disabled={!selectable}
+      className={`grid w-full grid-cols-[42px_42px_20px_minmax(0,1fr)] border-t border-border/30 text-left leading-5 ${diffLineClass(line.kind)} ${
+        selected ? "ring-1 ring-inset ring-primary" : ""
+      } ${selectable ? "cursor-pointer hover:bg-primary/10" : "cursor-default"}`}
     >
       <span className="select-none border-r border-border/40 px-2 text-right text-muted-foreground">
         {line.old_line ?? ""}
@@ -1019,7 +1182,7 @@ function DiffLineRow({ line }: { line: VaultGitDiffLine }) {
       <code className="min-w-0 whitespace-pre-wrap break-words pr-3">
         {line.text || " "}
       </code>
-    </div>
+    </button>
   );
 }
 
@@ -1050,6 +1213,7 @@ function GitAuditRow({ entry }: { entry: VaultGitAuditEntry }) {
 }
 
 function gitAuditLabel(operation: string): string {
+  if (operation === "discard-line") return "line";
   if (operation === "discard-hunk") return "hunk";
   if (operation === "discard-path") return "discard";
   if (operation === "commit") return "commit";

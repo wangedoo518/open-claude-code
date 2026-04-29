@@ -287,6 +287,21 @@ Tolaria-inspired Buddy design.
 - Browser smoke now asserts the Rules Studio validation panel and patrol
   trigger render by default.
 
+## Implemented Slice 22
+
+- Added `POST /api/wiki/git/discard-line` for discarding one tracked,
+  unstaged, standalone added line from a Buddy Vault diff.
+- The backend validates path safety, tracked/unstaged state, current hunk
+  header, line index, line text, and working-tree line number before writing,
+  and rejects replacement edits so line-level rollback cannot accidentally
+  turn a modified line into a deletion.
+- Connections now lets users select an eligible added line in the structured
+  diff table and run `丢弃新增行` beside the existing hunk and file rollback
+  controls.
+- Git audit entries now include optional `line_index` metadata, and browser
+  smoke exercises the real discard-line API while checking that unrelated
+  added lines remain on disk.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -297,6 +312,6 @@ Tolaria-inspired Buddy design.
 
 ## Future Hardening
 
-- Add line-level patch apply/discard after hunk-level discard has enough
-  reviewer and dogfood feedback. Keep partial-line and staged-hunk mutation out
-  of scope until conflict behavior and rollback tests are explicit.
+- Add line-level restore for replacement edits after conflict behavior is
+  explicit enough to preserve removed lines safely. Keep partial-line and
+  staged-hunk mutation out of scope until rollback tests cover those cases.
