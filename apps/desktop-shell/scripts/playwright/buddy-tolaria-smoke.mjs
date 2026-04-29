@@ -51,6 +51,11 @@ const routes = [
     ],
   },
   {
+    name: "Inbox",
+    hash: "/inbox",
+    mustContain: ["INBOX", "Vault", "checkpoint"],
+  },
+  {
     name: "Knowledge",
     hash: "/wiki",
     mustContain: ["知识"],

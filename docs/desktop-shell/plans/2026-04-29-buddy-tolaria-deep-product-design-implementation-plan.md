@@ -202,6 +202,17 @@ Tolaria-inspired Buddy design.
 - Browser smoke now verifies the Wiki edit side panel renders the Git/Lineage
   status before saving the edited page.
 
+## Implemented Slice 15
+
+- Inbox review now reads live Buddy Vault Git status and adds a fourth metrics
+  card for Vault checkpoint pressure next to create, merge, and processed-today
+  counts.
+- Inbox quick accept, reject, batch resolve, and combined apply flows now
+  invalidate `wiki/git` queries after mutation so Home/Pulse, StatusBar,
+  Connections, and Inbox converge on the same Git state.
+- Browser smoke now visits `/inbox` and asserts the Vault checkpoint metric is
+  visible.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

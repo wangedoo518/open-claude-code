@@ -23,6 +23,7 @@ import {
   XCircle,
   FileText,
   FilePlus2,
+  GitBranch,
   GitMerge,
   ArrowRight,
   Sparkles,
@@ -39,6 +40,7 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import {
   approveInboxWithWrite,
+  getVaultGitStatus,
   listInboxEntries,
   proposeForInboxEntry,
   resolveInboxEntry,
@@ -249,6 +251,7 @@ function getTargetLabel(entry: IntelligentEntry): string {
                   return next;
                 });
                 void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+                void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
                 if (failedIds.length === 0) {
                   setBatchMode(false);
                 }
@@ -328,6 +331,59 @@ function isToday(value: string | null | undefined): boolean {
   );
 }
 
+function inboxGitMetric(
+  git:
+    | {
+        git_available: boolean;
+        initialized: boolean;
+        dirty: boolean;
+        changed_count: number;
+      }
+    | undefined,
+  hasError: boolean,
+): { value: string | number; label: string; iconClassName: string } {
+  if (hasError) {
+    return {
+      value: "!",
+      label: "Git 状态不可用",
+      iconClassName: "inbox-redesign-metric-icon--vault-warning",
+    };
+  }
+  if (!git) {
+    return {
+      value: "...",
+      label: "检查 Vault checkpoint",
+      iconClassName: "inbox-redesign-metric-icon--vault",
+    };
+  }
+  if (!git.git_available) {
+    return {
+      value: "off",
+      label: "未安装 Git",
+      iconClassName: "inbox-redesign-metric-icon--vault-warning",
+    };
+  }
+  if (!git.initialized) {
+    return {
+      value: "off",
+      label: "建议启用 Git",
+      iconClassName: "inbox-redesign-metric-icon--vault-warning",
+    };
+  }
+  if (git.dirty) {
+    return {
+      value: git.changed_count,
+      label: "Vault 待 checkpoint",
+      iconClassName: "inbox-redesign-metric-icon--vault-warning",
+    };
+  }
+  return {
+    value: "clean",
+    label: "Vault 已 checkpoint",
+    iconClassName: "inbox-redesign-metric-icon--vault",
+  };
+}
+
 function getSourceLabel(entry: IntelligentEntry): string {
   const text = `${entry.title} ${entry.description}`.toLowerCase();
   if (text.includes("http") || text.includes("url") || text.includes("链接")) {
@@ -379,6 +435,12 @@ export function InboxPage() {
     queryFn: () => listInboxEntries(),
     staleTime: 10_000,
     refetchInterval: 15_000,
+  });
+  const gitQuery = useQuery({
+    queryKey: ["wiki", "git", "inbox"],
+    queryFn: () => getVaultGitStatus(),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
   });
 
   const entries = listQuery.data?.entries ?? [];
@@ -614,6 +676,7 @@ export function InboxPage() {
       // resolved bucket, then clear the selection + exit batch mode
       // so the user lands back on the single-row workbench.
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
       setSelectedIds(new Set());
       setBatchMode(false);
       setCombinedOpen(false);
@@ -645,6 +708,7 @@ export function InboxPage() {
   );
 
   const estimatedMinutes = Math.max(1, Math.ceil(pendingEntries.length * 7 / 60));
+  const gitMetric = inboxGitMetric(gitQuery.data, Boolean(gitQuery.error));
 
   const quickAcceptEntry = useCallback(async (entry: IntelligentEntry) => {
     const action = entry.intelligence.recommended_action;
@@ -673,6 +737,7 @@ export function InboxPage() {
         await quickAcceptEntry(entry);
       } finally {
         void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+        void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
       }
     },
     [queryClient, quickAcceptEntry],
@@ -682,6 +747,7 @@ export function InboxPage() {
     async (entry: IntelligentEntry) => {
       await resolveInboxEntry(entry.id, "reject");
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
     [queryClient],
   );
@@ -697,6 +763,7 @@ export function InboxPage() {
         }
       }
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
     [queryClient, quickAcceptEntry],
   );
@@ -752,7 +819,7 @@ export function InboxPage() {
           </div>
         </header>
 
-        <section className="inbox-redesign-metrics" aria-label="待整理概览">
+        <section className="inbox-redesign-metrics" aria-label="待整理与 Vault 概览">
           <InboxMetricCard
             icon={FilePlus2}
             iconClassName="inbox-redesign-metric-icon--create"
@@ -770,6 +837,12 @@ export function InboxPage() {
             iconClassName="inbox-redesign-metric-icon--done"
             value={processedTodayCount}
             label="今日已处理"
+          />
+          <InboxMetricCard
+            icon={GitBranch}
+            iconClassName={gitMetric.iconClassName}
+            value={gitMetric.value}
+            label={gitMetric.label}
           />
         </section>
 
@@ -1007,7 +1080,7 @@ function InboxMetricCard({
 }: {
   icon: LucideIcon;
   iconClassName: string;
-  value: number;
+  value: number | string;
   label: string;
 }) {
   return (
