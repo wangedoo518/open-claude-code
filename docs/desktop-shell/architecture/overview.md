@@ -83,7 +83,8 @@ This document answers: how `desktop-shell` is currently organized.
 - Wiki page summaries now carry optional `expressed_in` and `source_refs`
   frontmatter refs. Home uses `expressed_in` for the `最近表达` pulse, Purpose
   Lens digest counts expressed pages separately from pages that are still ready
-  to express, and Wiki Article surfaces `source_refs` as compact lineage chips.
+  to express, Knowledge search/listing can scan and preview `source_refs`, and
+  Wiki Article surfaces them as compact lineage chips.
 - Wiki direct edit accepts the full Markdown/YAML file, but both the editor
   save panel and `PUT /api/wiki/pages/{slug}` validate schema-sensitive
   frontmatter fields (`type`, `status`, `schema`, `source_raw_id`, `purpose`,

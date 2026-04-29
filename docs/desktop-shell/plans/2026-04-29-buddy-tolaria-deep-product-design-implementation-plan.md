@@ -462,6 +462,20 @@ Tolaria-inspired Buddy design.
 - Rust coverage verifies `source_refs` parsing and confirms full-frontmatter
   edits expose the preserved source refs in `WikiPageSummary`.
 
+## Implemented Slice 35
+
+- Wiki search now treats `source_refs` as a weighted searchable field, so users
+  can find knowledge pages by raw/source lineage ids from the Knowledge search
+  box.
+- Knowledge page rows now preview `source_refs` or legacy `source_raw_id`
+  inline, making the source trail visible from the main knowledge list without
+  opening a page or YAML editor.
+- Search results label source-ref matches as `命中：来源`, preserving the same
+  low-friction lineage signal in both normal browsing and query mode.
+- Browser smoke now seeds a page with `source_refs`, verifies the Knowledge
+  list renders that lineage, and searches by the source ref through the real
+  API/UI path.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

@@ -4892,6 +4892,7 @@ pub struct WikiSearchHit {
 ///
 ///   * slug match       → +8
 ///   * title match      → +5
+///   * source_refs match → +4
 ///   * summary match    → +3
 ///   * body match       → +1 per occurrence, up to +10
 ///
@@ -4965,6 +4966,7 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
         // Compute scores per field.
         let slug_lc = slug.to_lowercase();
         let title_lc = title.to_lowercase();
+        let source_refs_lc = source_refs.join(" ").to_lowercase();
         let summary_lc = summary.to_lowercase();
         let body_lc = body.to_lowercase();
 
@@ -4974,6 +4976,9 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
         }
         if title_lc.contains(&q) {
             score += 5;
+        }
+        if source_refs_lc.contains(&q) {
+            score += 4;
         }
         if summary_lc.contains(&q) {
             score += 3;
@@ -10249,6 +10254,32 @@ mod tests {
         assert_eq!(a[0].page.slug, b[0].page.slug);
         assert_eq!(a[0].page.slug, c[0].page.slug);
         assert_eq!(a[0].page.slug, "llm-wiki");
+    }
+
+    #[test]
+    fn search_wiki_pages_matches_source_refs() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_wiki_page(
+            &paths,
+            "lineage-search",
+            "Lineage Search",
+            "A page found by source lineage.",
+            "Body intentionally does not mention the source id.",
+            None,
+        )
+        .unwrap();
+        let content = read_wiki_page_content(&paths, "lineage-search")
+            .unwrap()
+            .replace("created_at:", "source_refs:\n  - raw:00042\ncreated_at:");
+        overwrite_wiki_page_content(&paths, "lineage-search", &content).unwrap();
+
+        let hits = search_wiki_pages(&paths, "raw:00042").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].page.slug, "lineage-search");
+        assert_eq!(hits[0].page.source_refs, vec!["raw:00042"]);
+        assert_eq!(hits[0].score, 4);
     }
 
     #[test]

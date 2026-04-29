@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Link2,
   Loader2,
   Search,
   Sparkles,
@@ -48,7 +49,10 @@ function classifyPage(page: WikiPageSummary): "concept" | "derived" | "other" {
   if (category === "concept" || slug.includes("concept/") || slug.includes("concepts/")) {
     return "concept";
   }
-  if (typeof page.source_raw_id === "number" && page.source_raw_id > 0) {
+  if (
+    (typeof page.source_raw_id === "number" && page.source_raw_id > 0) ||
+    (page.source_refs?.length ?? 0) > 0
+  ) {
     return "derived";
   }
   return "other";
@@ -127,6 +131,22 @@ function includesQuery(value: string | null | undefined, query: string): boolean
   return value.toLocaleLowerCase().includes(normalized);
 }
 
+function includesQueryInList(values: string[] | undefined, query: string): boolean {
+  return (values ?? []).some((value) => includesQuery(value, query));
+}
+
+function lineagePreview(page: WikiPageSummary): string | null {
+  const sourceRefs = page.source_refs?.filter(Boolean) ?? [];
+  if (sourceRefs.length > 0) {
+    const preview = sourceRefs.slice(0, 2).join(" / ");
+    return sourceRefs.length > 2 ? `${preview} / +${sourceRefs.length - 2}` : preview;
+  }
+  if (typeof page.source_raw_id === "number" && page.source_raw_id > 0) {
+    return `raw #${String(page.source_raw_id).padStart(5, "0")}`;
+  }
+  return null;
+}
+
 function parsePurposeFilter(raw: string | null): PurposeFilterMode {
   if (!raw) return "all";
   return PURPOSE_LENSES.some((lens) => lens.id === raw)
@@ -137,6 +157,7 @@ function parsePurposeFilter(raw: string | null): PurposeFilterMode {
 function searchHitSourceLabel(hit: WikiSearchHit, query: string): string {
   if (includesQuery(hit.page.title, query)) return "标题";
   if (includesQuery(hit.page.summary, query)) return "摘要";
+  if (includesQueryInList(hit.page.source_refs, query)) return "来源";
   if (includesQuery(hit.page.slug, query)) return "路径";
   if (hit.snippet.trim()) return "正文";
   return "相关内容";
@@ -465,6 +486,7 @@ export function KnowledgePagesList() {
                   const untitled = isUntitledPage(page);
                   const focused = activeFocusedSlug === page.slug;
                   const summary = searchHitSummary(hit);
+                  const lineage = lineagePreview(page);
                   return (
                     <li key={page.slug}>
                       <button
@@ -505,6 +527,19 @@ export function KnowledgePagesList() {
                               <Search className="size-3" strokeWidth={1.4} />
                               命中：{searchHitSourceLabel(hit, debouncedQuery || rawSearchTerm)}
                             </span>
+                            {lineage ? (
+                              <span
+                                className="ds-kb-meta-source"
+                                title={
+                                  page.source_refs?.length
+                                    ? page.source_refs.join(" / ")
+                                    : lineage
+                                }
+                              >
+                                <Link2 className="size-3" strokeWidth={1.4} />
+                                来源：{lineage}
+                              </span>
+                            ) : null}
                             <span>{formatKnowledgeTime(page.created_at)}</span>
                             <span>{estimateWords(page.byte_size)}</span>
                             {page.purpose?.slice(0, 2).map((lens) => (
@@ -571,6 +606,7 @@ export function KnowledgePagesList() {
                       const untitled = isUntitledPage(page);
                       const focused = activeFocusedSlug === page.slug;
                       const rowIndex = rowIndexBySlug.get(page.slug) ?? 0;
+                      const lineage = lineagePreview(page);
                       return (
                         <li key={page.slug}>
                           <button
@@ -601,10 +637,19 @@ export function KnowledgePagesList() {
                               </span>
                               <span className="ds-kb-summary">{displaySummary(page)}</span>
                               <span className="ds-kb-meta-row">
-                                <span className="ds-kb-meta-source">
-                                  <FileText className="size-3" strokeWidth={1.4} />
-                                  来自素材
-                                </span>
+                                {lineage ? (
+                                  <span
+                                    className="ds-kb-meta-source"
+                                    title={
+                                      page.source_refs?.length
+                                        ? page.source_refs.join(" / ")
+                                        : lineage
+                                    }
+                                  >
+                                    <Link2 className="size-3" strokeWidth={1.4} />
+                                    来源：{lineage}
+                                  </span>
+                                ) : null}
                                 <span>{formatKnowledgeTime(page.created_at)}</span>
                                 <span>{estimateWords(page.byte_size)}</span>
                                 {page.purpose?.slice(0, 2).map((lens) => (

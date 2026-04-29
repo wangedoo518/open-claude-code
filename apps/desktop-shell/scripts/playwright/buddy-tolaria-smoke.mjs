@@ -95,7 +95,8 @@ const routes = [
   {
     name: "Knowledge",
     hash: "/wiki",
-    mustContain: ["知识"],
+    mustContain: ["知识", "raw:00042"],
+    check: runKnowledgeSourceRefsSearchCheck,
   },
   {
     name: "Wiki Edit",
@@ -137,6 +138,8 @@ purpose:
   - learning
 expressed_in:
   - ask:smoke-session
+source_refs:
+  - raw:00042
 created_at: ${createdAt}
 ---
 
@@ -509,6 +512,18 @@ async function runAskWikiExpressionMarkCheck() {
   if (!expressedIn.includes(`ask:${sessionId}`)) {
     throw new Error(`ask wiki expression smoke expected ask:${sessionId}, got ${JSON.stringify(expressedIn)}`);
   }
+}
+
+async function runKnowledgeSourceRefsSearchCheck(page) {
+  const input = page.getByPlaceholder("搜索标题、摘要或来源…");
+  await input.fill("raw:00042");
+  await page.waitForFunction(
+    () =>
+      document.body.innerText.includes("命中：来源") &&
+      document.body.innerText.includes("raw:00042"),
+    null,
+    { timeout: 10_000 },
+  );
 }
 
 async function runAskPurposeLensUiCheck(page) {
