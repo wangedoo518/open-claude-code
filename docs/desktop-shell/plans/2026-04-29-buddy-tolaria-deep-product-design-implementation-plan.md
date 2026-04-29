@@ -314,6 +314,18 @@ Tolaria-inspired Buddy design.
 - Browser smoke now exercises the real change-block API and verifies an
   unrelated replacement hunk remains dirty after the selected block is restored.
 
+## Implemented Slice 24
+
+- Added a testable Command Manifest for the command palette under
+  `features/palette/command-manifest.ts`.
+- The manifest records stable command ids, route coverage, menu/palette
+  visibility, shortcut metadata, and route drift diagnostics derived from
+  `CLAWWIKI_ROUTES`.
+- Route palette rows now carry `commandId`, so future menu/native shortcut
+  wiring can reuse the same registry instead of inventing another command map.
+- Added ambient Vitest-style contract tests that type-check today and will run
+  directly once the desktop-shell test harness is wired.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

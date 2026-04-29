@@ -64,6 +64,7 @@ import type {
 } from "@/api/wiki/types";
 import { useCommandPaletteStore } from "@/state/command-palette-store";
 import { useWikiTabStore } from "@/state/wiki-tab-store";
+import { getRouteCommand } from "./command-manifest";
 import {
   getWikiPageGraph,
   type PageGraph,
@@ -299,20 +300,24 @@ function defaultSecondaryActions(
 // ── Item constructors ─────────────────────────────────────────────
 
 function buildRouteItems(): (RoutePaletteItem & PaletteContextFields)[] {
-  return CLAWWIKI_ROUTES.map((route: ClawWikiRoute) => ({
-    kind: "route" as const,
-    value: paletteValueFor("route", route.key),
-    label: route.label,
-    hint: route.key,
-    icon: iconForRouteKey(route.key),
-    routeKey: route.key,
-    path: route.path,
-    // Score / why are assigned by the ranker below; start at 0 so
-    // untouched routes fall to the tail of search results.
-    score: 0,
-    why: "",
-    secondaryActions: defaultSecondaryActions("route"),
-  }));
+  return CLAWWIKI_ROUTES.map((route: ClawWikiRoute) => {
+    const command = getRouteCommand(route.key);
+    return {
+      kind: "route" as const,
+      value: paletteValueFor("route", route.key),
+      label: route.label,
+      hint: route.key,
+      icon: iconForRouteKey(route.key),
+      routeKey: route.key,
+      path: route.path,
+      commandId: command?.id,
+      // Score / why are assigned by the ranker below; start at 0 so
+      // untouched routes fall to the tail of search results.
+      score: 0,
+      why: "",
+      secondaryActions: defaultSecondaryActions("route"),
+    };
+  });
 }
 
 function buildWikiItems(

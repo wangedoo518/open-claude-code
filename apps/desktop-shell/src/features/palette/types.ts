@@ -80,6 +80,8 @@ interface PaletteItemBase {
    * dispatches to the corresponding handler in `actions.ts`.
    */
   secondaryActions?: PaletteItemSecondaryAction[];
+  /** Stable command registry id when this row is backed by a command. */
+  commandId?: string;
 }
 
 export interface RoutePaletteItem extends PaletteItemBase {

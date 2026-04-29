@@ -18,6 +18,7 @@ const routes = [
     name: "Home / Pulse",
     hash: "/",
     mustContain: ["Home / Pulse", "外脑", "最近 Git 操作"],
+    check: runCommandPaletteManifestCheck,
   },
   {
     name: "Rules Studio",
@@ -352,6 +353,19 @@ async function runGitChangeBlockDiscardCheck() {
   if (latest.hunk_index !== selected.hunkIndex || latest.line_index !== selected.lineIndex) {
     throw new Error("change-block smoke did not record hunk/line metadata");
   }
+}
+
+async function runCommandPaletteManifestCheck(page) {
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+  await page.waitForFunction(
+    () =>
+      document.body.innerText.includes("首页") &&
+      document.body.innerText.includes("规则") &&
+      document.body.innerText.includes("连接"),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.keyboard.press("Escape");
 }
 
 async function runRulesFileEditCheck() {

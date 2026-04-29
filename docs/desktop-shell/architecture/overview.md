@@ -21,6 +21,10 @@ This document answers: how `desktop-shell` is currently organized.
 - App shell and routing. `apps/desktop-shell/src/shell/clawwiki-routes.tsx`
   is the canonical route config; sidebar navigation, command-palette route
   entries, and `<Routes>` are derived from the same list.
+- Command registry. `apps/desktop-shell/src/features/palette/command-manifest.ts`
+  builds the testable command manifest from the same route config, including
+  stable command ids, menu/palette flags, shortcut metadata, route coverage,
+  and drift diagnostics. Route palette rows carry the matching `commandId`.
 - Main rail surfaces are now `/` Home/Pulse, `/ask`, `/inbox`, `/wiki`,
   `/rules`, `/connections`, and `/settings`. Legacy surfaces such as
   `/dashboard`, `/schema`, `/wechat`, `/raw`, `/graph`, `/cleanup`,
