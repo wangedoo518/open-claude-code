@@ -1075,6 +1075,7 @@ export function AskWorkbench({
               question={wikiQuery.question}
               answer={wikiQuery.answer}
               sources={wikiQuery.sources}
+              crystallized={wikiQuery.crystallized}
               isStreaming={wikiQuery.isQuerying}
               error={wikiQuery.error}
             />

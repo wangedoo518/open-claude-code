@@ -408,12 +408,29 @@ Tolaria-inspired Buddy design.
   create/update writes, while browser smoke verifies the Inbox Purpose Lens
   review surface renders from a real seeded inbox entry.
 
+## Implemented Slice 31
+
+- Ask wiki query crystallization now completes the Tolaria
+  `capture -> organize -> express` loop: substantive answers still write
+  `raw/query`, and now also append a pending NewRaw Inbox task for human
+  review.
+- `query_wiki` returns the created `raw_id`, `inbox_id`, and display title in
+  its final result; the desktop SSE `query_done` payload forwards that
+  `crystallized` object to the UI.
+- Ask renders a compact crystallization receipt after a completed wiki query,
+  with direct entrypoints to the Raw Library record and the Inbox review task.
+- Rust coverage verifies long answers create both raw and Inbox records, short
+  answers do not crystallize, and the SSE payload preserves crystallization
+  ids.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
 - `cd apps/desktop-shell/src-tauri && cargo check`
 - `cd rust && cargo check --workspace`
 - `cd rust && cargo test -p wiki_store`
+- `cd rust && cargo test -p wiki_maintainer`
+- `cd rust && cargo test -p desktop-server query_done_payload`
 - `cd apps/desktop-shell && BUDDY_API_BASE=http://127.0.0.1:4358 BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm run test:buddy:smoke`
 
 ## Future Hardening

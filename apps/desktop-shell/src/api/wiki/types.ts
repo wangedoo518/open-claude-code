@@ -691,6 +691,13 @@ export interface QuerySource {
   snippet: string;
 }
 
+/** Raw + Inbox ids created when a substantive wiki query answer is crystallized. */
+export interface QueryCrystallization {
+  raw_id: number;
+  inbox_id: number;
+  title: string;
+}
+
 // Workbench API extensions formerly exported from `lib/tauri.ts`.
 
 export interface BatchFailedItem {

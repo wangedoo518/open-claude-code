@@ -85,6 +85,10 @@ This document answers: how `desktop-shell` is currently organized.
   `ask:<session-id>` to that page's `expressed_in` frontmatter once per
   session. This write is local-first and intentionally leaves Buddy Vault dirty
   so the existing Git checkpoint surfaces pick it up.
+- Ask wiki queries (`?` prefix) crystallize substantive answers into
+  `raw/query` and append a pending NewRaw Inbox task. The final SSE payload
+  returns the created raw/inbox ids, and the Ask answer block links directly to
+  Raw Library and Inbox review.
 - Ask Purpose mode is carried on
   `POST /api/desktop/sessions/{id}/messages` as optional `purpose` values.
   The Rust layer normalizes the slugs, stores them on

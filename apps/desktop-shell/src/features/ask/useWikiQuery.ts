@@ -6,10 +6,11 @@
  * chunk-boundary safe because a single event may span multiple reads.
  *   data: { type: "query_chunk", delta, source_refs }
  *     — streamed incrementally; each delta is appended to the answer.
- *   data: { type: "query_done",  sources: QuerySource[], total_tokens?: number }
+ *   data: { type: "query_done", sources, total_tokens?, crystallized? }
  *     — emitted exactly once when the backend query_wiki task finishes
  *       successfully. `sources` feeds QuerySourcesCard. `total_tokens`
- *       is currently ignored by the UI but accepted for forward compat.
+ *       is accepted for forward compat; `crystallized` links long answers
+ *       back into the Raw Library / Inbox review loop.
  *   data: { type: "query_error", error: string }
  *     — emitted instead of query_done if query_wiki returns Err OR if
  *       the backend query task panics/is cancelled. The already-streamed
@@ -18,13 +19,15 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { QuerySource } from "@/api/wiki/types";
+import { useQueryClient } from "@tanstack/react-query";
+import type { QueryCrystallization, QuerySource } from "@/api/wiki/types";
 
 interface WikiQueryState {
   isQuerying: boolean;
   question: string;
   answer: string;
   sources: QuerySource[];
+  crystallized: QueryCrystallization | null;
   error: string | null;
 }
 
@@ -33,12 +36,24 @@ const INITIAL_STATE: WikiQueryState = {
   question: "",
   answer: "",
   sources: [],
+  crystallized: null,
   error: null,
 };
+
+function isQueryCrystallization(value: unknown): value is QueryCrystallization {
+  if (typeof value !== "object" || value == null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.raw_id === "number" &&
+    typeof candidate.inbox_id === "number" &&
+    typeof candidate.title === "string"
+  );
+}
 
 export function useWikiQuery() {
   const [state, setState] = useState<WikiQueryState>(INITIAL_STATE);
   const abortRef = useRef<AbortController | null>(null);
+  const queryClient = useQueryClient();
 
   const queryWiki = useCallback(async (question: string) => {
     // Abort any previous in-flight query.
@@ -51,6 +66,7 @@ export function useWikiQuery() {
       question,
       answer: "",
       sources: [],
+      crystallized: null,
       error: null,
     });
 
@@ -88,6 +104,7 @@ export function useWikiQuery() {
         type?: string;
         delta?: unknown;
         sources?: unknown;
+        crystallized?: unknown;
         error?: unknown;
       }) => {
         if (event.type === "query_chunk" && typeof event.delta === "string") {
@@ -103,9 +120,17 @@ export function useWikiQuery() {
           const nextSources: QuerySource[] = Array.isArray(event.sources)
             ? (event.sources as QuerySource[])
             : [];
+          const crystallized = isQueryCrystallization(event.crystallized)
+            ? event.crystallized
+            : null;
+          if (crystallized) {
+            void queryClient.invalidateQueries({ queryKey: ["wiki", "inbox"] });
+            void queryClient.invalidateQueries({ queryKey: ["wiki", "raw"] });
+          }
           setState((prev) => ({
             ...prev,
             sources: nextSources,
+            crystallized,
             isQuerying: false,
           }));
         } else if (event.type === "query_error") {
@@ -198,7 +223,7 @@ export function useWikiQuery() {
         error: err instanceof Error ? err.message : String(err),
       }));
     }
-  }, []);
+  }, [queryClient]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();

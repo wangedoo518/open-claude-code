@@ -13,11 +13,12 @@
  */
 
 import { useMemo } from "react";
-import { BookOpen, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ArrowRight, BookOpen, Hash, Inbox, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { QuerySourcesCard } from "./QuerySourcesCard";
-import type { QuerySource } from "@/api/wiki/types";
+import type { QueryCrystallization, QuerySource } from "@/api/wiki/types";
 import {
   preprocessWikilinks,
   useWikiLinkRenderer,
@@ -27,6 +28,7 @@ interface WikiQueryMessageProps {
   question: string;
   answer: string;
   sources: QuerySource[];
+  crystallized: QueryCrystallization | null;
   isStreaming: boolean;
   error: string | null;
 }
@@ -35,9 +37,11 @@ export function WikiQueryMessage({
   question,
   answer,
   sources,
+  crystallized,
   isStreaming,
   error,
 }: WikiQueryMessageProps) {
+  const navigate = useNavigate();
   const Anchor = useWikiLinkRenderer();
   const markdownComponents = useMemo<Components>(
     () => ({ a: Anchor }),
@@ -94,6 +98,35 @@ export function WikiQueryMessage({
         {/* Sources card — shown after streaming completes */}
         {!isStreaming && sources.length > 0 && (
           <QuerySourcesCard sources={sources} />
+        )}
+
+        {!isStreaming && crystallized && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/30 px-3 py-2 text-[12px]">
+            <div className="flex min-w-0 flex-1 basis-52 items-center gap-2 text-[var(--color-muted-foreground)]">
+              <Inbox className="size-3.5 shrink-0 text-[var(--deeptutor-ok,#3F8F5E)]" />
+              <span className="truncate">
+                已结晶到 Inbox #{crystallized.inbox_id} · {crystallized.title}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => navigate(`/raw?entry=${crystallized.raw_id}`)}
+                className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+              >
+                <Hash className="size-3" />
+                raw #{String(crystallized.raw_id).padStart(5, "0")}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/inbox?task=${crystallized.inbox_id}`)}
+                className="inline-flex h-7 items-center gap-1 rounded-md bg-[var(--deeptutor-ok,#3F8F5E)] px-2 text-[11px] font-semibold text-white hover:opacity-90"
+              >
+                打开审阅
+                <ArrowRight className="size-3" />
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

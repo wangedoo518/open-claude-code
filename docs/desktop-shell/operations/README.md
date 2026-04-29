@@ -131,7 +131,10 @@ BUDDY_API_BASE=http://127.0.0.1:4358 BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm 
 ```
 
 The smoke expects the desktop-server to be reachable at `BUDDY_API_BASE` and
-the app to be reachable at `BUDDY_SMOKE_URL`. It verifies Home/Pulse, Rules
+the app to be reachable at `BUDDY_SMOKE_URL`. When Vite is launched manually
+for this smoke, start it with the same backend URL, for example
+`VITE_DESKTOP_API_BASE=http://127.0.0.1:4358 npm run dev -- --host 127.0.0.1 --port 5174`.
+It verifies Home/Pulse, Rules
 Studio folded Advanced state, Connections, Knowledge, the global status bar,
 and absence of runtime error boundaries. Before UI navigation it also exercises
 Buddy Vault hunk discard through the real HTTP API, then seeds a wiki page

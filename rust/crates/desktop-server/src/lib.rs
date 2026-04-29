@@ -1011,7 +1011,7 @@ mod tests {
     // `useWikiQuery` depends on.
 
     use super::{make_query_done_payload, make_query_error_payload};
-    use wiki_maintainer::{QueryResult, QuerySource};
+    use wiki_maintainer::{QueryCrystallization, QueryResult, QuerySource};
 
     #[test]
     fn query_done_payload_carries_sources_and_total_tokens() {
@@ -1031,10 +1031,21 @@ mod tests {
                 },
             ],
             total_tokens: 1234,
+            crystallized: Some(QueryCrystallization {
+                raw_id: 12,
+                inbox_id: 34,
+                title: "Query: Claude Code 技能最佳实践".to_string(),
+            }),
         };
         let payload = make_query_done_payload(&result);
         assert_eq!(payload["type"], "query_done");
         assert_eq!(payload["total_tokens"], 1234);
+        assert_eq!(payload["crystallized"]["raw_id"], 12);
+        assert_eq!(payload["crystallized"]["inbox_id"], 34);
+        assert_eq!(
+            payload["crystallized"]["title"],
+            "Query: Claude Code 技能最佳实践"
+        );
         let sources = payload["sources"]
             .as_array()
             .expect("sources should be a JSON array");
@@ -1054,12 +1065,14 @@ mod tests {
         let result = QueryResult {
             sources: vec![],
             total_tokens: 0,
+            crystallized: None,
         };
         let payload = make_query_done_payload(&result);
         assert_eq!(payload["type"], "query_done");
         assert_eq!(payload["total_tokens"], 0);
         assert!(payload["sources"].is_array());
         assert_eq!(payload["sources"].as_array().unwrap().len(), 0);
+        assert!(payload["crystallized"].is_null());
     }
 
     #[test]

@@ -1737,6 +1737,16 @@ pub struct QueryChunkEvent {
 pub struct QueryResult {
     pub sources: Vec<QuerySource>,
     pub total_tokens: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crystallized: Option<QueryCrystallization>,
+}
+
+/// Raw + Inbox ids created when a substantive query answer is crystallized.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QueryCrystallization {
+    pub raw_id: u32,
+    pub inbox_id: u32,
+    pub title: String,
 }
 
 /// A single source page referenced in a query answer.
@@ -2480,16 +2490,40 @@ pub async fn query_wiki(
 
     // Step 6: Crystallization — write substantive answers to raw/ for future absorption.
     // Per 01-skill-engine.md §5.2 step 6 and technical-design.md §2.2.
-    if answer_for_crystal.len() > 200 {
+    let crystallized = if answer_for_crystal.len() > 200 {
         let slug = wiki_store::slugify(question);
         let fm = wiki_store::RawFrontmatter::for_paste("query", None);
         let body = format!("# Query: {}\n\n{}", question, answer_for_crystal);
-        let _ = wiki_store::write_raw_entry(paths, "query", &slug, &body, &fm);
-    }
+        match wiki_store::write_raw_entry(paths, "query", &slug, &body, &fm) {
+            Ok(raw_entry) => {
+                match wiki_store::append_new_raw_task(paths, &raw_entry, "query crystallization") {
+                    Ok(inbox_entry) => Some(QueryCrystallization {
+                        raw_id: raw_entry.id,
+                        inbox_id: inbox_entry.id,
+                        title: inbox_entry.title,
+                    }),
+                    Err(err) => {
+                        eprintln!(
+                            "[maintainer] failed to append inbox task for query raw_id={}: {err}",
+                            raw_entry.id
+                        );
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("[maintainer] failed to crystallize query answer: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     Ok(QueryResult {
         sources,
         total_tokens,
+        crystallized,
     })
 }
 
@@ -4030,7 +4064,9 @@ mod tests {
             canned: long_answer.clone(),
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
-        let _ = query_wiki(&paths, "test topic question", 5, &broker, tx).await;
+        let result = query_wiki(&paths, "test topic question", 5, &broker, tx)
+            .await
+            .unwrap();
 
         // Verify a raw entry with source="query" was created.
         let raws = wiki_store::list_raw_entries(&paths).unwrap();
@@ -4039,6 +4075,18 @@ mod tests {
             !query_raws.is_empty(),
             "crystallization should create a raw entry with source='query'"
         );
+        let crystallized = result
+            .crystallized
+            .expect("long query answer should report crystallization ids");
+        assert_eq!(crystallized.raw_id, query_raws[0].id);
+
+        let inbox_entries = wiki_store::list_inbox_entries(&paths).unwrap();
+        let inbox_entry = inbox_entries
+            .iter()
+            .find(|entry| entry.id == crystallized.inbox_id)
+            .expect("crystallization should append a pending inbox task");
+        assert_eq!(inbox_entry.source_raw_id, Some(crystallized.raw_id));
+        assert_eq!(inbox_entry.title, crystallized.title);
     }
 
     #[tokio::test]
@@ -4063,11 +4111,17 @@ mod tests {
             canned: "Short answer.".to_string(),
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
-        let _ = query_wiki(&paths, "short question", 5, &broker, tx).await;
+        let result = query_wiki(&paths, "short question", 5, &broker, tx)
+            .await
+            .unwrap();
 
         let raws = wiki_store::list_raw_entries(&paths).unwrap();
         let query_raws: Vec<_> = raws.iter().filter(|r| r.source == "query").collect();
         assert!(query_raws.is_empty(), "short answer should NOT crystallize");
+        assert!(
+            result.crystallized.is_none(),
+            "short answer should not report crystallization ids"
+        );
     }
 
     // ── W1 Maintainer Workbench: execute_maintain tests ───────────

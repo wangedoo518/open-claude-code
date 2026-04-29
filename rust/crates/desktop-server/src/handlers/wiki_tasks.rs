@@ -313,6 +313,7 @@ pub(crate) fn make_query_done_payload(result: &wiki_maintainer::QueryResult) -> 
         "type": "query_done",
         "sources": result.sources,
         "total_tokens": result.total_tokens,
+        "crystallized": result.crystallized,
     })
 }
 
