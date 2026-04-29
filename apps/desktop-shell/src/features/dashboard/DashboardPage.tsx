@@ -9,6 +9,7 @@ import {
   FileText,
   GitBranch,
   HeartPulse,
+  History,
   Inbox,
   Loader2,
   MessageCircle,
@@ -18,11 +19,13 @@ import {
 import { Link } from "react-router-dom";
 import {
   getExternalAiWritePolicy,
+  getVaultGitAudit,
   getVaultGitStatus,
   getPatrolReport,
   getWikiStats,
   listInboxEntries,
 } from "@/api/wiki/repository";
+import type { VaultGitAuditEntry } from "@/api/wiki/types";
 
 export function DashboardPage() {
   const statsQuery = useQuery({
@@ -49,6 +52,12 @@ export function DashboardPage() {
     staleTime: 10_000,
     refetchInterval: 20_000,
   });
+  const gitAuditQuery = useQuery({
+    queryKey: ["wiki", "git", "audit", "pulse"],
+    queryFn: () => getVaultGitAudit(1),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+  });
   const externalAiQuery = useQuery({
     queryKey: ["wiki", "external-ai", "write-policy", "pulse"],
     queryFn: () => getExternalAiWritePolicy(),
@@ -60,6 +69,7 @@ export function DashboardPage() {
   const stats = statsQuery.data;
   const patrol = patrolQuery.data;
   const git = gitQuery.data;
+  const latestGitAudit = gitAuditQuery.data?.entries[0] ?? null;
   const activeExternalAiGrants =
     externalAiQuery.data?.grants.filter((grant) => grant.enabled).length ?? 0;
   const schemaViolations = patrol?.summary.schema_violations ?? 0;
@@ -249,6 +259,17 @@ export function DashboardPage() {
                 value={git?.dirty ? `${git.changed_count} 改动待提交` : "已同步本地历史"}
               />
             </div>
+            <div className="mt-5 border-t border-border/60 pt-4">
+              <div className="flex items-center gap-2">
+                <History className="size-4 text-primary" />
+                <h2 className="text-[15px] font-medium">最近 Git 操作</h2>
+              </div>
+              <GitAuditPulse
+                entry={latestGitAudit}
+                error={Boolean(gitAuditQuery.error)}
+                loading={gitAuditQuery.isLoading}
+              />
+            </div>
           </div>
         </section>
 
@@ -344,6 +365,78 @@ function StatusRow({ label, value }: { label: string; value: string }) {
       <span className="text-foreground">{value}</span>
     </div>
   );
+}
+
+function GitAuditPulse({
+  entry,
+  error,
+  loading,
+}: {
+  entry: VaultGitAuditEntry | null;
+  error: boolean;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="mt-3 rounded-md bg-muted/50 px-3 py-3 text-[12px] text-muted-foreground">
+        正在同步 Git 操作记录
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mt-3 rounded-md bg-muted/50 px-3 py-3 text-[12px] text-muted-foreground">
+        Git 操作记录不可用
+      </div>
+    );
+  }
+
+  if (!entry) {
+    return (
+      <div className="mt-3 rounded-md bg-muted/50 px-3 py-3 text-[12px] text-muted-foreground">
+        暂无 Git 操作
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-md bg-muted/50 px-3 py-3 text-[12px]">
+      <div className="flex items-center justify-between gap-3">
+        <span className="rounded border border-border/60 bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+          {gitAuditLabel(entry.operation)}
+        </span>
+        <span className="shrink-0 text-muted-foreground">
+          {formatGitAuditTime(entry.timestamp_ms)}
+        </span>
+      </div>
+      <div className="mt-2 min-w-0 truncate text-foreground">
+        {entry.summary}
+      </div>
+      {entry.path || entry.commit || entry.remote ? (
+        <div className="mt-1 min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+          {entry.path || entry.commit || entry.remote}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function gitAuditLabel(operation: string): string {
+  if (operation === "discard-hunk") return "hunk";
+  if (operation === "discard-path") return "discard";
+  if (operation === "commit") return "commit";
+  if (operation === "remote") return "remote";
+  return operation;
+}
+
+function formatGitAuditTime(timestampMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestampMs));
 }
 
 function MiniStat({

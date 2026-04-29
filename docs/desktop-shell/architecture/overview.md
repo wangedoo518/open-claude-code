@@ -26,6 +26,10 @@ This document answers: how `desktop-shell` is currently organized.
   `/dashboard`, `/schema`, `/wechat`, `/raw`, `/graph`, `/cleanup`,
   `/breakdown`, `/viewer`, and `/connect-wechat` remain mounted for
   compatibility and command-palette access.
+- `apps/desktop-shell/src/features/dashboard/DashboardPage.tsx` owns
+  Home/Pulse as the external-brain health check: Inbox pressure, knowledge
+  quality, Git/Vault state, external-AI write posture, and the latest local
+  Git audit entry are summarized in the first viewport.
 - `apps/desktop-shell/src/shell/BuddyStatusBar.tsx` is the global shell status
   bar for health, Inbox, Git/Vault, permission mode, and external-AI write
   posture.

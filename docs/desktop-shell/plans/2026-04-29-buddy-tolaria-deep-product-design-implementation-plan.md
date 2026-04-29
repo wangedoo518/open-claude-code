@@ -171,6 +171,18 @@ Tolaria-inspired Buddy design.
   sections, so the UI degrades safely if a future diff source cannot be parsed
   into hunks.
 
+## Implemented Slice 12
+
+- Home/Pulse now reads `GET /api/wiki/git/audit?limit=1` and surfaces the
+  latest local Buddy Vault Git operation in the first-viewport health check.
+- This extends the Tolaria-style "what happened today" posture beyond the
+  Connections operator surface: Git remains first-class for operators, while
+  casual users can still see whether the Vault has recently been checkpointed
+  or rolled back without opening a dedicated Git page.
+- Browser smoke coverage now requires the Home/Pulse route to render the
+  `最近 Git 操作` section after the smoke creates a real commit and hunk
+  discard through the API.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

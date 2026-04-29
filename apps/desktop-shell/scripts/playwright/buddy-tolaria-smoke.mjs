@@ -15,7 +15,7 @@ const routes = [
   {
     name: "Home / Pulse",
     hash: "/",
-    mustContain: ["Home / Pulse", "外脑"],
+    mustContain: ["Home / Pulse", "外脑", "最近 Git 操作"],
   },
   {
     name: "Rules Studio",
