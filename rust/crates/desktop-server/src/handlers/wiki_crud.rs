@@ -2153,6 +2153,32 @@ pub(crate) async fn set_vault_git_remote_handler(
     ))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct GitDiscardRequest {
+    path: String,
+}
+
+pub(crate) async fn discard_vault_git_path_handler(
+    Json(body): Json<GitDiscardRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let result = wiki_store::vault_git_discard_path(&paths, &body.path).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git discard failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 pub(crate) async fn get_external_ai_write_policy_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;

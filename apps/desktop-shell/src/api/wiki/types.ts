@@ -481,6 +481,14 @@ export interface VaultGitRemoteConfigResult {
   status: VaultGitStatus;
 }
 
+export interface VaultGitDiscardResult {
+  ok: boolean;
+  path: string;
+  mode: "tracked" | "untracked" | string;
+  summary: string;
+  status: VaultGitStatus;
+}
+
 export type ExternalAiGrantLevel = "session" | "permanent";
 
 export interface ExternalAiWriteGrant {

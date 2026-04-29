@@ -43,6 +43,7 @@ const routes = [
       "Pull",
       "Push",
       "保存 origin",
+      "丢弃文件",
       "受控自动写入授权",
     ],
   },

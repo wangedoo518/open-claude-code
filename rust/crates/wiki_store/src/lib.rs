@@ -682,6 +682,15 @@ pub struct VaultGitRemoteConfigResult {
     pub status: VaultGitStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitDiscardResult {
+    pub ok: bool,
+    pub path: String,
+    pub mode: String,
+    pub summary: String,
+    pub status: VaultGitStatus,
+}
+
 fn git_binary_available() -> bool {
     matches!(
         std::process::Command::new("git").arg("--version").output(),
@@ -859,6 +868,47 @@ fn validate_git_remote_url(url: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn validate_git_relative_path(path: &str) -> Result<String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "git path must not be empty".to_string(),
+        ));
+    }
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Err(WikiStoreError::Invalid(format!(
+            "git path must be relative: {path}"
+        )));
+    }
+    let mut parts = Vec::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let part = part.to_string_lossy();
+                if part.is_empty() {
+                    return Err(WikiStoreError::Invalid(format!(
+                        "invalid git path: {path}"
+                    )));
+                }
+                parts.push(part.to_string());
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(WikiStoreError::Invalid(format!(
+                    "invalid git path: {path}"
+                )));
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err(WikiStoreError::Invalid(format!(
+            "invalid git path: {path}"
+        )));
+    }
+    Ok(parts.join("/"))
 }
 
 fn list_untracked_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -1274,6 +1324,51 @@ pub fn vault_git_set_remote(
         ok: true,
         remote: remote.to_string(),
         remote_url_redacted: redact_remote_url(url),
+        status,
+    })
+}
+
+pub fn vault_git_discard_path(paths: &WikiPaths, path: &str) -> Result<VaultGitDiscardResult> {
+    let path = validate_git_relative_path(path)?;
+    let status = vault_git_status(paths)?;
+    if !status.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+    let Some(change) = status.changes.iter().find(|change| {
+        change.path == path
+            || (change.xy == "??" && change.path.ends_with('/') && path.starts_with(&change.path))
+    }) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "path is not dirty in Buddy Vault: {path}"
+        )));
+    };
+
+    let mode = if change.xy == "??" {
+        let target = paths.root.join(&path);
+        if target.is_dir() {
+            fs::remove_dir_all(&target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+        } else {
+            fs::remove_file(&target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+        }
+        "untracked"
+    } else {
+        run_git(&paths.root, &["restore", "--staged", "--worktree", "--", &path])?;
+        "tracked"
+    };
+
+    let status = vault_git_status(paths)?;
+    Ok(VaultGitDiscardResult {
+        ok: true,
+        path: path.clone(),
+        mode: mode.to_string(),
+        summary: format!("Discarded {mode} changes for {path}"),
         status,
     })
 }
@@ -8823,6 +8918,60 @@ mod tests {
 
         assert!(vault_git_set_remote(&paths, "../origin", "https://example.com/repo.git").is_err());
         assert!(vault_git_set_remote(&paths, "origin", "").is_err());
+    }
+
+    #[test]
+    fn vault_git_discard_path_restores_tracked_file() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let changed = format!("{}\n\n## Temporary edit\n", CLAUDE_MD_TEMPLATE);
+        overwrite_schema_claude_md(&paths, &changed).unwrap();
+        assert!(vault_git_status(&paths).unwrap().dirty);
+
+        let discarded = vault_git_discard_path(&paths, "schema/CLAUDE.md").unwrap();
+        assert!(discarded.ok);
+        assert_eq!(discarded.mode, "tracked");
+        assert!(!discarded.status.dirty);
+        assert_eq!(
+            fs::read_to_string(paths.schema.join("CLAUDE.md")).unwrap(),
+            CLAUDE_MD_TEMPLATE
+        );
+    }
+
+    #[test]
+    fn vault_git_discard_path_removes_untracked_file() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let page = paths.wiki.join("concepts").join("scratch.md");
+        fs::write(&page, "# Scratch\n").unwrap();
+        assert!(vault_git_status(&paths)
+            .unwrap()
+            .changes
+            .iter()
+            .any(|change| change.path == "wiki/concepts/scratch.md" || change.path == "wiki/"));
+
+        let discarded = vault_git_discard_path(&paths, "wiki/concepts/scratch.md").unwrap();
+        assert!(discarded.ok);
+        assert_eq!(discarded.mode, "untracked");
+        assert!(!page.exists());
+        assert!(!discarded.status.dirty);
+    }
+
+    #[test]
+    fn vault_git_discard_path_rejects_unknown_or_unsafe_path() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        assert!(vault_git_discard_path(&paths, "../outside.md").is_err());
+        assert!(vault_git_discard_path(&paths, "schema/CLAUDE.md").is_err());
     }
 
     #[test]

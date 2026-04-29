@@ -96,6 +96,18 @@ Tolaria-inspired Buddy design.
   remote rejection.
 - Browser smoke now asserts the Connections remote setup controls render.
 
+## Implemented Slice 6
+
+- Added `POST /api/wiki/git/discard` for discarding one dirty Vault path.
+- Discard is constrained to paths already reported by Git status and rejects
+  absolute paths, parent traversal, and clean/unknown paths.
+- Tracked paths are restored from `HEAD`; untracked files or files inside an
+  untracked directory are removed from the Vault.
+- Connections now lets users select a file-level diff section and discard that
+  selected file after a confirmation prompt.
+- Rust coverage now verifies tracked restore, untracked removal, and unsafe
+  path rejection.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -106,5 +118,5 @@ Tolaria-inspired Buddy design.
 
 ## Future Hardening
 
-- Add line-level diff selection and apply/discard actions after the Vault
-  checkpoint model has reviewer-approved interaction rules.
+- Add line-level patch apply/discard after file-level discard has enough
+  reviewer and dogfood feedback.

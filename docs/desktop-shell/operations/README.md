@@ -42,6 +42,9 @@ design, tests, review discipline, or documentation.
   auto-merging.
 - Remote URL setup writes to Git config and status surfaces only redacted URLs;
   do not log or duplicate credential-bearing remote URLs in Buddy-owned files.
+- Buddy Vault discard is intentionally path-scoped: only discard paths already
+  reported by Git status, require an explicit user confirmation in UI, and keep
+  line-level patch mutation behind a separate reviewed interaction model.
 - When copying Tolaria source, include provenance, license preservation, tests,
   and documentation in the same main-only slice.
 

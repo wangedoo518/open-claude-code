@@ -97,6 +97,7 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
         .route("/api/wiki/git/pull", post(pull_vault_git_handler))
         .route("/api/wiki/git/push", post(push_vault_git_handler))
         .route("/api/wiki/git/remote", post(set_vault_git_remote_handler))
+        .route("/api/wiki/git/discard", post(discard_vault_git_path_handler))
         .route(
             "/api/wiki/external-ai/write-policy",
             get(get_external_ai_write_policy_handler),

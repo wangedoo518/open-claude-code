@@ -29,6 +29,7 @@ import type {
   SchemaTemplate,
   UpdateProposal,
   VaultGitCommitResult,
+  VaultGitDiscardResult,
   VaultGitDiff,
   VaultGitRemoteConfigResult,
   VaultGitStatus,
@@ -480,6 +481,14 @@ export async function setVaultGitRemote(request: {
   return fetchJson<VaultGitRemoteConfigResult>("/api/wiki/git/remote", {
     method: "POST",
     body: JSON.stringify(request),
+  });
+}
+
+/** POST `/api/wiki/git/discard` — discard one dirty Buddy Vault path. */
+export async function discardVaultGitPath(path: string): Promise<VaultGitDiscardResult> {
+  return fetchJson<VaultGitDiscardResult>("/api/wiki/git/discard", {
+    method: "POST",
+    body: JSON.stringify({ path }),
   });
 }
 

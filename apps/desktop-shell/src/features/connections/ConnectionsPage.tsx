@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Save,
   ShieldAlert,
+  Trash2,
   Upload,
   type LucideIcon,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addExternalAiWriteGrant,
   commitVaultGit,
+  discardVaultGitPath,
   getExternalAiWritePolicy,
   getVaultGitDiff,
   getVaultGitStatus,
@@ -71,6 +73,7 @@ export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [commitMessage, setCommitMessage] = useState("");
   const [diffStaged, setDiffStaged] = useState(false);
+  const [selectedDiffKey, setSelectedDiffKey] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
@@ -110,6 +113,28 @@ export function ConnectionsPage() {
     ),
     staleTime: 5_000,
   });
+  const diffSections = diffQuery.data?.sections ?? [];
+  const selectedDiffSection = useMemo(() => {
+    if (!diffSections.length) return null;
+    return (
+      diffSections.find((section) => `${section.kind}:${section.path}` === selectedDiffKey) ??
+      diffSections[0]
+    );
+  }, [diffSections, selectedDiffKey]);
+  useEffect(() => {
+    if (!diffSections.length) {
+      if (selectedDiffKey) setSelectedDiffKey(null);
+      return;
+    }
+    if (
+      !selectedDiffKey ||
+      !diffSections.some((section) => `${section.kind}:${section.path}` === selectedDiffKey)
+    ) {
+      const first = diffSections[0];
+      setSelectedDiffKey(`${first.kind}:${first.path}`);
+    }
+  }, [diffSections, selectedDiffKey]);
+
   const commitMutation = useMutation({
     mutationFn: (message: string) => commitVaultGit(message),
     onSuccess: () => {
@@ -139,6 +164,15 @@ export function ConnectionsPage() {
     onSuccess: (result) => {
       setRemoteUrl("");
       setSyncMessage(`origin -> ${result.remote_url_redacted}`);
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
+  const discardMutation = useMutation({
+    mutationFn: discardVaultGitPath,
+    onSuccess: (result) => {
+      setSelectedDiffKey(null);
+      setSyncMessage(result.summary);
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
@@ -185,6 +219,11 @@ export function ConnectionsPage() {
   }, [git?.changed_count, git?.dirty]);
   const syncPending =
     pullMutation.isPending || pushMutation.isPending || remoteMutation.isPending;
+  const diffPreviewText = diffQuery.isFetching
+    ? "Loading diff..."
+    : selectedDiffSection?.diff ||
+      diffQuery.data?.diff ||
+      (diffStaged ? "No staged diff." : git?.dirty ? "No unstaged diff." : "No diff.");
   const canSetRemote = Boolean(git?.git_available && git.initialized && remoteUrl.trim());
   const canRemoteSync = Boolean(
     git?.git_available && git.initialized && git.remote_connected && !git.dirty,
@@ -231,6 +270,13 @@ export function ConnectionsPage() {
     if (!canSetRemote || remoteMutation.isPending) return;
     setSyncMessage(null);
     remoteMutation.mutate(url);
+  }
+
+  function handleDiscardSelectedPath() {
+    if (!selectedDiffSection || discardMutation.isPending) return;
+    const confirmed = window.confirm(`丢弃 ${selectedDiffSection.path} 的未提交改动？`);
+    if (!confirmed) return;
+    discardMutation.mutate(selectedDiffSection.path);
   }
 
   function handleSessionGrant() {
@@ -433,63 +479,88 @@ export function ConnectionsPage() {
                     <div className="text-[12px] font-medium">
                       Diff preview
                     </div>
-                    <div className="flex rounded-md border border-border/70 bg-card p-0.5">
-                      {[
-                        ["unstaged", "未暂存"],
-                        ["staged", "已暂存"],
-                      ].map(([id, label]) => {
-                        const active = diffStaged === (id === "staged");
-                        return (
-                          <button
-                            key={id}
-                            type="button"
-                            onClick={() => setDiffStaged(id === "staged")}
-                            className={`h-6 rounded px-2 text-[11px] ${
-                              active
-                                ? "bg-primary text-primary-foreground"
-                                : "text-muted-foreground hover:bg-muted"
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDiscardSelectedPath}
+                        disabled={!selectedDiffSection || discardMutation.isPending}
+                        className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {discardMutation.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                        丢弃文件
+                      </button>
+                      <div className="flex rounded-md border border-border/70 bg-card p-0.5">
+                        {[
+                          ["unstaged", "未暂存"],
+                          ["staged", "已暂存"],
+                        ].map(([id, label]) => {
+                          const active = diffStaged === (id === "staged");
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => setDiffStaged(id === "staged")}
+                              className={`h-6 rounded px-2 text-[11px] ${
+                                active
+                                  ? "bg-primary text-primary-foreground"
+                                  : "text-muted-foreground hover:bg-muted"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                   <pre className="max-h-44 overflow-auto whitespace-pre-wrap px-3 py-3 text-[11px] leading-5 text-muted-foreground">
-                    {diffQuery.isFetching
-                      ? "Loading diff..."
-                      : diffQuery.data?.diff ||
-                        (diffStaged
-                          ? "No staged diff."
-                          : git?.dirty
-                            ? "No unstaged diff."
-                            : "No diff.")}
+                    {diffPreviewText}
                   </pre>
-                  {diffQuery.data?.sections.length ? (
+                  {diffSections.length ? (
                     <div className="space-y-1 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
                       <div>
-                        {diffQuery.data.sections.length} sections
-                        {diffQuery.data.truncated ? " · preview truncated" : ""}
+                        {diffSections.length} sections
+                        {diffQuery.data?.truncated ? " · preview truncated" : ""}
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {diffQuery.data.sections.slice(0, 6).map((section) => (
-                          <span
-                            key={`${section.kind}:${section.path}`}
-                            className="max-w-full truncate rounded border border-border/60 bg-card px-1.5 py-0.5 font-mono"
-                            title={section.path}
-                          >
-                            {section.kind}:{section.path}
-                          </span>
-                        ))}
-                        {diffQuery.data.sections.length > 6 ? (
+                        {diffSections.slice(0, 8).map((section) => {
+                          const key = `${section.kind}:${section.path}`;
+                          const active = selectedDiffKey === key;
+                          return (
+                            <button
+                              key={`${section.kind}:${section.path}`}
+                              type="button"
+                              onClick={() => setSelectedDiffKey(key)}
+                              className={`max-w-full truncate rounded border px-1.5 py-0.5 font-mono ${
+                                active
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-border/60 bg-card hover:bg-muted"
+                              }`}
+                              title={section.path}
+                            >
+                              {section.kind}:{section.path}
+                            </button>
+                          );
+                        })}
+                        {diffSections.length > 8 ? (
                           <span className="rounded border border-border/60 bg-card px-1.5 py-0.5">
-                            +{diffQuery.data.sections.length - 6}
+                            +{diffSections.length - 8}
                           </span>
                         ) : null}
                       </div>
                     </div>
                   ) : null}
+                  {discardMutation.error && (
+                    <p className="border-t border-border/60 px-3 py-2 text-[11px] leading-5 text-[var(--color-warning)]">
+                      {discardMutation.error instanceof Error
+                        ? discardMutation.error.message
+                        : "Discard failed"}
+                    </p>
+                  )}
                 </div>
 
                 <div className="rounded-md border border-border/70 bg-background px-3 py-3">
