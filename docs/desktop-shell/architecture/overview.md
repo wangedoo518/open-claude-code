@@ -43,7 +43,8 @@ This document answers: how `desktop-shell` is currently organized.
   `apps/desktop-shell/src/shell/Sidebar.tsx`.
 - `apps/desktop-shell/src/features/schema/SchemaEditorPage.tsx` owns Rules
   Studio. It keeps Advanced YAML / CodeMirror folded by default, reads live
-  Git/Vault status, and invalidates Git state after schema saves.
+  Git/Vault status, renders the `schema/templates/*.md` template catalog by
+  default, and invalidates Git state after schema saves.
 - Feature modules own UI and feature-specific orchestration.
 - Neutral API clients under `apps/desktop-shell/src/api/` own cross-feature
   HTTP/SSE surfaces. Common Wiki repository access lives under

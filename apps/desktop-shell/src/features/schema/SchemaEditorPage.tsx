@@ -45,6 +45,7 @@ import {
   getWikiSchema,
   putWikiSchema,
 } from "@/api/wiki/repository";
+import type { SchemaTemplate } from "@/api/wiki/types";
 import { Button } from "@/components/ui/button";
 import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 
@@ -169,6 +170,7 @@ export function SchemaEditorPage() {
             source={schemaQuery.data.source}
             byteSize={schemaQuery.data.byte_size}
             templateCount={templatesQuery.data?.length ?? 0}
+            templates={templatesQuery.data ?? []}
             gitStatus={rulesGitStatusLabel(gitQuery.data, Boolean(gitQuery.error))}
             isEditing={isEditing}
             draft={draft}
@@ -192,6 +194,7 @@ interface SchemaBodyProps {
   source: "disk";
   byteSize: number;
   templateCount: number;
+  templates: SchemaTemplate[];
   gitStatus: string;
   isEditing: boolean;
   draft: string;
@@ -210,6 +213,7 @@ function SchemaBody({
   source,
   byteSize,
   templateCount,
+  templates,
   gitStatus,
   isEditing,
   draft,
@@ -247,6 +251,30 @@ function SchemaBody({
             外部 AI 首期允许受控写入 <code>wiki/</code>、
             <code>schema/templates</code> 与 root guidance；自动写入分为本次会话有效和永久规则。
           </div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border/50 bg-card px-4 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[14px] font-medium text-foreground">Templates</h2>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              schema/templates 是外脑写入 Wiki 时会参考的页面骨架。
+            </p>
+          </div>
+          <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+            {templateCount} files
+          </span>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {templates.map((template) => (
+            <TemplateSummaryCard key={template.category} template={template} />
+          ))}
+          {templates.length === 0 ? (
+            <div className="rounded-md border border-border/50 bg-background px-3 py-3 text-[12px] text-muted-foreground">
+              暂无 schema/templates 模板。
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -412,6 +440,31 @@ function SchemaBody({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function TemplateSummaryCard({ template }: { template: SchemaTemplate }) {
+  const requiredCount = template.fields.filter((field) => field.required).length;
+  const bodyHint = template.body_hint.trim().split(/\r?\n/)[0] || "正文模板";
+  return (
+    <div className="rounded-md border border-border/50 bg-background px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium text-foreground">
+            {template.display_name}
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+            schema/templates/{template.category}.md
+          </div>
+        </div>
+        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          {requiredCount} fields
+        </span>
+      </div>
+      <p className="mt-3 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+        {bodyHint}
+      </p>
     </div>
   );
 }

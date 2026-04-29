@@ -6064,6 +6064,8 @@ fn template_display_name(category: &str) -> String {
         "people" => "人物".to_string(),
         "topic" => "主题".to_string(),
         "compare" => "对比".to_string(),
+        "personal" => "个人".to_string(),
+        "research" => "研究".to_string(),
         other => other.to_string(),
     }
 }
@@ -10415,12 +10417,18 @@ mod tests {
         assert!(categories.contains(&"people"), "expected people template");
         assert!(categories.contains(&"topic"), "expected topic template");
         assert!(categories.contains(&"compare"), "expected compare template");
+        assert!(categories.contains(&"personal"), "expected personal template");
+        assert!(categories.contains(&"research"), "expected research template");
 
         // Display-name mapping
         let concept = infos.iter().find(|t| t.category == "concept").unwrap();
         assert_eq!(concept.display_name, "概念");
         let people = infos.iter().find(|t| t.category == "people").unwrap();
         assert_eq!(people.display_name, "人物");
+        let personal = infos.iter().find(|t| t.category == "personal").unwrap();
+        assert_eq!(personal.display_name, "个人");
+        let research = infos.iter().find(|t| t.category == "research").unwrap();
+        assert_eq!(research.display_name, "研究");
 
         // Frontmatter parsed into field list
         let concept_field_names: Vec<&str> =

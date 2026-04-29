@@ -552,9 +552,18 @@ export interface ExternalAiWriteRevokeResponse {
 
 /** Schema template metadata (§3.7). */
 export interface SchemaTemplate {
-  name: string;
+  category: string;
+  display_name: string;
+  fields: SchemaTemplateField[];
+  body_hint: string;
   file_path: string;
-  content: string;
+}
+
+export interface SchemaTemplateField {
+  name: string;
+  required: boolean;
+  field_type: string;
+  description: string;
 }
 
 /** POST /api/wiki/absorb response (§2.1). */

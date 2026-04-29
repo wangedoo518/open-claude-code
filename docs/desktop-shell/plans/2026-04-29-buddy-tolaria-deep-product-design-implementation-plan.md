@@ -223,6 +223,19 @@ Tolaria-inspired Buddy design.
 - Browser smoke now asserts Rules Studio renders the Git checkpoint surface
   while keeping Advanced YAML / CodeMirror folded by default.
 
+## Implemented Slice 17
+
+- Rules Studio now renders the `schema/templates/*.md` catalog by default,
+  including each template's display name, category path, required field count,
+  and first body hint.
+- The frontend `SchemaTemplate` type now matches the Rust
+  `SchemaTemplateInfo` API shape instead of the older name/content placeholder.
+- Personal and research templates now get localized display names in
+  `wiki_store`, and Rust coverage verifies the six built-in template
+  categories.
+- Browser smoke now asserts Rules Studio exposes concrete concept and research
+  template paths before the Advanced YAML / CodeMirror panel is opened.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
