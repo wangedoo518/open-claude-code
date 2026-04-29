@@ -192,6 +192,16 @@ Tolaria-inspired Buddy design.
   This keeps the Git audit log covered as a backend contract, not only as text
   rendered by Connections or Home/Pulse.
 
+## Implemented Slice 14
+
+- Wiki direct edit mode now reads live Buddy Vault Git status and shows a
+  compact `Vault diff` / `Checkpoint` block next to schema validation and
+  lineage copy.
+- A successful human edit invalidates all `wiki/git` queries, so Home/Pulse,
+  StatusBar, and Connections see the new checkpoint pressure after the save.
+- Browser smoke now verifies the Wiki edit side panel renders the Git/Lineage
+  status before saving the edited page.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

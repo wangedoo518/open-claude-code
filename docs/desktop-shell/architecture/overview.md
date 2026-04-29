@@ -100,7 +100,9 @@ This document answers: how `desktop-shell` is currently organized.
 - `PUT /api/wiki/pages/{slug}` is the human wiki edit path. It accepts complete
   Markdown including YAML frontmatter, validates required fields, writes
   atomically through `wiki_store::overwrite_wiki_page_content`, and appends
-  `human-edit-wiki-page` to the wiki log.
+  `human-edit-wiki-page` to the wiki log. The wiki edit panel also reads live
+  Buddy Vault Git status so the user can see whether the save will create a
+  checkpointable diff before they leave the page.
 - Buddy Vault Git is a first-class HTTP surface:
   `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
   `POST /api/wiki/git/commit`, `POST /api/wiki/git/pull`, and

@@ -211,6 +211,13 @@ Updated smoke body from Playwright.
   await page.getByRole("button", { name: "编辑此页" }).click();
   const editor = page.locator(".cm-content").first();
   await editor.waitFor({ state: "visible", timeout: 10_000 });
+  await page.waitForFunction(
+    () =>
+      document.body.innerText.includes("Git / Lineage") &&
+      document.body.innerText.includes("Vault diff"),
+    null,
+    { timeout: 10_000 },
+  );
   await editor.click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await page.keyboard.insertText(updatedContent);

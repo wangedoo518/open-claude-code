@@ -8,9 +8,9 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import { CheckCircle2, Loader2, MessageCircleQuestion, Pencil, X } from "lucide-react";
+import { CheckCircle2, GitBranch, Loader2, MessageCircleQuestion, Pencil, X } from "lucide-react";
 
-import { getWikiPage, putWikiPage } from "@/api/wiki/repository";
+import { getVaultGitStatus, getWikiPage, putWikiPage } from "@/api/wiki/repository";
 import type { WikiPageSummary } from "@/api/wiki/types";
 import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 import {
@@ -144,6 +144,25 @@ function validateWikiDraft(content: string): DraftValidation {
   return { ok: errors.length === 0, errors, warnings };
 }
 
+function wikiEditGitLabel(
+  git:
+    | {
+        git_available: boolean;
+        initialized: boolean;
+        dirty: boolean;
+        changed_count: number;
+      }
+    | undefined,
+  hasError: boolean,
+) {
+  if (hasError) return "状态不可用";
+  if (!git) return "检查中";
+  if (!git.git_available) return "未安装 Git";
+  if (!git.initialized) return "Git 未启用";
+  if (git.dirty) return `${git.changed_count} 改动待 checkpoint`;
+  return "当前 clean";
+}
+
 /* ── Markdown custom components ────────────────────────────────── */
 /**
  * Article-page Markdown renderer. The `<a>` handler is shared with
@@ -163,6 +182,15 @@ function useMarkdownComponents(): Components {
   return useMemo((): Components => ({ a: Anchor }), [Anchor]);
 }
 
+function EditGitFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1.5">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate text-right text-foreground">{value}</span>
+    </div>
+  );
+}
+
 /* ── Main component ────────────────────────────────────────────── */
 interface WikiArticleProps {
   slug: string;
@@ -179,6 +207,12 @@ export function WikiArticle({ slug }: WikiArticleProps) {
     queryFn: () => getWikiPage(slug),
     staleTime: 30_000,
   });
+  const gitQuery = useQuery({
+    queryKey: ["wiki", "git", "wiki-edit", slug],
+    queryFn: () => getVaultGitStatus(),
+    staleTime: 10_000,
+    refetchInterval: isEditing ? 20_000 : false,
+  });
 
   const components = useMarkdownComponents();
   const saveMutation = useMutation({
@@ -189,6 +223,7 @@ export function WikiArticle({ slug }: WikiArticleProps) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["wiki", "pages", "detail", slug] }),
         queryClient.invalidateQueries({ queryKey: ["wiki", "pages", "list"] }),
+        queryClient.invalidateQueries({ queryKey: ["wiki", "git"] }),
       ]);
     },
   });
@@ -311,10 +346,23 @@ export function WikiArticle({ slug }: WikiArticleProps) {
               )}
             </div>
             <div className="rounded-md border border-border bg-card px-3 py-3 text-[12px] text-muted-foreground">
-              <div className="mb-2 font-medium text-foreground">Git / Lineage</div>
+              <div className="mb-2 flex items-center gap-1.5 font-medium text-foreground">
+                <GitBranch className="size-3.5 text-primary" />
+                <span>Git / Lineage</span>
+              </div>
               保存会直接写入磁盘，并由后端记录
               <code className="mx-1 rounded bg-muted px-1">human-edit-wiki-page</code>
               日志；Git diff 会出现在 Vault 版本历史里。
+              <div className="mt-3 space-y-2">
+                <EditGitFact
+                  label="Vault diff"
+                  value={wikiEditGitLabel(gitQuery.data, Boolean(gitQuery.error))}
+                />
+                <EditGitFact
+                  label="Checkpoint"
+                  value={gitQuery.data?.initialized ? "保存后去 Connections 提交" : "建议启用 Git"}
+                />
+              </div>
             </div>
             {saveMutation.error && (
               <div className="rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-[12px] text-[var(--color-error)]">
