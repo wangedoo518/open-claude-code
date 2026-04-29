@@ -102,11 +102,13 @@ This document answers: how `desktop-shell` is currently organized.
   status, diff preview, checkpoint commits, remote synchronization, remote
   setup, and single-path discard. Diff previews return a combined patch plus
   file-level sections, including staged tracked changes and unstaged untracked
-  files. Remote sync requires a clean Vault; pull is fast-forward-only and push
-  establishes upstream on first use. Status responses may include the preferred
-  remote name and a redacted remote URL; Buddy never echoes plaintext URL
-  credentials back to the UI. Discard only accepts paths already reported by Git
-  status and rejects absolute or parent-traversing paths.
+  files. Sections include hunk and line metadata so the UI can inspect
+  add/remove/context ranges without reparsing raw patches. Remote sync requires
+  a clean Vault; pull is fast-forward-only and push establishes upstream on
+  first use. Status responses may include the preferred remote name and a
+  redacted remote URL; Buddy never echoes plaintext URL credentials back to the
+  UI. Discard only accepts paths already reported by Git status and rejects
+  absolute or parent-traversing paths.
 - External AI controlled-write authorization is stored under
   `.clawwiki/external-ai-write-policy.json`. The desktop server exposes
   `GET /api/wiki/external-ai/write-policy`,

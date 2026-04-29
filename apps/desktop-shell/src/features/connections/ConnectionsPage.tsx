@@ -30,7 +30,12 @@ import {
   revokeExternalAiWriteGrant,
   setVaultGitRemote,
 } from "@/api/wiki/repository";
-import type { ExternalAiWriteGrant, VaultGitStatus } from "@/api/wiki/types";
+import type {
+  ExternalAiWriteGrant,
+  VaultGitDiffHunk,
+  VaultGitDiffLine,
+  VaultGitStatus,
+} from "@/api/wiki/types";
 
 const CONNECTIONS = [
   {
@@ -69,11 +74,14 @@ const WRITE_SCOPES = [
   "当前选中页面",
 ] as const;
 
+const EMPTY_HUNKS: VaultGitDiffHunk[] = [];
+
 export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [commitMessage, setCommitMessage] = useState("");
   const [diffStaged, setDiffStaged] = useState(false);
   const [selectedDiffKey, setSelectedDiffKey] = useState<string | null>(null);
+  const [selectedHunkIndex, setSelectedHunkIndex] = useState<number | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
@@ -134,6 +142,15 @@ export function ConnectionsPage() {
       setSelectedDiffKey(`${first.kind}:${first.path}`);
     }
   }, [diffSections, selectedDiffKey]);
+  useEffect(() => {
+    setSelectedHunkIndex(null);
+  }, [selectedDiffKey, diffStaged]);
+  useEffect(() => {
+    if (selectedHunkIndex === null) return;
+    if (!selectedDiffSection?.hunks[selectedHunkIndex]) {
+      setSelectedHunkIndex(null);
+    }
+  }, [selectedDiffSection, selectedHunkIndex]);
 
   const commitMutation = useMutation({
     mutationFn: (message: string) => commitVaultGit(message),
@@ -219,8 +236,19 @@ export function ConnectionsPage() {
   }, [git?.changed_count, git?.dirty]);
   const syncPending =
     pullMutation.isPending || pushMutation.isPending || remoteMutation.isPending;
+  const selectedHunks = selectedDiffSection?.hunks ?? EMPTY_HUNKS;
+  const selectedHunk =
+    selectedHunkIndex === null ? null : selectedHunks[selectedHunkIndex] ?? null;
+  const selectedLineStats = useMemo(() => {
+    const lines = selectedHunk
+      ? selectedHunk.lines
+      : selectedHunks.flatMap((hunk) => hunk.lines);
+    return summarizeDiffLines(lines);
+  }, [selectedHunk, selectedHunks]);
   const diffPreviewText = diffQuery.isFetching
     ? "Loading diff..."
+    : selectedHunk
+      ? formatDiffHunkPreview(selectedHunk)
     : selectedDiffSection?.diff ||
       diffQuery.data?.diff ||
       (diffStaged ? "No staged diff." : git?.dirty ? "No unstaged diff." : "No diff.");
@@ -503,7 +531,10 @@ export function ConnectionsPage() {
                             <button
                               key={id}
                               type="button"
-                              onClick={() => setDiffStaged(id === "staged")}
+                              onClick={() => {
+                                setDiffStaged(id === "staged");
+                                setSelectedHunkIndex(null);
+                              }}
                               className={`h-6 rounded px-2 text-[11px] ${
                                 active
                                   ? "bg-primary text-primary-foreground"
@@ -522,9 +553,17 @@ export function ConnectionsPage() {
                   </pre>
                   {diffSections.length ? (
                     <div className="space-y-1 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-                      <div>
-                        {diffSections.length} sections
-                        {diffQuery.data?.truncated ? " · preview truncated" : ""}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {diffSections.length} sections
+                          {diffQuery.data?.truncated ? " · preview truncated" : ""}
+                        </span>
+                        {selectedDiffSection ? (
+                          <span>
+                            Hunks {selectedHunks.length} · +{selectedLineStats.added} / -
+                            {selectedLineStats.removed}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-1">
                         {diffSections.slice(0, 8).map((section) => {
@@ -534,7 +573,10 @@ export function ConnectionsPage() {
                             <button
                               key={`${section.kind}:${section.path}`}
                               type="button"
-                              onClick={() => setSelectedDiffKey(key)}
+                              onClick={() => {
+                                setSelectedDiffKey(key);
+                                setSelectedHunkIndex(null);
+                              }}
                               className={`max-w-full truncate rounded border px-1.5 py-0.5 font-mono ${
                                 active
                                   ? "border-primary bg-primary text-primary-foreground"
@@ -552,6 +594,44 @@ export function ConnectionsPage() {
                           </span>
                         ) : null}
                       </div>
+                      {selectedHunks.length ? (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedHunkIndex(null)}
+                            className={`rounded border px-1.5 py-0.5 ${
+                              selectedHunkIndex === null
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-border/60 bg-card hover:bg-muted"
+                            }`}
+                          >
+                            全部
+                          </button>
+                          {selectedHunks.slice(0, 6).map((hunk, index) => {
+                            const active = selectedHunkIndex === index;
+                            return (
+                              <button
+                                key={`${hunk.header}-${index}`}
+                                type="button"
+                                onClick={() => setSelectedHunkIndex(index)}
+                                className={`max-w-[220px] truncate rounded border px-1.5 py-0.5 font-mono ${
+                                  active
+                                    ? "border-primary bg-primary text-primary-foreground"
+                                    : "border-border/60 bg-card hover:bg-muted"
+                                }`}
+                                title={hunk.header}
+                              >
+                                H{index + 1} {hunk.header}
+                              </button>
+                            );
+                          })}
+                          {selectedHunks.length > 6 ? (
+                            <span className="rounded border border-border/60 bg-card px-1.5 py-0.5">
+                              +{selectedHunks.length - 6}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   {discardMutation.error && (
@@ -770,6 +850,33 @@ function gitConnectionStatus(
   if (!git.initialized) return { label: "未启用", tone: "warning" };
   if (git.dirty) return { label: `${git.changed_count} 改动`, tone: "warning" };
   return { label: "干净", tone: "success" };
+}
+
+function summarizeDiffLines(lines: VaultGitDiffLine[]): { added: number; removed: number } {
+  return lines.reduce(
+    (summary, line) => {
+      if (line.kind === "add") summary.added += 1;
+      if (line.kind === "remove") summary.removed += 1;
+      return summary;
+    },
+    { added: 0, removed: 0 },
+  );
+}
+
+function formatDiffHunkPreview(hunk: VaultGitDiffHunk): string {
+  return [
+    hunk.header,
+    ...hunk.lines.map((line) => {
+      if (line.kind === "meta") return line.text;
+      return `${diffLineMarker(line.kind)}${line.text}`;
+    }),
+  ].join("\n");
+}
+
+function diffLineMarker(kind: string): string {
+  if (kind === "add") return "+";
+  if (kind === "remove") return "-";
+  return " ";
 }
 
 function GitFact({ label, value }: { label: string; value: string }) {

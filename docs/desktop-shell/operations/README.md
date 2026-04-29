@@ -45,6 +45,9 @@ design, tests, review discipline, or documentation.
 - Buddy Vault discard is intentionally path-scoped: only discard paths already
   reported by Git status, require an explicit user confirmation in UI, and keep
   line-level patch mutation behind a separate reviewed interaction model.
+- Buddy Vault diff previews may expose hunk/line metadata for review and
+  selection. Treat those selections as read-only until a separate mutation
+  design defines conflict handling, confirmation language, and rollback tests.
 - When copying Tolaria source, include provenance, license preservation, tests,
   and documentation in the same main-only slice.
 

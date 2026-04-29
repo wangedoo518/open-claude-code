@@ -108,6 +108,20 @@ Tolaria-inspired Buddy design.
 - Rust coverage now verifies tracked restore, untracked removal, and unsafe
   path rejection.
 
+## Implemented Slice 7
+
+- Expanded `GET /api/wiki/git/diff` file sections with hunk and line metadata:
+  each hunk carries old/new ranges and each line reports add/remove/context
+  kind plus old/new line numbers where Git provides them.
+- Connections now lets users narrow a file diff preview to an individual hunk
+  and shows per-selection added/removed line counts before checkpoint or
+  discard actions.
+- This slice is intentionally review-only: file discard remains the only
+  mutating discard operation, and line-level patch mutation stays behind a
+  separate interaction model.
+- Rust coverage now verifies tracked edits and untracked previews expose
+  line-level metadata.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -118,5 +132,5 @@ Tolaria-inspired Buddy design.
 
 ## Future Hardening
 
-- Add line-level patch apply/discard after file-level discard has enough
-  reviewer and dogfood feedback.
+- Add line-level patch apply/discard after hunk review, conflict behavior,
+  confirmation copy, and dogfood feedback are mature enough for mutation.

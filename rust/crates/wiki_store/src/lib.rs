@@ -655,7 +655,26 @@ pub struct VaultGitDiffSection {
     pub kind: String,
     pub diff: String,
     pub byte_size: usize,
+    pub hunks: Vec<VaultGitDiffHunk>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitDiffHunk {
+    pub header: String,
+    pub old_start: Option<u32>,
+    pub old_lines: Option<u32>,
+    pub new_start: Option<u32>,
+    pub new_lines: Option<u32>,
+    pub lines: Vec<VaultGitDiffLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitDiffLine {
+    pub kind: String,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -936,6 +955,133 @@ fn normalized_git_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+fn parse_hunk_range(range: &str) -> (Option<u32>, Option<u32>) {
+    let (start, lines) = range.split_once(',').unwrap_or((range, "1"));
+    (start.parse::<u32>().ok(), lines.parse::<u32>().ok())
+}
+
+fn parse_hunk_header_ranges(header: &str) -> (Option<u32>, Option<u32>, Option<u32>, Option<u32>) {
+    let Some(range_text) = header.split("@@").nth(1) else {
+        return (None, None, None, None);
+    };
+
+    let mut old_start = None;
+    let mut old_lines = None;
+    let mut new_start = None;
+    let mut new_lines = None;
+
+    for token in range_text.split_whitespace() {
+        if let Some(range) = token.strip_prefix('-') {
+            let parsed = parse_hunk_range(range);
+            old_start = parsed.0;
+            old_lines = parsed.1;
+        } else if let Some(range) = token.strip_prefix('+') {
+            let parsed = parse_hunk_range(range);
+            new_start = parsed.0;
+            new_lines = parsed.1;
+        }
+    }
+
+    (old_start, old_lines, new_start, new_lines)
+}
+
+fn push_diff_line(
+    hunk: &mut VaultGitDiffHunk,
+    raw_line: &str,
+    old_cursor: &mut Option<u32>,
+    new_cursor: &mut Option<u32>,
+) {
+    let marker = raw_line.chars().next().unwrap_or(' ');
+    let text = raw_line.get(1..).unwrap_or_default().to_string();
+    match marker {
+        '+' => {
+            let new_line = *new_cursor;
+            if let Some(value) = new_cursor.as_mut() {
+                *value += 1;
+            }
+            hunk.lines.push(VaultGitDiffLine {
+                kind: "add".to_string(),
+                old_line: None,
+                new_line,
+                text,
+            });
+        }
+        '-' => {
+            let old_line = *old_cursor;
+            if let Some(value) = old_cursor.as_mut() {
+                *value += 1;
+            }
+            hunk.lines.push(VaultGitDiffLine {
+                kind: "remove".to_string(),
+                old_line,
+                new_line: None,
+                text,
+            });
+        }
+        '\\' => {
+            hunk.lines.push(VaultGitDiffLine {
+                kind: "meta".to_string(),
+                old_line: None,
+                new_line: None,
+                text: raw_line.to_string(),
+            });
+        }
+        _ => {
+            let old_line = *old_cursor;
+            let new_line = *new_cursor;
+            if let Some(value) = old_cursor.as_mut() {
+                *value += 1;
+            }
+            if let Some(value) = new_cursor.as_mut() {
+                *value += 1;
+            }
+            hunk.lines.push(VaultGitDiffLine {
+                kind: "context".to_string(),
+                old_line,
+                new_line,
+                text,
+            });
+        }
+    }
+}
+
+fn parse_diff_hunks(diff: &str) -> Vec<VaultGitDiffHunk> {
+    let mut hunks = Vec::new();
+    let mut current: Option<VaultGitDiffHunk> = None;
+    let mut old_cursor: Option<u32> = None;
+    let mut new_cursor: Option<u32> = None;
+
+    for raw_line in diff.lines() {
+        if raw_line.starts_with("@@") {
+            if let Some(hunk) = current.take() {
+                hunks.push(hunk);
+            }
+            let (old_start, old_lines, new_start, new_lines) = parse_hunk_header_ranges(raw_line);
+            old_cursor = old_start;
+            new_cursor = new_start;
+            current = Some(VaultGitDiffHunk {
+                header: raw_line.to_string(),
+                old_start,
+                old_lines,
+                new_start,
+                new_lines,
+                lines: Vec::new(),
+            });
+            continue;
+        }
+
+        if let Some(hunk) = current.as_mut() {
+            push_diff_line(hunk, raw_line, &mut old_cursor, &mut new_cursor);
+        }
+    }
+
+    if let Some(hunk) = current {
+        hunks.push(hunk);
+    }
+
+    hunks
+}
+
 fn untracked_file_diff(root: &Path, relative_path: &Path) -> Result<VaultGitDiffSection> {
     const MAX_UNTRACKED_DIFF_BYTES: u64 = 32 * 1024;
 
@@ -951,6 +1097,7 @@ fn untracked_file_diff(root: &Path, relative_path: &Path) -> Result<VaultGitDiff
             path: display_path.clone(),
             kind: "untracked".to_string(),
             byte_size: diff.len(),
+            hunks: parse_diff_hunks(&diff),
             diff,
             truncated: true,
         });
@@ -992,6 +1139,7 @@ fn untracked_file_diff(root: &Path, relative_path: &Path) -> Result<VaultGitDiff
         path: display_path,
         kind: "untracked".to_string(),
         byte_size: diff.len(),
+        hunks: parse_diff_hunks(&diff),
         diff,
         truncated,
     })
@@ -1023,6 +1171,7 @@ fn tracked_diff_sections(diff: &str, kind: &str) -> Vec<VaultGitDiffSection> {
                     .unwrap_or_else(|| "(tracked changes)".to_string()),
                 kind: kind.to_string(),
                 byte_size: section_diff.len(),
+                hunks: parse_diff_hunks(&section_diff),
                 diff: section_diff,
                 truncated: false,
             });
@@ -1038,6 +1187,7 @@ fn tracked_diff_sections(diff: &str, kind: &str) -> Vec<VaultGitDiffSection> {
             path: current_path.unwrap_or_else(|| "(tracked changes)".to_string()),
             kind: kind.to_string(),
             byte_size: current.len(),
+            hunks: parse_diff_hunks(&current),
             diff: current,
             truncated: false,
         });
@@ -8753,6 +8903,36 @@ mod tests {
     }
 
     #[test]
+    fn vault_git_diff_reports_line_metadata_for_tracked_file_edits() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let next_schema = format!("{}\n\n## Test change\n", CLAUDE_MD_TEMPLATE);
+        overwrite_schema_claude_md(&paths, &next_schema).unwrap();
+
+        let diff = vault_git_diff(&paths, false).unwrap();
+        let section = diff
+            .sections
+            .iter()
+            .find(|section| section.path == "schema/CLAUDE.md")
+            .expect("schema diff section");
+        assert!(
+            !section.hunks.is_empty(),
+            "tracked diff should expose hunks"
+        );
+        let added_line = section
+            .hunks
+            .iter()
+            .flat_map(|hunk| hunk.lines.iter())
+            .find(|line| line.kind == "add" && line.text.contains("Test change"))
+            .expect("added line metadata");
+        assert!(added_line.new_line.is_some());
+        assert!(added_line.old_line.is_none());
+    }
+
+    #[test]
     fn vault_git_diff_includes_untracked_file_preview() {
         let Some((_tmp, paths)) = git_test_paths() else {
             return;
@@ -8770,6 +8950,34 @@ mod tests {
             .sections
             .iter()
             .any(|section| section.kind == "untracked"));
+    }
+
+    #[test]
+    fn vault_git_diff_reports_line_metadata_for_untracked_file_preview() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let page = paths.wiki.join("concepts").join("scratch.md");
+        fs::write(&page, "# Scratch\n\nCaptured thought\n").unwrap();
+
+        let diff = vault_git_diff(&paths, false).unwrap();
+        let section = diff
+            .sections
+            .iter()
+            .find(|section| section.path == "wiki/concepts/scratch.md")
+            .expect("untracked scratch diff section");
+        assert_eq!(section.kind, "untracked");
+        assert_eq!(section.hunks.len(), 1);
+        let added_lines: Vec<_> = section.hunks[0]
+            .lines
+            .iter()
+            .filter(|line| line.kind == "add")
+            .collect();
+        assert!(added_lines.iter().any(|line| line.text == "# Scratch"));
+        assert!(added_lines.iter().all(|line| line.old_line.is_none()));
+        assert!(added_lines.iter().all(|line| line.new_line.is_some()));
     }
 
     #[test]

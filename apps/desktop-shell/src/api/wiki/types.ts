@@ -457,7 +457,24 @@ export interface VaultGitDiffSection {
   kind: "tracked" | "staged" | "untracked" | string;
   diff: string;
   byte_size: number;
+  hunks: VaultGitDiffHunk[];
   truncated: boolean;
+}
+
+export interface VaultGitDiffHunk {
+  header: string;
+  old_start?: number | null;
+  old_lines?: number | null;
+  new_start?: number | null;
+  new_lines?: number | null;
+  lines: VaultGitDiffLine[];
+}
+
+export interface VaultGitDiffLine {
+  kind: "context" | "add" | "remove" | "meta" | string;
+  old_line?: number | null;
+  new_line?: number | null;
+  text: string;
 }
 
 export interface VaultGitCommitResult {
