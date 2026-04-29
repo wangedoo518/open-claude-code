@@ -12,6 +12,7 @@ import { CheckCircle2, Loader2, MessageCircleQuestion, Pencil, X } from "lucide-
 
 import { getWikiPage, putWikiPage } from "@/api/wiki/repository";
 import type { WikiPageSummary } from "@/api/wiki/types";
+import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 import {
   preprocessWikilinks,
   useWikiLinkRenderer,
@@ -282,11 +283,12 @@ export function WikiArticle({ slug }: WikiArticleProps) {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-          <textarea
+          <CodeMirrorEditor
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            spellCheck={false}
-            className="min-h-[620px] resize-y rounded-md border border-border bg-background px-4 py-3 font-mono text-[13px] leading-6 text-foreground outline-none focus:border-primary"
+            onChange={setDraft}
+            language="markdown"
+            minHeight="620px"
+            ariaLabel="Wiki page Markdown and YAML CodeMirror editor"
           />
           <aside className="space-y-3">
             <div className="rounded-md border border-border bg-card px-3 py-3 text-[12px]">

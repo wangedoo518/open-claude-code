@@ -416,6 +416,74 @@ export interface WikiStats {
   last_absorb_at: string | null;
 }
 
+export interface VaultGitChange {
+  path: string;
+  xy: string;
+  staged: string;
+  unstaged: string;
+}
+
+export interface VaultGitStatus {
+  vault_path: string;
+  git_available: boolean;
+  initialized: boolean;
+  branch?: string | null;
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  dirty: boolean;
+  changed_count: number;
+  staged_count: number;
+  unstaged_count: number;
+  untracked_count: number;
+  remote_connected: boolean;
+  last_commit?: string | null;
+  changes: VaultGitChange[];
+}
+
+export interface VaultGitDiff {
+  vault_path: string;
+  staged: boolean;
+  diff: string;
+  byte_size: number;
+}
+
+export interface VaultGitCommitResult {
+  ok: boolean;
+  commit: string;
+  summary: string;
+  status: VaultGitStatus;
+}
+
+export type ExternalAiGrantLevel = "session" | "permanent";
+
+export interface ExternalAiWriteGrant {
+  id: string;
+  level: ExternalAiGrantLevel;
+  scope: string;
+  note?: string | null;
+  created_at: string;
+  expires_at?: string | null;
+  enabled: boolean;
+}
+
+export interface ExternalAiWritePolicy {
+  version: number;
+  updated_at: string;
+  grants: ExternalAiWriteGrant[];
+}
+
+export interface ExternalAiWriteGrantResponse {
+  ok: boolean;
+  grant: ExternalAiWriteGrant;
+  policy?: ExternalAiWritePolicy | null;
+}
+
+export interface ExternalAiWriteRevokeResponse {
+  ok: boolean;
+  policy: ExternalAiWritePolicy;
+}
+
 /** Schema template metadata (§3.7). */
 export interface SchemaTemplate {
   name: string;

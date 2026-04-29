@@ -91,4 +91,19 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/wiki/schema/templates",
             get(get_schema_templates_handler),
         )
+        .route("/api/wiki/git/status", get(get_vault_git_status_handler))
+        .route("/api/wiki/git/diff", get(get_vault_git_diff_handler))
+        .route("/api/wiki/git/commit", post(commit_vault_git_handler))
+        .route(
+            "/api/wiki/external-ai/write-policy",
+            get(get_external_ai_write_policy_handler),
+        )
+        .route(
+            "/api/wiki/external-ai/write-policy/grants",
+            post(add_external_ai_write_grant_handler),
+        )
+        .route(
+            "/api/wiki/external-ai/write-policy/grants/{id}",
+            delete(revoke_external_ai_write_grant_handler),
+        )
 }

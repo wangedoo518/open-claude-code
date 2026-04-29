@@ -1968,8 +1968,8 @@ pub(crate) async fn put_wiki_page_handler(
     Json(body): Json<PutWikiPageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
-    let written_path =
-        wiki_store::overwrite_wiki_page_content(&paths, &slug, &body.content).map_err(|e| {
+    let written_path = wiki_store::overwrite_wiki_page_content(&paths, &slug, &body.content)
+        .map_err(|e| {
             let status = match e {
                 wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -2017,6 +2017,162 @@ pub(crate) async fn put_wiki_page_handler(
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct PutWikiPageRequest {
     content: String,
+}
+
+pub(crate) async fn get_vault_git_status_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let status = wiki_store::vault_git_status(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("git status failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(status).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct GitDiffQuery {
+    #[serde(default)]
+    staged: Option<bool>,
+}
+
+pub(crate) async fn get_vault_git_diff_handler(
+    Query(query): Query<GitDiffQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let diff = wiki_store::vault_git_diff(&paths, query.staged.unwrap_or(false)).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git diff failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(diff).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct GitCommitRequest {
+    message: String,
+}
+
+pub(crate) async fn commit_vault_git_handler(
+    Json(body): Json<GitCommitRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let result = wiki_store::vault_git_commit(&paths, &body.message).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git commit failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+pub(crate) async fn get_external_ai_write_policy_handler(
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let policy = wiki_store::load_external_ai_write_policy(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("external AI policy read failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(policy).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct ExternalAiGrantRequest {
+    level: String,
+    scope: String,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    expires_at: Option<String>,
+}
+
+pub(crate) async fn add_external_ai_write_grant_handler(
+    Json(body): Json<ExternalAiGrantRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let grant = wiki_store::add_external_ai_write_grant(
+        &paths,
+        &body.level,
+        &body.scope,
+        body.note,
+        body.expires_at,
+    )
+    .map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("external AI grant failed: {e}"),
+            }),
+        )
+    })?;
+    if let Err(e) = wiki_store::append_wiki_log(
+        &paths,
+        "external-ai-write-grant",
+        &format!("{} {}", grant.level, grant.scope),
+    ) {
+        eprintln!("add_external_ai_write_grant: grant saved but log append failed: {e}");
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "grant": grant,
+        "policy": wiki_store::load_external_ai_write_policy(&paths).ok(),
+    })))
+}
+
+pub(crate) async fn revoke_external_ai_write_grant_handler(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let policy = wiki_store::revoke_external_ai_write_grant(&paths, &id).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("external AI revoke failed: {e}"),
+            }),
+        )
+    })?;
+    if let Err(e) = wiki_store::append_wiki_log(&paths, "external-ai-write-revoke", &id) {
+        eprintln!("revoke_external_ai_write_grant: revoke saved but log append failed: {e}");
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "policy": policy,
+    })))
 }
 
 /// `WS /ws/wechat-inbox` (canonical §9.3 · feat O)

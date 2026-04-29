@@ -39,8 +39,8 @@ import {
   FileCode2,
 } from "lucide-react";
 import { getSchemaTemplates, getWikiSchema, putWikiSchema } from "@/api/wiki/repository";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 
 export function SchemaEditorPage() {
   const queryClient = useQueryClient();
@@ -303,14 +303,12 @@ function SchemaBody({
           ) : null}
         </summary>
         {isEditing ? (
-          <Textarea
+          <CodeMirrorEditor
             value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            spellCheck={false}
-            className="block min-h-[400px] w-full resize-y border-0 bg-background px-5 py-4 font-mono text-body-sm leading-relaxed text-foreground/90 shadow-none focus-visible:ring-0"
-            style={{
-              fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
-            }}
+            onChange={onDraftChange}
+            language="markdown"
+            minHeight="420px"
+            ariaLabel="Rules Studio advanced CodeMirror editor"
           />
         ) : (
           <pre

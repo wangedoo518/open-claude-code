@@ -610,6 +610,432 @@ fn try_git_init(root: &Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitChange {
+    pub path: String,
+    pub xy: String,
+    pub staged: String,
+    pub unstaged: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitStatus {
+    pub vault_path: String,
+    pub git_available: bool,
+    pub initialized: bool,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub dirty: bool,
+    pub changed_count: usize,
+    pub staged_count: usize,
+    pub unstaged_count: usize,
+    pub untracked_count: usize,
+    pub remote_connected: bool,
+    pub last_commit: Option<String>,
+    pub changes: Vec<VaultGitChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitDiff {
+    pub vault_path: String,
+    pub staged: bool,
+    pub diff: String,
+    pub byte_size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitCommitResult {
+    pub ok: bool,
+    pub commit: String,
+    pub summary: String,
+    pub status: VaultGitStatus,
+}
+
+fn git_binary_available() -> bool {
+    matches!(
+        std::process::Command::new("git").arg("--version").output(),
+        Ok(output) if output.status.success()
+    )
+}
+
+fn run_git(root: &Path, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|e| WikiStoreError::io(root.to_path_buf(), e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        Err(WikiStoreError::Invalid(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            detail
+        )))
+    }
+}
+
+fn try_run_git(root: &Path, args: &[&str]) -> Option<String> {
+    run_git(root, args).ok().and_then(|s| {
+        let trimmed = s.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn parse_git_changes(status: &str) -> Vec<VaultGitChange> {
+    status
+        .lines()
+        .filter_map(|line| {
+            if line.starts_with("## ") || line.len() < 3 {
+                return None;
+            }
+            let xy = &line[..2];
+            let path = line[3..].trim().to_string();
+            let staged = xy.chars().next().unwrap_or(' ').to_string();
+            let unstaged = xy.chars().nth(1).unwrap_or(' ').to_string();
+            Some(VaultGitChange {
+                path,
+                xy: xy.to_string(),
+                staged,
+                unstaged,
+            })
+        })
+        .collect()
+}
+
+fn parse_ahead_behind(root: &Path, upstream: Option<&str>) -> (u32, u32) {
+    if upstream.is_none() {
+        return (0, 0);
+    }
+    let Some(output) = try_run_git(
+        root,
+        &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+    ) else {
+        return (0, 0);
+    };
+    let mut parts = output.split_whitespace();
+    let ahead = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let behind = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    (ahead, behind)
+}
+
+pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
+    let git_available = git_binary_available();
+    let initialized = paths.root.join(".git").exists()
+        && try_run_git(&paths.root, &["rev-parse", "--is-inside-work-tree"]).as_deref()
+            == Some("true");
+
+    if !git_available || !initialized {
+        return Ok(VaultGitStatus {
+            vault_path: paths.root.display().to_string(),
+            git_available,
+            initialized,
+            branch: None,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            dirty: false,
+            changed_count: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            remote_connected: false,
+            last_commit: None,
+            changes: Vec::new(),
+        });
+    }
+
+    let status = run_git(&paths.root, &["status", "--porcelain=v1"])?;
+    let changes = parse_git_changes(&status);
+    let staged_count = changes
+        .iter()
+        .filter(|change| change.staged != " " && change.staged != "?")
+        .count();
+    let unstaged_count = changes
+        .iter()
+        .filter(|change| change.unstaged != " ")
+        .count();
+    let untracked_count = changes.iter().filter(|change| change.xy == "??").count();
+    let branch = try_run_git(&paths.root, &["branch", "--show-current"]);
+    let upstream = try_run_git(
+        &paths.root,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    );
+    let (ahead, behind) = parse_ahead_behind(&paths.root, upstream.as_deref());
+    let last_commit = try_run_git(&paths.root, &["log", "-1", "--pretty=format:%h %s"]);
+    let remote_connected = try_run_git(&paths.root, &["remote"]).is_some();
+
+    Ok(VaultGitStatus {
+        vault_path: paths.root.display().to_string(),
+        git_available,
+        initialized,
+        branch,
+        upstream,
+        ahead,
+        behind,
+        dirty: !changes.is_empty(),
+        changed_count: changes.len(),
+        staged_count,
+        unstaged_count,
+        untracked_count,
+        remote_connected,
+        last_commit,
+        changes,
+    })
+}
+
+pub fn vault_git_diff(paths: &WikiPaths, staged: bool) -> Result<VaultGitDiff> {
+    let status = vault_git_status(paths)?;
+    if !status.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+
+    let args: &[&str] = if staged {
+        &["diff", "--cached"]
+    } else {
+        &["diff"]
+    };
+    let diff = run_git(&paths.root, args)?;
+    Ok(VaultGitDiff {
+        vault_path: paths.root.display().to_string(),
+        staged,
+        byte_size: diff.len(),
+        diff,
+    })
+}
+
+pub fn vault_git_commit(paths: &WikiPaths, message: &str) -> Result<VaultGitCommitResult> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "commit message must not be empty".to_string(),
+        ));
+    }
+
+    let status_before = vault_git_status(paths)?;
+    if !status_before.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status_before.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+    if !status_before.dirty {
+        return Err(WikiStoreError::Invalid(
+            "nothing to commit in Buddy Vault".to_string(),
+        ));
+    }
+
+    run_git(&paths.root, &["add", "-A"])?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&paths.root)
+        .arg("-c")
+        .arg("user.name=Buddy")
+        .arg("-c")
+        .arg("user.email=buddy@example.local")
+        .arg("commit")
+        .arg("--no-gpg-sign")
+        .arg("-m")
+        .arg(message)
+        .output()
+        .map_err(|e| WikiStoreError::io(paths.root.clone(), e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(WikiStoreError::Invalid(format!(
+            "git commit failed: {detail}"
+        )));
+    }
+
+    let commit = run_git(&paths.root, &["rev-parse", "--short", "HEAD"])?
+        .trim()
+        .to_string();
+    let summary = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let status = vault_git_status(paths)?;
+    Ok(VaultGitCommitResult {
+        ok: true,
+        commit,
+        summary,
+        status,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExternalAiWriteGrant {
+    pub id: String,
+    pub level: String,
+    pub scope: String,
+    pub note: Option<String>,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExternalAiWritePolicy {
+    pub version: u32,
+    pub updated_at: String,
+    pub grants: Vec<ExternalAiWriteGrant>,
+}
+
+fn external_ai_policy_path(paths: &WikiPaths) -> PathBuf {
+    paths.meta.join("external-ai-write-policy.json")
+}
+
+fn empty_external_ai_write_policy() -> ExternalAiWritePolicy {
+    ExternalAiWritePolicy {
+        version: 1,
+        updated_at: now_iso8601(),
+        grants: Vec::new(),
+    }
+}
+
+fn validate_external_ai_grant(level: &str, scope: &str) -> Result<()> {
+    let level = level.trim();
+    let scope = scope.trim();
+    if level != "session" && level != "permanent" {
+        return Err(WikiStoreError::Invalid(
+            "external AI grant level must be `session` or `permanent`".to_string(),
+        ));
+    }
+    if scope.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "external AI grant scope must not be empty".to_string(),
+        ));
+    }
+    if scope.starts_with('/') || scope.contains('\\') || scope.contains("..") {
+        return Err(WikiStoreError::Invalid(
+            "external AI grant scope must stay inside Buddy Vault".to_string(),
+        ));
+    }
+
+    let allowed = scope == "current-page"
+        || scope == "AGENTS.md"
+        || scope == "CLAUDE.md"
+        || scope == "wiki/"
+        || scope.starts_with("wiki/")
+        || scope == "schema/templates"
+        || scope.starts_with("schema/templates/");
+    if !allowed {
+        return Err(WikiStoreError::Invalid(format!(
+            "external AI grant scope is not allowed: {scope}"
+        )));
+    }
+
+    if level == "permanent" && (scope == "wiki/" || scope == "schema/templates") {
+        return Err(WikiStoreError::Invalid(
+            "permanent external AI rules must use a narrower scope".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn save_external_ai_write_policy(paths: &WikiPaths, policy: &ExternalAiWritePolicy) -> Result<()> {
+    fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
+    let target = external_ai_policy_path(paths);
+    let tmp = target.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(policy)
+        .map_err(|e| WikiStoreError::Invalid(format!("serialize external AI policy: {e}")))?;
+    fs::write(&tmp, bytes).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+    Ok(())
+}
+
+pub fn load_external_ai_write_policy(paths: &WikiPaths) -> Result<ExternalAiWritePolicy> {
+    let path = external_ai_policy_path(paths);
+    if !path.exists() {
+        return Ok(empty_external_ai_write_policy());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let mut policy: ExternalAiWritePolicy = serde_json::from_str(&content)
+        .map_err(|e| WikiStoreError::Invalid(format!("external AI policy corrupted: {e}")))?;
+    policy
+        .grants
+        .sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(policy)
+}
+
+pub fn add_external_ai_write_grant(
+    paths: &WikiPaths,
+    level: &str,
+    scope: &str,
+    note: Option<String>,
+    expires_at: Option<String>,
+) -> Result<ExternalAiWriteGrant> {
+    let level = level.trim();
+    let scope = scope.trim();
+    validate_external_ai_grant(level, scope)?;
+
+    let mut policy = load_external_ai_write_policy(paths)?;
+    let now = now_iso8601();
+    let grant = ExternalAiWriteGrant {
+        id: uuid::Uuid::new_v4().to_string(),
+        level: level.to_string(),
+        scope: scope.to_string(),
+        note: note.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }),
+        created_at: now.clone(),
+        expires_at,
+        enabled: true,
+    };
+    policy.updated_at = now;
+    policy.grants.insert(0, grant.clone());
+    save_external_ai_write_policy(paths, &policy)?;
+    Ok(grant)
+}
+
+pub fn revoke_external_ai_write_grant(
+    paths: &WikiPaths,
+    grant_id: &str,
+) -> Result<ExternalAiWritePolicy> {
+    let mut policy = load_external_ai_write_policy(paths)?;
+    let Some(grant) = policy.grants.iter_mut().find(|grant| grant.id == grant_id) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "external AI grant not found: {grant_id}"
+        )));
+    };
+    grant.enabled = false;
+    policy.updated_at = now_iso8601();
+    save_external_ai_write_policy(paths, &policy)?;
+    Ok(policy)
+}
+
 /// Overwrite `schema/CLAUDE.md` with new user-supplied content.
 /// Canonical §8: schema is human-curated; this is the human write
 /// path (the maintainer agent never calls this — it goes through
@@ -2865,7 +3291,14 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
 /// defensive posture as `parse_frontmatter_fields` for raw entries.
 fn parse_wiki_frontmatter_fields(
     content: &str,
-) -> (String, String, Vec<String>, Option<u32>, String, Option<String>) {
+) -> (
+    String,
+    String,
+    Vec<String>,
+    Option<u32>,
+    String,
+    Option<String>,
+) {
     let mut title = String::new();
     let mut summary = String::new();
     let mut purpose: Vec<String> = Vec::new();
@@ -2910,7 +3343,14 @@ fn parse_wiki_frontmatter_fields(
             last_verified = Some(rest.to_string());
         }
     }
-    (title, summary, purpose, source_raw_id, created_at, last_verified)
+    (
+        title,
+        summary,
+        purpose,
+        source_raw_id,
+        created_at,
+        last_verified,
+    )
 }
 
 fn parse_inline_purpose_values(out: &mut Vec<String>, raw: &str) {
@@ -5242,8 +5682,12 @@ mod tests {
         let root_claude = tmp.path().join("CLAUDE.md");
         assert!(root_agents.is_file(), "root AGENTS.md not seeded");
         assert!(root_claude.is_file(), "root CLAUDE.md not seeded");
-        assert!(fs::read_to_string(root_agents).unwrap().contains("schema/AGENTS.md"));
-        assert!(fs::read_to_string(root_claude).unwrap().contains("schema/CLAUDE.md"));
+        assert!(fs::read_to_string(root_agents)
+            .unwrap()
+            .contains("schema/AGENTS.md"));
+        assert!(fs::read_to_string(root_claude)
+            .unwrap()
+            .contains("schema/CLAUDE.md"));
     }
 
     #[test]
@@ -5537,10 +5981,7 @@ mod tests {
             "",
             "totally-new-source-name",
         ] {
-            assert!(
-                !is_full_article(src),
-                "{src} must NOT classify as article"
-            );
+            assert!(!is_full_article(src), "{src} must NOT classify as article");
         }
     }
 
@@ -6390,7 +6831,11 @@ mod tests {
         assert!(tpl_dir.join("compare.md").is_file());
         assert!(tpl_dir.join("personal.md").is_file());
         assert!(tpl_dir.join("research.md").is_file());
-        assert!(tmp.path().join(SCHEMA_DIR).join("purpose-lenses.yml").is_file());
+        assert!(tmp
+            .path()
+            .join(SCHEMA_DIR)
+            .join("purpose-lenses.yml")
+            .is_file());
     }
 
     #[test]
@@ -7719,6 +8164,128 @@ mod tests {
         if git_available {
             assert!(git_dir.is_dir(), "git is on PATH but .git/ was not created");
         }
+    }
+
+    fn git_test_paths() -> Option<(tempfile::TempDir, WikiPaths)> {
+        let git_probe = std::process::Command::new("git").arg("--version").output();
+        let git_available = matches!(git_probe, Ok(o) if o.status.success());
+        if !git_available {
+            return None;
+        }
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        if !tmp.path().join(".git").is_dir() {
+            return None;
+        }
+        let paths = WikiPaths::resolve(tmp.path());
+        Some((tmp, paths))
+    }
+
+    #[test]
+    fn vault_git_status_reports_fresh_seeded_repo_changes() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+
+        let status = vault_git_status(&paths).unwrap();
+        assert!(status.git_available);
+        assert!(status.initialized);
+        assert!(status.dirty);
+        assert!(status.untracked_count > 0);
+        assert!(status.changes.iter().any(|change| {
+            change.path == ".gitignore"
+                || change.path == "schema/"
+                || change.path == "schema/CLAUDE.md"
+        }));
+    }
+
+    #[test]
+    fn vault_git_commit_creates_checkpoint_and_cleans_status() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+
+        let result = vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+        assert!(result.ok);
+        assert!(!result.commit.is_empty());
+        assert!(!result.status.dirty);
+        assert_eq!(result.status.changed_count, 0);
+
+        let status = vault_git_status(&paths).unwrap();
+        assert!(!status.dirty);
+        assert!(status
+            .last_commit
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Initial Buddy Vault checkpoint"));
+    }
+
+    #[test]
+    fn vault_git_diff_reports_tracked_file_edits() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let next_schema = format!("{}\n\n## Test change\n", CLAUDE_MD_TEMPLATE);
+        overwrite_schema_claude_md(&paths, &next_schema).unwrap();
+
+        let status = vault_git_status(&paths).unwrap();
+        assert!(status.dirty);
+        assert!(status.unstaged_count > 0);
+
+        let diff = vault_git_diff(&paths, false).unwrap();
+        assert!(!diff.staged);
+        assert!(diff.diff.contains("Test change"));
+        assert!(diff.byte_size > 0);
+    }
+
+    #[test]
+    fn external_ai_write_policy_adds_and_revokes_session_grant() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let grant = add_external_ai_write_grant(
+            &paths,
+            "session",
+            "schema/templates",
+            Some("template tuning".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(grant.level, "session");
+        assert_eq!(grant.scope, "schema/templates");
+        assert!(grant.enabled);
+
+        let policy = load_external_ai_write_policy(&paths).unwrap();
+        assert_eq!(policy.grants.len(), 1);
+        assert_eq!(policy.grants[0].id, grant.id);
+
+        let revoked = revoke_external_ai_write_grant(&paths, &grant.id).unwrap();
+        assert_eq!(revoked.grants.len(), 1);
+        assert!(!revoked.grants[0].enabled);
+    }
+
+    #[test]
+    fn external_ai_write_policy_requires_narrow_permanent_scope() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let broad = add_external_ai_write_grant(&paths, "permanent", "wiki/", None, None);
+        assert!(broad.is_err());
+
+        let narrow = add_external_ai_write_grant(
+            &paths,
+            "permanent",
+            "schema/templates/research.md",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(narrow.level, "permanent");
+        assert_eq!(narrow.scope, "schema/templates/research.md");
     }
 
     // ── S4.1 Inbox layer tests ───────────────────────────────────

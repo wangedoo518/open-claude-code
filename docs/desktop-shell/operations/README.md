@@ -77,8 +77,10 @@ reference material.
 ## Verification Commands
 
 - `cd apps/desktop-shell && npm run build`
+- `cd apps/desktop-shell && npm run test:buddy:smoke`
 - `cd apps/desktop-shell/src-tauri && cargo check`
 - `cd rust && cargo check --workspace`
+- `cd rust && cargo test -p wiki_store`
 - `git diff --check`
 
 ## Known Issues
@@ -100,6 +102,19 @@ The smoke creates a temporary `CLAWWIKI_HOME`, builds and starts the real
 `/viewer/wiki/phase5-source`, and `/viewer/graph` in a real browser through
 `playwright-cli`. It requires `cargo`, `npm`, and `npx`; `playwright-cli` is
 downloaded through `npx --package @playwright/cli` when the smoke runs.
+
+## Buddy Tolaria Smoke
+
+Run the Tolaria-inspired shell smoke with a real desktop-server and Vite app:
+
+```bash
+cd apps/desktop-shell
+BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm run test:buddy:smoke
+```
+
+The smoke expects the app to be reachable at `BUDDY_SMOKE_URL` and verifies
+Home/Pulse, Rules Studio folded Advanced state, Connections, Knowledge, the
+global status bar, and absence of runtime error boundaries.
 
 ## State Verification
 

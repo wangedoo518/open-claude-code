@@ -9,7 +9,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { CSSProperties } from "react";
-import { getPatrolReport, getWikiStats, listInboxEntries } from "@/api/wiki/repository";
+import {
+  getExternalAiWritePolicy,
+  getPatrolReport,
+  getVaultGitStatus,
+  getWikiStats,
+  listInboxEntries,
+} from "@/api/wiki/repository";
 import { getPermissionConfig } from "@/features/permission/permission-config";
 import { useSettingsStore } from "@/state/settings-store";
 
@@ -36,16 +42,35 @@ export function BuddyStatusBar() {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+  const gitQuery = useQuery({
+    queryKey: ["wiki", "git", "status-bar"],
+    queryFn: () => getVaultGitStatus(),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+  });
+  const externalAiQuery = useQuery({
+    queryKey: ["wiki", "external-ai", "write-policy", "status-bar"],
+    queryFn: () => getExternalAiWritePolicy(),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+  });
 
   const pending = inboxQuery.data?.pending_count ?? 0;
   const stats = statsQuery.data;
+  const git = gitQuery.data;
+  const activeExternalAiGrants =
+    externalAiQuery.data?.grants.filter((grant) => grant.enabled).length ?? 0;
   const patrolSummary = patrolQuery.data?.summary;
   const riskCount =
     (patrolSummary?.schema_violations ?? 0) +
     (patrolSummary?.orphans ?? 0) +
     (patrolSummary?.stale ?? 0);
   const healthTone = riskCount > 0 || pending > 0 ? "warning" : "success";
-  const vaultReady = !statsQuery.error;
+  const gitLabel = gitStatusLabel(git, Boolean(gitQuery.error));
+  const gitTone =
+    !git || gitQuery.error || !git.git_available || !git.initialized || git.dirty
+      ? "warning"
+      : "success";
 
   return (
     <footer className="ds-status-bar" aria-label="Buddy 状态栏">
@@ -62,8 +87,8 @@ export function BuddyStatusBar() {
         />
         <StatusItem
           icon={GitBranch}
-          label={vaultReady ? "Git 默认启用" : "Vault 离线"}
-          tone={vaultReady ? "success" : "warning"}
+          label={gitLabel}
+          tone={gitTone}
         />
       </div>
       <div className="ds-status-bar-right">
@@ -73,7 +98,15 @@ export function BuddyStatusBar() {
           tone="muted"
           style={permissionConfig.color ? { color: permissionConfig.color } : undefined}
         />
-        <StatusItem icon={Bot} label="外部 AI 只读" tone="muted" />
+        <StatusItem
+          icon={Bot}
+          label={
+            activeExternalAiGrants > 0
+              ? `外部 AI ${activeExternalAiGrants} 授权`
+              : "外部 AI 只读"
+          }
+          tone={activeExternalAiGrants > 0 ? "warning" : "muted"}
+        />
         <StatusItem icon={Shield} label="session / permanent" tone="muted" />
         {stats && (
           <StatusItem
@@ -85,6 +118,29 @@ export function BuddyStatusBar() {
       </div>
     </footer>
   );
+}
+
+function gitStatusLabel(
+  git:
+    | {
+        git_available: boolean;
+        initialized: boolean;
+        dirty: boolean;
+        changed_count: number;
+        ahead: number;
+        behind: number;
+      }
+    | undefined,
+  hasError: boolean,
+) {
+  if (hasError) return "Git 状态不可用";
+  if (!git) return "Git 检查中";
+  if (!git.git_available) return "未安装 Git";
+  if (!git.initialized) return "Git 未启用";
+  if (git.dirty) return `Git ${git.changed_count} 改动`;
+  if (git.behind > 0) return `Git behind ${git.behind}`;
+  if (git.ahead > 0) return `Git ahead ${git.ahead}`;
+  return "Git clean";
 }
 
 function StatusItem({

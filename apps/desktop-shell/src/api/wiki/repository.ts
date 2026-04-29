@@ -13,6 +13,10 @@ import type {
   BacklinksFullResponse,
   BreakdownResponse,
   CleanupResponse,
+  ExternalAiGrantLevel,
+  ExternalAiWriteGrantResponse,
+  ExternalAiWritePolicy,
+  ExternalAiWriteRevokeResponse,
   InboxEntry,
   InboxListResponse,
   InboxResolveAction,
@@ -24,6 +28,9 @@ import type {
   SchemaResponse,
   SchemaTemplate,
   UpdateProposal,
+  VaultGitCommitResult,
+  VaultGitDiff,
+  VaultGitStatus,
   WikiApproveWithWriteResponse,
   WikiGraphResponse,
   WikiPageDetailResponse,
@@ -426,6 +433,58 @@ export async function breakdownWikiPage(
 /** GET `/api/wiki/patrol/report` — latest patrol report (§2.8). */
 export async function getPatrolReport(): Promise<PatrolReport | null> {
   return fetchJson<PatrolReport | null>("/api/wiki/patrol/report");
+}
+
+/** GET `/api/wiki/git/status` — live Buddy Vault Git state. */
+export async function getVaultGitStatus(): Promise<VaultGitStatus> {
+  return fetchJson<VaultGitStatus>("/api/wiki/git/status");
+}
+
+/** GET `/api/wiki/git/diff` — unstaged or staged Buddy Vault diff. */
+export async function getVaultGitDiff(staged = false): Promise<VaultGitDiff> {
+  const params = new URLSearchParams();
+  if (staged) params.set("staged", "true");
+  const query = params.toString();
+  return fetchJson<VaultGitDiff>(`/api/wiki/git/diff${query ? `?${query}` : ""}`);
+}
+
+/** POST `/api/wiki/git/commit` — stage all Vault changes and create a checkpoint. */
+export async function commitVaultGit(message: string): Promise<VaultGitCommitResult> {
+  return fetchJson<VaultGitCommitResult>("/api/wiki/git/commit", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** GET `/api/wiki/external-ai/write-policy` — controlled-write grants. */
+export async function getExternalAiWritePolicy(): Promise<ExternalAiWritePolicy> {
+  return fetchJson<ExternalAiWritePolicy>("/api/wiki/external-ai/write-policy");
+}
+
+/** POST `/api/wiki/external-ai/write-policy/grants` — authorize a scoped grant. */
+export async function addExternalAiWriteGrant(request: {
+  level: ExternalAiGrantLevel;
+  scope: string;
+  note?: string;
+  expires_at?: string;
+}): Promise<ExternalAiWriteGrantResponse> {
+  return fetchJson<ExternalAiWriteGrantResponse>(
+    "/api/wiki/external-ai/write-policy/grants",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+/** DELETE `/api/wiki/external-ai/write-policy/grants/:id` — revoke a grant. */
+export async function revokeExternalAiWriteGrant(
+  id: string,
+): Promise<ExternalAiWriteRevokeResponse> {
+  return fetchJson<ExternalAiWriteRevokeResponse>(
+    `/api/wiki/external-ai/write-policy/grants/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function queryWiki(question: string, maxSources = 5): Promise<Response> {

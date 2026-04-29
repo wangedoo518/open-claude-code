@@ -24,6 +24,7 @@ The current desktop shell now includes a quiet Tolaria-style workbench layer:
 | `.ds-status-bar` | 30px global status bar for Vault/Git, Inbox, permission, and external AI state |
 | `.ds-status-item[data-tone]` | `success`, `warning`, `muted` state language |
 | `.ds-kb-purpose-chip` | Purpose Lens chip inside Knowledge rows |
+| `.buddy-codemirror` | CodeMirror 6 shell for Wiki Markdown/frontmatter and Rules Advanced editing |
 
 Purpose Lens default values are `writing`, `building`, `operating`,
 `learning`, `personal`, and `research`.

@@ -47,6 +47,8 @@ This document answers: how `desktop-shell` is currently organized.
   `apps/desktop-shell/src/features/purpose/purpose-lenses.ts`; the default
   frontmatter values are `writing`, `building`, `operating`, `learning`,
   `personal`, and `research`.
+- Wiki and Rules advanced editors use CodeMirror 6 through
+  `apps/desktop-shell/src/components/CodeMirrorEditor.tsx`.
 - Shared UI and utility layer
 - Desktop integration layer
 
@@ -92,6 +94,16 @@ This document answers: how `desktop-shell` is currently organized.
   Markdown including YAML frontmatter, validates required fields, writes
   atomically through `wiki_store::overwrite_wiki_page_content`, and appends
   `human-edit-wiki-page` to the wiki log.
+- Buddy Vault Git is a first-class HTTP surface:
+  `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
+  `POST /api/wiki/git/commit` wrap `wiki_store::vault_git_*` helpers for live
+  status, diff preview, and checkpoint commits.
+- External AI controlled-write authorization is stored under
+  `.clawwiki/external-ai-write-policy.json`. The desktop server exposes
+  `GET /api/wiki/external-ai/write-policy`,
+  `POST /api/wiki/external-ai/write-policy/grants`, and
+  `DELETE /api/wiki/external-ai/write-policy/grants/{id}` for read, grant, and
+  revoke flows.
 - `wiki_store::init_wiki` seeds Buddy Vault defaults: `raw/`, `wiki/`,
   `schema/`, `.clawwiki/`, root `AGENTS.md` / `CLAUDE.md` shims,
   `schema/purpose-lenses.yml`, personal/research templates, `.gitignore`, and

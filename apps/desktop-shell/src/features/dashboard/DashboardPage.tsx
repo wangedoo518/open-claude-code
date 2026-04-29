@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
+  getExternalAiWritePolicy,
+  getVaultGitStatus,
   getPatrolReport,
   getWikiStats,
   listInboxEntries,
@@ -41,10 +43,25 @@ export function DashboardPage() {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+  const gitQuery = useQuery({
+    queryKey: ["wiki", "git", "pulse"],
+    queryFn: () => getVaultGitStatus(),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+  });
+  const externalAiQuery = useQuery({
+    queryKey: ["wiki", "external-ai", "write-policy", "pulse"],
+    queryFn: () => getExternalAiWritePolicy(),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+  });
 
   const pendingInbox = inboxQuery.data?.pending_count ?? 0;
   const stats = statsQuery.data;
   const patrol = patrolQuery.data;
+  const git = gitQuery.data;
+  const activeExternalAiGrants =
+    externalAiQuery.data?.grants.filter((grant) => grant.enabled).length ?? 0;
   const schemaViolations = patrol?.summary.schema_violations ?? 0;
   const stalePages = patrol?.summary.stale ?? 0;
   const orphanPages = patrol?.summary.orphans ?? 0;
@@ -72,6 +89,13 @@ export function DashboardPage() {
               tone: "warning" as const,
             }
           : null,
+        git?.dirty
+          ? {
+              label: `提交 ${git.changed_count} 个 Vault 改动`,
+              href: "/connections#git",
+              tone: "warning" as const,
+            }
+          : null,
         {
           label: "问外脑一个问题",
           href: "/ask",
@@ -82,12 +106,13 @@ export function DashboardPage() {
         href: string;
         tone: "warning" | "neutral";
       }>,
-    [orphanPages, pendingInbox, schemaViolations, stalePages],
+    [git?.changed_count, git?.dirty, orphanPages, pendingInbox, schemaViolations, stalePages],
   );
 
-  const totalRisks = pendingInbox + schemaViolations + stalePages + orphanPages;
+  const gitRisk = git?.dirty ? git.changed_count : 0;
+  const totalRisks = pendingInbox + schemaViolations + stalePages + orphanPages + gitRisk;
   const isLoading =
-    statsQuery.isLoading || inboxQuery.isLoading || patrolQuery.isLoading;
+    statsQuery.isLoading || inboxQuery.isLoading || patrolQuery.isLoading || gitQuery.isLoading;
   const headline =
     totalRisks > 0
       ? `外脑体检发现 ${totalRisks} 项需要处理`
@@ -159,10 +184,14 @@ export function DashboardPage() {
           <HealthCard
             icon={GitBranch}
             title="Buddy Vault / Git"
-            value={stats ? stats.wiki_count : 0}
-            unit="页"
-            status={statsQuery.error ? "离线" : "Git 默认启用"}
-            tone={statsQuery.error ? "warning" : "success"}
+            value={git?.changed_count ?? 0}
+            unit="改动"
+            status={gitHealthLabel(git, Boolean(gitQuery.error))}
+            tone={
+              !git || gitQuery.error || !git.git_available || !git.initialized || git.dirty
+                ? "warning"
+                : "success"
+            }
             href="/connections"
           />
         </section>
@@ -202,9 +231,23 @@ export function DashboardPage() {
             </div>
             <div className="mt-4 space-y-2 text-[12px] text-muted-foreground">
               <StatusRow label="默认模式" value="只读" />
-              <StatusRow label="会话授权" value="可临时开启" />
-              <StatusRow label="永久规则" value="需显式保存" />
+              <StatusRow
+                label="会话授权"
+                value={`${countExternalAiGrants(externalAiQuery.data?.grants, "session")} 个`}
+              />
+              <StatusRow
+                label="永久规则"
+                value={`${countExternalAiGrants(externalAiQuery.data?.grants, "permanent")} 个`}
+              />
               <StatusRow label="写入范围" value="wiki / templates / guidance" />
+              <StatusRow
+                label="当前写权限"
+                value={activeExternalAiGrants > 0 ? `${activeExternalAiGrants} 个授权` : "无"}
+              />
+              <StatusRow
+                label="Git checkpoint"
+                value={git?.dirty ? `${git.changed_count} 改动待提交` : "已同步本地历史"}
+              />
             </div>
           </div>
         </section>
@@ -218,6 +261,37 @@ export function DashboardPage() {
       </div>
     </main>
   );
+}
+
+function countExternalAiGrants(
+  grants:
+    | Array<{
+        level: "session" | "permanent";
+        enabled: boolean;
+      }>
+    | undefined,
+  level: "session" | "permanent",
+) {
+  return grants?.filter((grant) => grant.enabled && grant.level === level).length ?? 0;
+}
+
+function gitHealthLabel(
+  git:
+    | {
+        git_available: boolean;
+        initialized: boolean;
+        dirty: boolean;
+        changed_count: number;
+      }
+    | undefined,
+  hasError: boolean,
+) {
+  if (hasError) return "不可用";
+  if (!git) return "检查中";
+  if (!git.git_available) return "未安装 Git";
+  if (!git.initialized) return "未启用";
+  if (git.dirty) return "有未提交";
+  return "干净";
 }
 
 function HealthCard({

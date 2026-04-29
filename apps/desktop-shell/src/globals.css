@@ -4586,6 +4586,26 @@
   padding: 1px 7px;
   font-size: 10.5px;
 }
+.buddy-codemirror .cm-editor {
+  min-height: inherit;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.buddy-codemirror .cm-scroller {
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+}
+.buddy-codemirror .cm-gutters {
+  background: color-mix(in srgb, var(--color-muted) 35%, transparent);
+  color: var(--color-muted-foreground);
+  border-right-color: var(--color-border);
+}
+.buddy-codemirror .cm-activeLine,
+.buddy-codemirror .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--color-muted) 45%, transparent);
+}
 .ds-kb-badge {
   display: inline-flex;
   align-items: center;

@@ -13,10 +13,10 @@ related:
 
 # Buddy Tolaria Deep Product Design Implementation Plan
 
-This plan records the first main-only implementation slice for the
+This plan records the main-only implementation slices for the
 Tolaria-inspired Buddy design.
 
-## Implemented Slice
+## Implemented Slice 1
 
 - Route IA changed to `/` Home/Pulse, `/rules`, `/connections`, `/wiki`,
   `/inbox`, and `/ask` as the main rail surfaces.
@@ -41,18 +41,36 @@ Tolaria-inspired Buddy design.
   `schema/purpose-lenses.yml`, personal/research templates, `.gitignore`, and
   Git by default when Git is available.
 
+## Implemented Slice 2
+
+- Added live Buddy Vault Git endpoints for status, diff, and checkpoint commit:
+  `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
+  `POST /api/wiki/git/commit`.
+- Replaced placeholder Git badges in Home/Pulse, BuddyStatusBar, and
+  Connections with live dirty/ahead/behind/remote state.
+- Connections now exposes a Vault checkpoint panel with changed files, tracked
+  diff preview, and a commit-message input.
+- Added external AI controlled-write policy persistence under
+  `.clawwiki/external-ai-write-policy.json`, with add/revoke endpoints for
+  session grants and permanent rules.
+- Home/Pulse, BuddyStatusBar, and Connections now read the external AI policy
+  instead of showing static authorization copy.
+- Added CodeMirror 6 as the concrete editor for Wiki Markdown/frontmatter and
+  Rules Studio Advanced editing.
+- Added browser smoke coverage for Home/Pulse, Rules Studio folded Advanced
+  state, Connections, and Knowledge.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
 - `cd apps/desktop-shell/src-tauri && cargo check`
 - `cd rust && cargo check --workspace`
 - `cd rust && cargo test -p wiki_store`
+- `cd apps/desktop-shell && npm run test:buddy:smoke`
 
-## Follow-up Slices
+## Future Hardening
 
-- Add a full Git status/diff/commit endpoint and replace placeholder UI badges
-  with live Git state.
-- Add CodeMirror 6 as the concrete editor implementation for Wiki and Rules.
-- Add external AI write-policy persistence and revocation endpoints.
-- Add browser smoke coverage for Home/Pulse, Rules Studio folded state,
-  Wiki edit save, and Connections authorization copy.
+- Add remote pull/push/conflict handling once Buddy exposes remote connection
+  setup in Connections.
+- Add a dedicated Wiki edit browser flow with a seeded page fixture.
+- Add richer diff rendering for untracked files and staged changes.

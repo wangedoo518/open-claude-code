@@ -62,17 +62,19 @@ pub(crate) use handlers::wechat::{
 };
 pub use handlers::wechat::{BridgeHealthResponse, ChannelHealth};
 pub(crate) use handlers::wiki_crud::{
-    apply_combined_proposal_handler, apply_proposal_handler, approve_wiki_inbox_with_write_handler,
-    batch_resolve_wiki_inbox_handler, cancel_proposal_handler, create_combined_proposal_handler,
-    create_proposal_handler, delete_wiki_raw_handler, get_inbox_lineage_handler,
-    get_page_graph_handler, get_raw_lineage_handler, get_wiki_backlinks_handler,
+    add_external_ai_write_grant_handler, apply_combined_proposal_handler, apply_proposal_handler,
+    approve_wiki_inbox_with_write_handler, batch_resolve_wiki_inbox_handler,
+    cancel_proposal_handler, commit_vault_git_handler, create_combined_proposal_handler,
+    create_proposal_handler, delete_wiki_raw_handler, get_external_ai_write_policy_handler,
+    get_inbox_lineage_handler, get_page_graph_handler, get_raw_lineage_handler,
+    get_vault_git_diff_handler, get_vault_git_status_handler, get_wiki_backlinks_handler,
     get_wiki_graph_handler, get_wiki_index_handler, get_wiki_lineage_handler, get_wiki_log_handler,
     get_wiki_page_handler, get_wiki_raw_handler, get_wiki_schema_handler, inbox_maintain_handler,
     ingest_wiki_raw_handler, install_inbox_notify, list_inbox_candidates_handler,
     list_wiki_inbox_handler, list_wiki_pages_handler, list_wiki_raw_handler,
     preview_wiki_fetch_handler, propose_wiki_inbox_handler, put_wiki_page_handler,
     put_wiki_schema_handler, resolve_wiki_inbox_handler, resolve_wiki_root_for_handler,
-    search_wiki_pages_handler, ws_wechat_inbox_handler,
+    revoke_external_ai_write_grant_handler, search_wiki_pages_handler, ws_wechat_inbox_handler,
 };
 pub(crate) use handlers::wiki_reports::{
     breakdown_handler, cleanup_handler, get_absorb_log_handler, get_backlinks_index_handler,
