@@ -3788,6 +3788,107 @@ pub fn overwrite_wiki_page_content(
     Ok(path)
 }
 
+/// Append a single `expressed_in` reference to a wiki page frontmatter.
+///
+/// Returns `Ok(true)` when the file changed and `Ok(false)` when the
+/// reference already existed. The helper preserves the rest of the Markdown
+/// verbatim and only rewrites the frontmatter lines needed for `expressed_in`.
+pub fn append_wiki_page_expressed_ref(
+    paths: &WikiPaths,
+    slug: &str,
+    reference: &str,
+) -> Result<bool> {
+    validate_wiki_slug(slug)?;
+    validate_expressed_ref_value(reference)?;
+
+    let (path, _category) = locate_wiki_page_file(paths, slug)
+        .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {slug}")))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    if lines.first().map(String::as_str) != Some("---") {
+        return Err(WikiStoreError::Invalid(
+            "wiki page must start with YAML frontmatter delimiter".to_string(),
+        ));
+    }
+    let closing_index = lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(idx, line)| (line == "---").then_some(idx))
+        .ok_or_else(|| {
+            WikiStoreError::Invalid("wiki page frontmatter is missing closing delimiter".to_string())
+        })?;
+
+    let mut expressed_index: Option<usize> = None;
+    let mut expressed_refs: Vec<String> = Vec::new();
+    let mut insert_index = closing_index;
+
+    for idx in 1..closing_index {
+        let line = &lines[idx];
+        if let Some(rest) = line.strip_prefix("expressed_in:") {
+            expressed_index = Some(idx);
+            parse_inline_expressed_ref_values(&mut expressed_refs, rest);
+            insert_index = idx + 1;
+            while insert_index < closing_index {
+                let candidate = &lines[insert_index];
+                let trimmed = candidate.trim();
+                if let Some(rest) = trimmed.strip_prefix("- ") {
+                    push_expressed_ref_value(&mut expressed_refs, rest);
+                    insert_index += 1;
+                    continue;
+                }
+                if candidate.starts_with(' ') || candidate.starts_with('\t') {
+                    insert_index += 1;
+                    continue;
+                }
+                break;
+            }
+            break;
+        }
+    }
+
+    if expressed_refs.iter().any(|existing| existing == reference) {
+        return Ok(false);
+    }
+
+    if let Some(idx) = expressed_index {
+        if lines[idx].trim() != "expressed_in:" {
+            lines[idx] = "expressed_in:".to_string();
+            let existing: Vec<String> = expressed_refs
+                .iter()
+                .map(|item| format!("  - {item}"))
+                .collect();
+            lines.splice(idx + 1..insert_index, existing);
+            insert_index = idx + 1 + expressed_refs.len();
+        }
+        lines.insert(insert_index, format!("  - {reference}"));
+    } else {
+        let mut target_index = closing_index;
+        for idx in 1..closing_index {
+            let line = &lines[idx];
+            if line.starts_with("source_raw_id:")
+                || line.starts_with("created_at:")
+                || line.starts_with("confidence:")
+            {
+                target_index = idx;
+                break;
+            }
+        }
+        lines.insert(target_index, "expressed_in:".to_string());
+        lines.insert(target_index + 1, format!("  - {reference}"));
+    }
+
+    let mut next = lines.join("\n");
+    if content.ends_with('\n') {
+        next.push('\n');
+    }
+    let tmp = path.with_extension("md.tmp");
+    fs::write(&tmp, next.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(true)
+}
+
 fn validate_wiki_page_markdown_content(content: &str) -> Result<()> {
     if content.trim().is_empty() {
         return Err(WikiStoreError::Invalid(
@@ -3886,6 +3987,24 @@ fn validate_purpose_lens_value(raw: &str) -> Result<()> {
     if !valid {
         return Err(WikiStoreError::Invalid(format!(
             "purpose lens contains invalid chars: {lens}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_expressed_ref_value(raw: &str) -> Result<()> {
+    let reference = raw.trim();
+    if reference.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "expressed_in reference must not be empty".to_string(),
+        ));
+    }
+    let valid = reference
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_' | '.' | '/'));
+    if !valid {
+        return Err(WikiStoreError::Invalid(format!(
+            "expressed_in reference contains invalid chars: {reference}"
         )));
     }
     Ok(())
@@ -8284,6 +8403,45 @@ mod tests {
         let (_title, _summary, _purpose, expressed_in, _raw, _created, _verified) =
             parse_wiki_frontmatter_fields(content);
         assert_eq!(expressed_in, vec!["ask:session-123", "doc:project-memo"]);
+    }
+
+    #[test]
+    fn append_wiki_page_expressed_ref_updates_frontmatter_once() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_wiki_page(&paths, "expressed", "Expressed", "summary", "Body.", None).unwrap();
+
+        let changed =
+            append_wiki_page_expressed_ref(&paths, "expressed", "ask:session-123").unwrap();
+        assert!(changed);
+        let changed_again =
+            append_wiki_page_expressed_ref(&paths, "expressed", "ask:session-123").unwrap();
+        assert!(!changed_again);
+
+        let (summary, _body) = read_wiki_page(&paths, "expressed").unwrap();
+        assert_eq!(summary.expressed_in, vec!["ask:session-123"]);
+        let content = read_wiki_page_content(&paths, "expressed").unwrap();
+        assert_eq!(content.matches("ask:session-123").count(), 1);
+    }
+
+    #[test]
+    fn append_wiki_page_expressed_ref_expands_inline_empty_list() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_wiki_page(&paths, "inline-expressed", "Inline", "summary", "Body.", None).unwrap();
+        let content = read_wiki_page_content(&paths, "inline-expressed")
+            .unwrap()
+            .replace("created_at:", "expressed_in: []\ncreated_at:");
+        overwrite_wiki_page_content(&paths, "inline-expressed", &content).unwrap();
+
+        append_wiki_page_expressed_ref(&paths, "inline-expressed", "doc:project-memo").unwrap();
+
+        let (summary, _body) = read_wiki_page(&paths, "inline-expressed").unwrap();
+        assert_eq!(summary.expressed_in, vec!["doc:project-memo"]);
+        let content = read_wiki_page_content(&paths, "inline-expressed").unwrap();
+        assert!(content.contains("expressed_in:\n  - doc:project-memo\ncreated_at:"));
     }
 
     #[test]

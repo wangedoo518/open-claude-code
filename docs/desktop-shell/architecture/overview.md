@@ -77,6 +77,10 @@ This document answers: how `desktop-shell` is currently organized.
 - Wiki page summaries now carry optional `expressed_in` frontmatter refs. Home
   uses them for the `最近表达` pulse, and Purpose Lens digest counts expressed
   pages separately from pages that are still ready to express.
+- Ask turns with an explicit `wiki:<slug>` source binding append
+  `ask:<session-id>` to that page's `expressed_in` frontmatter once per
+  session. This write is local-first and intentionally leaves Buddy Vault dirty
+  so the existing Git checkpoint surfaces pick it up.
 - Ask Purpose mode is carried on
   `POST /api/desktop/sessions/{id}/messages` as optional `purpose` values.
   The Rust layer normalizes the slugs, stores them on

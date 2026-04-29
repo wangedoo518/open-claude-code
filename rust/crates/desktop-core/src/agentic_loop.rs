@@ -1044,7 +1044,10 @@ async fn parse_sse_stream(
                 continue;
             }
 
-            if let Some(data) = line.strip_prefix("data: ") {
+            if let Some(data) = line
+                .strip_prefix("data: ")
+                .or_else(|| line.strip_prefix("data:"))
+            {
                 if data == "[DONE]" {
                     stream_finished = true;
                     break;
@@ -1830,7 +1833,10 @@ mod sse_buffer_tests {
 mod sse_completion_tests {
     use super::parse_sse_stream;
     use crate::{ContentBlock, DesktopSessionEvent};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use axum::response::sse::{Event, Sse};
+    use axum::{routing::get, Router};
+    use futures_util::stream;
+    use std::convert::Infallible;
     use tokio::net::TcpListener;
     use tokio::sync::broadcast;
     use tokio::time::{timeout, Duration};
@@ -1843,42 +1849,40 @@ mod sse_completion_tests {
             .expect("bind test server");
         let addr = listener.local_addr().expect("listener addr");
 
+        async fn sse_handler() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
+            let events = vec![
+                Event::default().event("message_start").data(
+                    "{\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-test\"}}",
+                ),
+                Event::default().event("content_block_start").data(
+                    "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+                ),
+                Event::default().event("content_block_delta").data(
+                    "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好\"}}",
+                ),
+                Event::default()
+                    .event("content_block_stop")
+                    .data("{\"type\":\"content_block_stop\",\"index\":0}"),
+                Event::default().event("message_delta").data(
+                    "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}",
+                ),
+                Event::default()
+                    .event("message_stop")
+                    .data("{\"type\":\"message_stop\"}"),
+                Event::default().data("[DONE]"),
+            ];
+            Sse::new(stream::iter(events.into_iter().map(Ok)))
+        }
+
+        let app = Router::new().route("/", get(sse_handler));
         let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept client");
-            let mut request = [0_u8; 1024];
-            let _ = socket.read(&mut request).await;
-
-            let body = concat!(
-                "event: message_start\n",
-                "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-test\"}}\n\n",
-                "event: content_block_start\n",
-                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-                "event: content_block_delta\n",
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好\"}}\n\n",
-                "event: content_block_stop\n",
-                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
-                "event: message_delta\n",
-                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
-                "event: message_stop\n",
-                "data: {\"type\":\"message_stop\"}\n\n",
-                "data: [DONE]\n\n"
-            );
-
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: keep-alive\r\n\r\n{body}"
-            );
-            socket
-                .write_all(response.as_bytes())
-                .await
-                .expect("write response");
-            socket.flush().await.expect("flush response");
-
-            // Keep the socket open to mimic a proxy that sends the final SSE
-            // frame before it actually closes the HTTP connection.
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            axum::serve(listener, app).await.expect("serve test SSE");
         });
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build test client");
         let response = client
             .get(format!("http://{addr}"))
             .send()

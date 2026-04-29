@@ -302,6 +302,13 @@ export function useAskSession(): UseAskSessionResult {
         askSessionKeys.detail(variables.sessionId),
         response.session
       );
+      if (
+        response.session.context_basis?.bound_source?.kind === "wiki" ||
+        response.session.source_binding?.source.kind === "wiki"
+      ) {
+        void queryClient.invalidateQueries({ queryKey: ["wiki", "pages"] });
+        void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      }
       setErrorMessage(undefined);
     },
     onError: (err) => {

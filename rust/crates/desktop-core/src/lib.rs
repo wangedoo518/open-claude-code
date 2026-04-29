@@ -3524,6 +3524,13 @@ impl DesktopState {
         })
     }
 
+    fn mark_wiki_source_expressed(slug: &str, reference: &str) -> wiki_store::Result<bool> {
+        let root = wiki_store::default_root();
+        wiki_store::init_wiki(&root)?;
+        let paths = wiki_store::WikiPaths::resolve(&root);
+        wiki_store::append_wiki_page_expressed_ref(&paths, slug, reference)
+    }
+
     /// If the message contains a URL, try to fetch its content and
     /// return an enriched message with the article text prepended.
     ///
@@ -4105,6 +4112,21 @@ impl DesktopState {
         // `record.detail()` from the persistent
         // `SessionMetadata.last_context_basis` we stamped above.
         // No transient-side-channel assignment needed here.
+
+        if let Some((crate::ask_context::binding::SourceRef::Wiki { slug, .. }, _)) = &bound_body {
+            let expression_ref = format!("ask:{session_id}");
+            match Self::mark_wiki_source_expressed(slug, &expression_ref) {
+                Ok(true) => {
+                    eprintln!("[express] marked wiki:{slug} as expressed in {expression_ref}");
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    eprintln!(
+                        "[express] failed to mark wiki:{slug} as expressed in {expression_ref}: {err}"
+                    );
+                }
+            }
+        }
 
         self.persist().await;
         let _ = sender.send(DesktopSessionEvent::Snapshot {

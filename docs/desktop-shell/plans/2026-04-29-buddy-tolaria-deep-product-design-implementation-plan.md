@@ -380,6 +380,20 @@ Tolaria-inspired Buddy design.
 - Browser smoke seeds an expressed wiki page and verifies the Home/Pulse
   expression signal renders end to end.
 
+## Implemented Slice 29
+
+- Ask turns with an explicit wiki source binding now mark that page as
+  expressed by appending `ask:<session-id>` to its `expressed_in`
+  frontmatter, deduplicated per session.
+- The wiki-store write helper preserves full Markdown/YAML content, supports
+  existing block or inline-empty `expressed_in` frontmatter, and rejects unsafe
+  expression refs.
+- Ask send success invalidates wiki page and Git queries when a wiki binding
+  participated, so Home/Pulse, Wiki, and Vault checkpoint pressure converge
+  after expression writes.
+- Browser smoke now exercises the real bind -> Ask append -> wiki page read
+  flow and verifies the automatic `expressed_in` mark.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

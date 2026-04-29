@@ -468,6 +468,37 @@ async function runAskPurposeLensApiCheck() {
   }
 }
 
+async function runAskWikiExpressionMarkCheck() {
+  const created = await fetchJson("/api/desktop/sessions", {
+    method: "POST",
+    body: JSON.stringify({ title: "Smoke Wiki Expression" }),
+  });
+  const sessionId = created.session.id;
+  await fetchJson(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/bind`, {
+    method: "POST",
+    body: JSON.stringify({
+      source: {
+        kind: "wiki",
+        slug: SMOKE_SLUG,
+        title: "Smoke Edit Page",
+      },
+    }),
+  });
+  await fetchJson(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: "请基于这个页面给出一句表达。",
+      mode: "source_first",
+    }),
+  });
+
+  const page = await fetchJson(`/api/wiki/pages/${encodeURIComponent(SMOKE_SLUG)}`);
+  const expressedIn = page.summary?.expressed_in ?? [];
+  if (!expressedIn.includes(`ask:${sessionId}`)) {
+    throw new Error(`ask wiki expression smoke expected ask:${sessionId}, got ${JSON.stringify(expressedIn)}`);
+  }
+}
+
 async function runAskPurposeLensUiCheck(page) {
   const purposeButton = page.getByRole("button", { name: /Purpose Lens：自动匹配/ });
   await purposeButton.waitFor({ state: "visible", timeout: 10_000 });
@@ -525,6 +556,7 @@ async function run() {
   await runGitChangeBlockDiscardCheck();
   await runRulesFileEditCheck();
   await runAskPurposeLensApiCheck();
+  await runAskWikiExpressionMarkCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const page = await browser.newPage();
