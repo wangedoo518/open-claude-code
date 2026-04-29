@@ -2062,6 +2062,29 @@ pub(crate) async fn get_vault_git_diff_handler(
 }
 
 #[derive(Debug, serde::Deserialize)]
+pub(crate) struct GitAuditQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+pub(crate) async fn get_vault_git_audit_handler(
+    Query(query): Query<GitAuditQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let audit = wiki_store::vault_git_audit_log(&paths, query.limit.unwrap_or(10)).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("git audit read failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(audit).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
 pub(crate) struct GitCommitRequest {
     message: String,
 }

@@ -50,6 +50,10 @@ design, tests, review discipline, or documentation.
   confirmed in UI, and must be server-validated against the current diff before
   reverse patch application. Keep line-level, staged-hunk, and partial-line
   mutation behind a separate reviewed interaction model.
+- Successful Buddy Vault Git mutations must append to
+  `.clawwiki/vault-git-log.jsonl` without dirtying the worktree. Keep the audit
+  path ignored in new Vault `.gitignore` files and existing Vault
+  `.git/info/exclude` before writing audit events.
 - When copying Tolaria source, include provenance, license preservation, tests,
   and documentation in the same main-only slice.
 

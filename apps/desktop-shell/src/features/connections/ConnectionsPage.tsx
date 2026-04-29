@@ -24,6 +24,7 @@ import {
   discardVaultGitHunk,
   discardVaultGitPath,
   getExternalAiWritePolicy,
+  getVaultGitAudit,
   getVaultGitDiff,
   getVaultGitStatus,
   pullVaultGit,
@@ -33,6 +34,7 @@ import {
 } from "@/api/wiki/repository";
 import type {
   ExternalAiWriteGrant,
+  VaultGitAuditEntry,
   VaultGitDiffHunk,
   VaultGitDiffLine,
   VaultGitStatus,
@@ -122,6 +124,13 @@ export function ConnectionsPage() {
     ),
     staleTime: 5_000,
   });
+  const auditQuery = useQuery({
+    queryKey: ["wiki", "git", "audit", "connections"],
+    queryFn: () => getVaultGitAudit(5),
+    enabled: Boolean(git?.git_available && git?.initialized),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  });
   const diffSections = diffQuery.data?.sections ?? [];
   const selectedDiffSection = useMemo(() => {
     if (!diffSections.length) return null;
@@ -159,6 +168,7 @@ export function ConnectionsPage() {
       setCommitMessage("");
       setSyncMessage(null);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
   const pullMutation = useMutation({
@@ -167,6 +177,7 @@ export function ConnectionsPage() {
       setSyncMessage(result.summary || "Pull completed.");
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
   const pushMutation = useMutation({
@@ -175,6 +186,7 @@ export function ConnectionsPage() {
       setSyncMessage(result.summary || "Push completed.");
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
   const remoteMutation = useMutation({
@@ -184,6 +196,7 @@ export function ConnectionsPage() {
       setSyncMessage(`origin -> ${result.remote_url_redacted}`);
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
   const discardMutation = useMutation({
@@ -194,6 +207,7 @@ export function ConnectionsPage() {
       setSyncMessage(result.summary);
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
   const discardHunkMutation = useMutation({
@@ -203,6 +217,7 @@ export function ConnectionsPage() {
       setSyncMessage(result.summary);
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
   const policyQuery = useQuery({
@@ -247,6 +262,7 @@ export function ConnectionsPage() {
   }, [git?.changed_count, git?.dirty]);
   const syncPending =
     pullMutation.isPending || pushMutation.isPending || remoteMutation.isPending;
+  const auditEntries = auditQuery.data?.entries ?? [];
   const selectedHunks = selectedDiffSection?.hunks ?? EMPTY_HUNKS;
   const selectedHunk =
     selectedHunkIndex === null ? null : selectedHunks[selectedHunkIndex] ?? null;
@@ -775,6 +791,22 @@ export function ConnectionsPage() {
                       {syncMessage}
                     </p>
                   )}
+                  {auditEntries.length ? (
+                    <div className="mt-3 border-t border-border/60 pt-2">
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-medium text-foreground">最近 Git 操作</span>
+                        <span className="text-muted-foreground">{auditEntries.length}</span>
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {auditEntries.slice(0, 3).map((entry) => (
+                          <GitAuditRow
+                            key={`${entry.timestamp_ms}-${entry.operation}-${entry.path ?? ""}`}
+                            entry={entry}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -932,6 +964,37 @@ function diffLineMarker(kind: string): string {
   if (kind === "add") return "+";
   if (kind === "remove") return "-";
   return " ";
+}
+
+function GitAuditRow({ entry }: { entry: VaultGitAuditEntry }) {
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded bg-muted/40 px-2 py-1.5 text-[11px]">
+      <span className="rounded border border-border/60 bg-background px-1.5 py-0.5 font-mono text-muted-foreground">
+        {gitAuditLabel(entry.operation)}
+      </span>
+      <span className="min-w-0 truncate text-foreground">
+        {entry.path || entry.commit || entry.remote || entry.summary}
+      </span>
+      <span className="shrink-0 text-muted-foreground">
+        {formatAuditTime(entry.timestamp_ms)}
+      </span>
+    </div>
+  );
+}
+
+function gitAuditLabel(operation: string): string {
+  if (operation === "discard-hunk") return "hunk";
+  if (operation === "discard-path") return "discard";
+  if (operation === "commit") return "commit";
+  if (operation === "remote") return "remote";
+  return operation;
+}
+
+function formatAuditTime(timestampMs: number): string {
+  return new Date(timestampMs).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function GitFact({ label, value }: { label: string; value: string }) {

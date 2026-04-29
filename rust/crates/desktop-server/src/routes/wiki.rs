@@ -93,6 +93,7 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
         )
         .route("/api/wiki/git/status", get(get_vault_git_status_handler))
         .route("/api/wiki/git/diff", get(get_vault_git_diff_handler))
+        .route("/api/wiki/git/audit", get(get_vault_git_audit_handler))
         .route("/api/wiki/git/commit", post(commit_vault_git_handler))
         .route("/api/wiki/git/pull", post(pull_vault_git_handler))
         .route("/api/wiki/git/push", post(push_vault_git_handler))

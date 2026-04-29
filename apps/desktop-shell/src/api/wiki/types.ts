@@ -501,9 +501,24 @@ export interface VaultGitRemoteConfigResult {
 export interface VaultGitDiscardResult {
   ok: boolean;
   path: string;
-  mode: "tracked" | "untracked" | string;
+  mode: "tracked" | "untracked" | "hunk" | string;
   summary: string;
   status: VaultGitStatus;
+}
+
+export interface VaultGitAuditLog {
+  vault_path: string;
+  entries: VaultGitAuditEntry[];
+}
+
+export interface VaultGitAuditEntry {
+  timestamp_ms: number;
+  operation: string;
+  summary: string;
+  path?: string | null;
+  hunk_index?: number | null;
+  commit?: string | null;
+  remote?: string | null;
 }
 
 export type ExternalAiGrantLevel = "session" | "permanent";

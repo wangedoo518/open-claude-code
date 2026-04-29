@@ -112,6 +112,11 @@ This document answers: how `desktop-shell` is currently organized.
   remote name and a redacted remote URL; Buddy never echoes plaintext URL
   credentials back to the UI. Discard only accepts paths already reported by Git
   status and rejects absolute or parent-traversing paths.
+- Successful Buddy Vault Git mutations are appended to the local audit log
+  `.clawwiki/vault-git-log.jsonl` and exposed through
+  `GET /api/wiki/git/audit`. The audit file is ignored through seeded
+  `.gitignore` and `.git/info/exclude`, so Git bookkeeping never dirties the
+  user's checkpoint state.
 - External AI controlled-write authorization is stored under
   `.clawwiki/external-ai-write-policy.json`. The desktop server exposes
   `GET /api/wiki/external-ai/write-policy`,

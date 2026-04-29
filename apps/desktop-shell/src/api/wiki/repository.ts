@@ -28,6 +28,7 @@ import type {
   SchemaResponse,
   SchemaTemplate,
   UpdateProposal,
+  VaultGitAuditLog,
   VaultGitCommitResult,
   VaultGitDiscardResult,
   VaultGitDiff,
@@ -449,6 +450,13 @@ export async function getVaultGitDiff(staged = false): Promise<VaultGitDiff> {
   if (staged) params.set("staged", "true");
   const query = params.toString();
   return fetchJson<VaultGitDiff>(`/api/wiki/git/diff${query ? `?${query}` : ""}`);
+}
+
+/** GET `/api/wiki/git/audit` — local Buddy Vault Git mutation audit. */
+export async function getVaultGitAudit(limit = 10): Promise<VaultGitAuditLog> {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  return fetchJson<VaultGitAuditLog>(`/api/wiki/git/audit?${params.toString()}`);
 }
 
 /** POST `/api/wiki/git/commit` — stage all Vault changes and create a checkpoint. */

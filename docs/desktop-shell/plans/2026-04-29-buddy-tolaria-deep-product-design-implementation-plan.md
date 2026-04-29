@@ -148,6 +148,20 @@ Tolaria-inspired Buddy design.
   endpoints must be covered both by Rust unit tests and by the real
   desktop-server/Vite smoke path.
 
+## Implemented Slice 10
+
+- Added a local Buddy Vault Git audit log at
+  `.clawwiki/vault-git-log.jsonl` for successful commit, pull, push, remote,
+  file discard, and hunk discard operations.
+- The audit log is written only after successful mutations and is ignored via
+  both seeded `.gitignore` and `.git/info/exclude`, so audit bookkeeping does
+  not dirty checkpoint state.
+- Added `GET /api/wiki/git/audit` and surfaced recent Git operations in
+  Connections.
+- Browser smoke now expects the recent Git operation surface after exercising
+  the hunk-discard API, and Rust coverage verifies audit entries do not dirty
+  the Vault.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
