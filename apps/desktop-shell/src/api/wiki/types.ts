@@ -595,6 +595,17 @@ export interface PolicyFileInfo {
   first_heading?: string | null;
 }
 
+export interface RulesFileContent {
+  relative_path: string;
+  file_path: string;
+  content: string;
+  byte_size: number;
+}
+
+export interface RulesFileWriteResponse extends RulesFileContent {
+  ok: boolean;
+}
+
 /** POST /api/wiki/absorb response (§2.1). */
 export interface AbsorbTaskResponse {
   task_id: string;

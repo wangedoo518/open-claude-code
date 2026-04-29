@@ -45,8 +45,9 @@ This document answers: how `desktop-shell` is currently organized.
   Studio. It keeps Advanced YAML / CodeMirror folded by default, reads live
   Git/Vault status, renders the `schema/templates/*.md` template catalog by
   default, renders root/schema guidance file status from `GET /api/wiki/guidance`,
-  renders schema policy files from `GET /api/wiki/policies`, and invalidates
-  Git state after schema saves.
+  renders schema policy files from `GET /api/wiki/policies`, and can edit
+  allowlisted rule files through `GET/PUT /api/wiki/rules/file`. Rule file
+  saves invalidate Git state after writing.
 - Feature modules own UI and feature-specific orchestration.
 - Neutral API clients under `apps/desktop-shell/src/api/` own cross-feature
   HTTP/SSE surfaces. Common Wiki repository access lives under
@@ -113,6 +114,11 @@ This document answers: how `desktop-shell` is currently organized.
   `human-edit-wiki-page` to the wiki log. The wiki edit panel also reads live
   Buddy Vault Git status so the user can see whether the save will create a
   checkpointable diff before they leave the page.
+- `GET/PUT /api/wiki/rules/file` is the Rules Studio human edit path for
+  allowlisted files only: root `AGENTS.md` / `CLAUDE.md`, `schema/AGENTS.md`,
+  `schema/CLAUDE.md`, `schema/purpose-lenses.yml`,
+  `schema/templates/*.md`, and `schema/policies/*.md`. The backend rejects
+  absolute paths, parent traversal, unknown files, and empty content.
 - Buddy Vault Git is a first-class HTTP surface:
   `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
   `POST /api/wiki/git/commit`, `POST /api/wiki/git/pull`, and

@@ -30,6 +30,8 @@ const routes = [
       "schema/CLAUDE.md",
       "schema/policies/maintenance.md",
       "schema/policies/naming.md",
+      "Rule file editor",
+      "编辑选中文件",
     ],
     check: async (page) => {
       const advanced = page
@@ -207,6 +209,31 @@ async function runGitAuditCheck() {
   }
 }
 
+async function runRulesFileEditCheck() {
+  const targetPath = "schema/policies/naming.md";
+  const before = await fetchJson(`/api/wiki/rules/file?path=${encodeURIComponent(targetPath)}`);
+  if (!before.content.includes("Naming Policy")) {
+    throw new Error("rules file smoke expected Naming Policy content");
+  }
+
+  const marker = "<!-- smoke-rules-file-edit -->";
+  const nextContent = before.content.includes(marker)
+    ? before.content
+    : `${before.content.trimEnd()}\n\n${marker}\n`;
+  await fetchJson("/api/wiki/rules/file", {
+    method: "PUT",
+    body: JSON.stringify({
+      path: targetPath,
+      content: nextContent,
+    }),
+  });
+
+  const after = await fetchJson(`/api/wiki/rules/file?path=${encodeURIComponent(targetPath)}`);
+  if (!after.content.includes(marker)) {
+    throw new Error("rules file smoke did not persist the edited policy file");
+  }
+}
+
 async function runWikiEditCheck(page) {
   const updatedContent = `---
 type: concept
@@ -248,6 +275,7 @@ async function run() {
   await seedWikiEditPage();
   await runGitHunkDiscardCheck();
   await runGitAuditCheck();
+  await runRulesFileEditCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const page = await browser.newPage();

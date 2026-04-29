@@ -259,6 +259,20 @@ Tolaria-inspired Buddy design.
   naming policies, and browser smoke asserts concrete policy paths render on
   `/rules`.
 
+## Implemented Slice 20
+
+- Added `GET/PUT /api/wiki/rules/file` as the human Rules Studio edit path for
+  allowlisted rule files.
+- The backend only accepts root `AGENTS.md` / `CLAUDE.md`, schema guidance,
+  `schema/purpose-lenses.yml`, existing `schema/templates/*.md`, and existing
+  `schema/policies/*.md`; absolute paths, parent traversal, unknown files, and
+  empty content are rejected.
+- Rules Studio now includes a `Rule file editor` section with a file selector,
+  CodeMirror editing, save/cancel controls, and Git query invalidation after a
+  successful save.
+- Browser smoke now edits `schema/policies/naming.md` through the real API and
+  asserts the Rules Studio editor surface renders.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

@@ -25,7 +25,7 @@
  *   - Left-pane file tree of AGENTS.md / templates/ / policies/
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
@@ -42,12 +42,19 @@ import {
 import {
   getGuidanceFiles,
   getPolicyFiles,
+  getRulesFile,
   getSchemaTemplates,
   getVaultGitStatus,
   getWikiSchema,
+  putRulesFile,
   putWikiSchema,
 } from "@/api/wiki/repository";
-import type { GuidanceFileInfo, PolicyFileInfo, SchemaTemplate } from "@/api/wiki/types";
+import type {
+  GuidanceFileInfo,
+  PolicyFileInfo,
+  RulesFileContent,
+  SchemaTemplate,
+} from "@/api/wiki/types";
 import { Button } from "@/components/ui/button";
 import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 
@@ -68,6 +75,11 @@ function rulesGitStatusLabel(
   if (!git.initialized) return "Git 未启用";
   if (git.dirty) return `${git.changed_count} 改动待 checkpoint`;
   return "当前 clean";
+}
+
+interface RuleFileOption {
+  path: string;
+  label: string;
 }
 
 export function SchemaEditorPage() {
@@ -101,7 +113,36 @@ export function SchemaEditorPage() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [selectedRulesPath, setSelectedRulesPath] = useState("schema/CLAUDE.md");
+  const [isRulesFileEditing, setIsRulesFileEditing] = useState(false);
+  const [rulesFileDraft, setRulesFileDraft] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const ruleFileOptions = useMemo<RuleFileOption[]>(() => {
+    const options = new Map<string, string>();
+    for (const file of guidanceQuery.data?.files ?? []) {
+      options.set(file.relative_path, file.label);
+    }
+    for (const template of templatesQuery.data ?? []) {
+      const path = `schema/templates/${template.category}.md`;
+      options.set(path, `Template · ${template.display_name}`);
+    }
+    for (const file of policiesQuery.data?.files ?? []) {
+      options.set(file.relative_path, `Policy · ${file.label}`);
+    }
+    if (!options.has("schema/CLAUDE.md")) {
+      options.set("schema/CLAUDE.md", "Schema CLAUDE.md");
+    }
+    return Array.from(options, ([path, label]) => ({ path, label })).sort((a, b) =>
+      a.path.localeCompare(b.path),
+    );
+  }, [guidanceQuery.data?.files, policiesQuery.data?.files, templatesQuery.data]);
+
+  const rulesFileQuery = useQuery({
+    queryKey: ["wiki", "rules", "file", selectedRulesPath] as const,
+    queryFn: () => getRulesFile(selectedRulesPath),
+    staleTime: 30_000,
+  });
 
   // Reset draft whenever fresh server data arrives and we're not
   // mid-edit (so Save+refetch ends up showing the new content
@@ -112,12 +153,32 @@ export function SchemaEditorPage() {
     }
   }, [schemaQuery.data, isEditing]);
 
+  useEffect(() => {
+    if (!isRulesFileEditing && rulesFileQuery.data) {
+      setRulesFileDraft(rulesFileQuery.data.content);
+    }
+  }, [rulesFileQuery.data, isRulesFileEditing]);
+
   const saveMutation = useMutation({
     mutationFn: (content: string) => putWikiSchema(content),
     onSuccess: () => {
       setIsEditing(false);
       setSavedAt(Date.now());
       void queryClient.invalidateQueries({ queryKey: ["wiki", "schema"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
+
+  const saveRulesFileMutation = useMutation({
+    mutationFn: () => putRulesFile(selectedRulesPath, rulesFileDraft),
+    onSuccess: () => {
+      setIsRulesFileEditing(false);
+      setSavedAt(Date.now());
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "rules", "file"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "schema"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "schema", "templates"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "guidance"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "policies"] });
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
   });
@@ -141,6 +202,34 @@ export function SchemaEditorPage() {
   const handleSave = () => {
     if (draft.trim().length === 0) return;
     saveMutation.mutate(draft);
+  };
+
+  const handleSelectedRulesPathChange = (path: string) => {
+    setSelectedRulesPath(path);
+    setIsRulesFileEditing(false);
+    saveRulesFileMutation.reset();
+  };
+
+  const handleEditRulesFile = () => {
+    if (rulesFileQuery.data) {
+      setRulesFileDraft(rulesFileQuery.data.content);
+      setIsRulesFileEditing(true);
+      setSavedAt(null);
+      saveRulesFileMutation.reset();
+    }
+  };
+
+  const handleCancelRulesFile = () => {
+    if (rulesFileQuery.data) {
+      setRulesFileDraft(rulesFileQuery.data.content);
+    }
+    setIsRulesFileEditing(false);
+    saveRulesFileMutation.reset();
+  };
+
+  const handleSaveRulesFile = () => {
+    if (rulesFileDraft.trim().length === 0) return;
+    saveRulesFileMutation.mutate();
   };
 
   return (
@@ -185,6 +274,19 @@ export function SchemaEditorPage() {
             templates={templatesQuery.data ?? []}
             guidanceFiles={guidanceQuery.data?.files ?? []}
             policyFiles={policiesQuery.data?.files ?? []}
+            ruleFileOptions={ruleFileOptions}
+            selectedRulesPath={selectedRulesPath}
+            selectedRulesFile={rulesFileQuery.data ?? null}
+            isRulesFileLoading={rulesFileQuery.isLoading}
+            isRulesFileEditing={isRulesFileEditing}
+            rulesFileDraft={rulesFileDraft}
+            onSelectedRulesPathChange={handleSelectedRulesPathChange}
+            onEditRulesFile={handleEditRulesFile}
+            onCancelRulesFile={handleCancelRulesFile}
+            onSaveRulesFile={handleSaveRulesFile}
+            onRulesFileDraftChange={setRulesFileDraft}
+            rulesFileSaveError={(saveRulesFileMutation.error as Error | null)?.message ?? null}
+            isRulesFileSaving={saveRulesFileMutation.isPending}
             gitStatus={rulesGitStatusLabel(gitQuery.data, Boolean(gitQuery.error))}
             isEditing={isEditing}
             draft={draft}
@@ -211,6 +313,19 @@ interface SchemaBodyProps {
   templates: SchemaTemplate[];
   guidanceFiles: GuidanceFileInfo[];
   policyFiles: PolicyFileInfo[];
+  ruleFileOptions: RuleFileOption[];
+  selectedRulesPath: string;
+  selectedRulesFile: RulesFileContent | null;
+  isRulesFileLoading: boolean;
+  isRulesFileEditing: boolean;
+  rulesFileDraft: string;
+  onSelectedRulesPathChange: (path: string) => void;
+  onEditRulesFile: () => void;
+  onCancelRulesFile: () => void;
+  onSaveRulesFile: () => void;
+  onRulesFileDraftChange: (content: string) => void;
+  rulesFileSaveError: string | null;
+  isRulesFileSaving: boolean;
   gitStatus: string;
   isEditing: boolean;
   draft: string;
@@ -232,6 +347,19 @@ function SchemaBody({
   templates,
   guidanceFiles,
   policyFiles,
+  ruleFileOptions,
+  selectedRulesPath,
+  selectedRulesFile,
+  isRulesFileLoading,
+  isRulesFileEditing,
+  rulesFileDraft,
+  onSelectedRulesPathChange,
+  onEditRulesFile,
+  onCancelRulesFile,
+  onSaveRulesFile,
+  onRulesFileDraftChange,
+  rulesFileSaveError,
+  isRulesFileSaving,
   gitStatus,
   isEditing,
   draft,
@@ -355,6 +483,96 @@ function SchemaBody({
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className="rounded-md border border-border/50 bg-card px-4 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[14px] font-medium text-foreground">Rule file editor</h2>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              只允许编辑 root guidance、schema guidance、templates 与 policies 白名单文件。
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedRulesPath}
+              onChange={(event) => onSelectedRulesPathChange(event.target.value)}
+              disabled={isRulesFileEditing || isRulesFileSaving}
+              className="h-8 rounded-md border border-border bg-background px-2 text-[12px] text-foreground"
+              aria-label="Select Rules Studio file"
+            >
+              {ruleFileOptions.map((option) => (
+                <option key={option.path} value={option.path}>
+                  {option.path}
+                </option>
+              ))}
+            </select>
+            {isRulesFileEditing ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onCancelRulesFile}
+                  disabled={isRulesFileSaving}
+                >
+                  <X className="size-3" />
+                  Cancel
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={onSaveRulesFile}
+                  disabled={isRulesFileSaving || rulesFileDraft.trim().length === 0}
+                >
+                  {isRulesFileSaving ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Save className="size-3" />
+                  )}
+                  保存
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={onEditRulesFile}
+                disabled={isRulesFileLoading || !selectedRulesFile}
+              >
+                <Pencil className="size-3" />
+                编辑选中文件
+              </Button>
+            )}
+          </div>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+          <div className="flex items-center justify-between gap-3 border-b border-border/40 px-3 py-2">
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {selectedRulesFile?.relative_path ?? selectedRulesPath}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {selectedRulesFile ? `${selectedRulesFile.byte_size} bytes` : "loading"}
+            </span>
+          </div>
+          {isRulesFileEditing ? (
+            <CodeMirrorEditor
+              value={rulesFileDraft}
+              onChange={onRulesFileDraftChange}
+              language={selectedRulesPath.endsWith(".yml") ? "yaml" : "markdown"}
+              minHeight="360px"
+              ariaLabel="Rules Studio selected file CodeMirror editor"
+            />
+          ) : (
+            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap px-4 py-3 font-mono text-[12px] leading-5 text-foreground/90">
+              {isRulesFileLoading ? "Loading selected rules file..." : selectedRulesFile?.content}
+            </pre>
+          )}
+        </div>
+        {rulesFileSaveError ? (
+          <div className="mt-3 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-[12px] text-[var(--color-error)]">
+            {rulesFileSaveError}
+          </div>
+        ) : null}
       </div>
 
       {/* Path card */}

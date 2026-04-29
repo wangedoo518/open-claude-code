@@ -27,6 +27,8 @@ import type {
   RawDetailResponse,
   RawEntry,
   RawListResponse,
+  RulesFileContent,
+  RulesFileWriteResponse,
   SchemaResponse,
   SchemaTemplate,
   UpdateProposal,
@@ -413,6 +415,24 @@ export async function getGuidanceFiles(): Promise<GuidanceFilesResponse> {
 /** GET `/api/wiki/policies` — schema policy file status for Rules Studio. */
 export async function getPolicyFiles(): Promise<PolicyFilesResponse> {
   return fetchJson<PolicyFilesResponse>("/api/wiki/policies");
+}
+
+/** GET `/api/wiki/rules/file?path=` — read one editable Rules Studio file. */
+export async function getRulesFile(path: string): Promise<RulesFileContent> {
+  const params = new URLSearchParams();
+  params.set("path", path);
+  return fetchJson<RulesFileContent>(`/api/wiki/rules/file?${params.toString()}`);
+}
+
+/** PUT `/api/wiki/rules/file` — overwrite one allowlisted Rules Studio file. */
+export async function putRulesFile(
+  path: string,
+  content: string,
+): Promise<RulesFileWriteResponse> {
+  return fetchJson<RulesFileWriteResponse>("/api/wiki/rules/file", {
+    method: "PUT",
+    body: JSON.stringify({ path, content }),
+  });
 }
 
 /**

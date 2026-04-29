@@ -615,6 +615,69 @@ pub(crate) struct PutSchemaRequest {
     content: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct RulesFileQuery {
+    path: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PutRulesFileRequest {
+    path: String,
+    content: String,
+}
+
+pub(crate) async fn get_rules_file_handler(
+    Query(query): Query<RulesFileQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let file = wiki_store::read_rules_file_content(&paths, &query.path).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("rules file read failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(&file).unwrap_or_else(|_| serde_json::json!({ "ok": false })),
+    ))
+}
+
+pub(crate) async fn put_rules_file_handler(
+    Json(body): Json<PutRulesFileRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let file = wiki_store::overwrite_rules_file_content(&paths, &body.path, &body.content)
+        .map_err(|e| {
+            let status = match e {
+                wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: format!("rules file write failed: {e}"),
+                }),
+            )
+        })?;
+
+    if let Err(e) = wiki_store::append_wiki_log(&paths, "edit-rules-file", &file.relative_path) {
+        eprintln!("put_rules_file: file written but log append failed: {e}");
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "relative_path": file.relative_path,
+        "file_path": file.file_path,
+        "content": file.content,
+        "byte_size": file.byte_size,
+    })))
+}
+
 /// `GET /api/wiki/pages/{slug}/backlinks` (feat Q)
 ///
 /// Return every concept page that contains a markdown link to

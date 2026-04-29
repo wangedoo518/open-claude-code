@@ -68,6 +68,10 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/wiki/schema",
             get(get_wiki_schema_handler).put(put_wiki_schema_handler),
         )
+        .route(
+            "/api/wiki/rules/file",
+            get(get_rules_file_handler).put(put_rules_file_handler),
+        )
         .route("/api/wiki/graph", get(get_wiki_graph_handler))
         .route(
             "/api/wiki/pages/{slug}/backlinks",

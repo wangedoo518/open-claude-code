@@ -2043,6 +2043,104 @@ pub fn overwrite_schema_claude_md(paths: &WikiPaths, content: &str) -> Result<()
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RulesFileContent {
+    pub relative_path: String,
+    pub file_path: String,
+    pub content: String,
+    pub byte_size: usize,
+}
+
+pub fn read_rules_file_content(paths: &WikiPaths, relative_path: &str) -> Result<RulesFileContent> {
+    let (relative_path, target) = resolve_editable_rules_file_path(paths, relative_path)?;
+    if !target.is_file() {
+        return Err(WikiStoreError::Invalid(format!(
+            "rules file does not exist: {relative_path}"
+        )));
+    }
+    let content = fs::read_to_string(&target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+    Ok(RulesFileContent {
+        relative_path,
+        file_path: target.to_string_lossy().to_string(),
+        byte_size: content.len(),
+        content,
+    })
+}
+
+pub fn overwrite_rules_file_content(
+    paths: &WikiPaths,
+    relative_path: &str,
+    content: &str,
+) -> Result<RulesFileContent> {
+    if content.trim().is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "rules file content must not be empty".to_string(),
+        ));
+    }
+    let (relative_path, target) = resolve_editable_rules_file_path(paths, relative_path)?;
+    if !target.is_file() {
+        return Err(WikiStoreError::Invalid(format!(
+            "rules file does not exist: {relative_path}"
+        )));
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| WikiStoreError::io(parent.to_path_buf(), e))?;
+    }
+    let tmp = target.with_file_name(format!(
+        "{}.tmp",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("rules-file")
+    ));
+    fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+    Ok(RulesFileContent {
+        relative_path,
+        file_path: target.to_string_lossy().to_string(),
+        content: content.to_string(),
+        byte_size: content.len(),
+    })
+}
+
+fn resolve_editable_rules_file_path(
+    paths: &WikiPaths,
+    relative_path: &str,
+) -> Result<(String, PathBuf)> {
+    let relative_path = normalize_rules_relative_path(relative_path)?;
+    let parts: Vec<&str> = relative_path.split('/').collect();
+    let allowed = match parts.as_slice() {
+        ["AGENTS.md"] | ["CLAUDE.md"] => true,
+        ["schema", "AGENTS.md"] | ["schema", "CLAUDE.md"] | ["schema", "purpose-lenses.yml"] => {
+            true
+        }
+        ["schema", "templates", file] | ["schema", "policies", file] => {
+            file.ends_with(".md") && !file.starts_with('.')
+        }
+        _ => false,
+    };
+    if !allowed {
+        return Err(WikiStoreError::Invalid(format!(
+            "rules file is not editable: {relative_path}"
+        )));
+    }
+    Ok((relative_path.clone(), paths.root.join(relative_path)))
+}
+
+fn normalize_rules_relative_path(relative_path: &str) -> Result<String> {
+    let trimmed = relative_path.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.contains('\\')
+        || trimmed.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(WikiStoreError::Invalid(format!(
+            "invalid rules file path: {relative_path}"
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
 /// Returns the bytes of the canonical `schema/CLAUDE.md` template that
 /// `init_wiki` writes on first run. Exposed so other crates can show it
 /// in onboarding screens or "reset to defaults" actions without having
@@ -7738,6 +7836,36 @@ mod tests {
             "---\ntype: concept\nstatus: active\npurpose:\n  - Research Space\n---\nBody",
         )
         .unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+    }
+
+    #[test]
+    fn rules_file_content_read_and_write_is_allowlisted() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let current = read_rules_file_content(&paths, "schema/policies/naming.md").unwrap();
+        assert!(current.content.contains("Naming Policy"));
+
+        let next = format!("{}\n<!-- rules smoke -->\n", current.content);
+        let written =
+            overwrite_rules_file_content(&paths, "schema/policies/naming.md", &next).unwrap();
+        assert_eq!(written.relative_path, "schema/policies/naming.md");
+        assert!(written.content.contains("rules smoke"));
+
+        let reread = read_rules_file_content(&paths, "schema/policies/naming.md").unwrap();
+        assert!(reread.content.contains("rules smoke"));
+
+        let err = overwrite_rules_file_content(&paths, "../AGENTS.md", "bad").unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        let err = overwrite_rules_file_content(&paths, "raw/scratch.md", "bad").unwrap_err();
+        assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        let err =
+            overwrite_rules_file_content(&paths, "schema/templates/new-template.md", "bad")
+                .unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
     }
 
