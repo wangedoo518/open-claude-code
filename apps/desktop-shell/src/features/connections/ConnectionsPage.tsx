@@ -266,6 +266,7 @@ export function ConnectionsPage() {
   const selectedHunks = selectedDiffSection?.hunks ?? EMPTY_HUNKS;
   const selectedHunk =
     selectedHunkIndex === null ? null : selectedHunks[selectedHunkIndex] ?? null;
+  const previewHunks = selectedHunk ? [selectedHunk] : selectedHunks;
   const selectedLineStats = useMemo(() => {
     const lines = selectedHunk
       ? selectedHunk.lines
@@ -617,9 +618,23 @@ export function ConnectionsPage() {
                       </div>
                     </div>
                   </div>
-                  <pre className="max-h-44 overflow-auto whitespace-pre-wrap px-3 py-3 text-[11px] leading-5 text-muted-foreground">
-                    {diffPreviewText}
-                  </pre>
+                  {diffQuery.isFetching || !previewHunks.length ? (
+                    <pre className="max-h-44 overflow-auto whitespace-pre-wrap px-3 py-3 text-[11px] leading-5 text-muted-foreground">
+                      {diffPreviewText}
+                    </pre>
+                  ) : (
+                    <div className="max-h-44 overflow-auto bg-card/40 text-[11px]">
+                      {previewHunks.map((hunk, index) => (
+                        <DiffHunkBlock
+                          key={`${hunk.header}-${index}`}
+                          hunk={hunk}
+                          index={
+                            selectedHunkIndex === null ? index : selectedHunkIndex
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
                   {diffSections.length ? (
                     <div className="space-y-1 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
                       <div className="flex flex-wrap items-center gap-2">
@@ -964,6 +979,58 @@ function diffLineMarker(kind: string): string {
   if (kind === "add") return "+";
   if (kind === "remove") return "-";
   return " ";
+}
+
+function DiffHunkBlock({ hunk, index }: { hunk: VaultGitDiffHunk; index: number }) {
+  return (
+    <div className="border-b border-border/60 last:border-b-0">
+      <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+        <span className="rounded border border-border/60 bg-background px-1.5 py-0.5">
+          H{index + 1}
+        </span>
+        <span className="min-w-0 truncate">{hunk.header}</span>
+      </div>
+      <div className="font-mono">
+        {hunk.lines.map((line, lineIndex) => (
+          <DiffLineRow
+            key={`${line.kind}-${line.old_line ?? ""}-${line.new_line ?? ""}-${lineIndex}`}
+            line={line}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiffLineRow({ line }: { line: VaultGitDiffLine }) {
+  return (
+    <div
+      className={`grid grid-cols-[42px_42px_20px_minmax(0,1fr)] border-t border-border/30 leading-5 ${diffLineClass(line.kind)}`}
+    >
+      <span className="select-none border-r border-border/40 px-2 text-right text-muted-foreground">
+        {line.old_line ?? ""}
+      </span>
+      <span className="select-none border-r border-border/40 px-2 text-right text-muted-foreground">
+        {line.new_line ?? ""}
+      </span>
+      <span className="select-none px-1 text-center text-muted-foreground">
+        {diffLineMarker(line.kind)}
+      </span>
+      <code className="min-w-0 whitespace-pre-wrap break-words pr-3">
+        {line.text || " "}
+      </code>
+    </div>
+  );
+}
+
+function diffLineClass(kind: string): string {
+  if (kind === "add") {
+    return "bg-[color:var(--color-diff-added)]/15 text-[color:var(--color-diff-added-word)]";
+  }
+  if (kind === "remove") {
+    return "bg-[color:var(--color-diff-removed)]/15 text-[color:var(--color-diff-removed-word)]";
+  }
+  return "bg-background/70";
 }
 
 function GitAuditRow({ entry }: { entry: VaultGitAuditEntry }) {

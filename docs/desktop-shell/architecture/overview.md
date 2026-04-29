@@ -29,6 +29,9 @@ This document answers: how `desktop-shell` is currently organized.
 - `apps/desktop-shell/src/shell/BuddyStatusBar.tsx` is the global shell status
   bar for health, Inbox, Git/Vault, permission mode, and external-AI write
   posture.
+- `apps/desktop-shell/src/features/connections/ConnectionsPage.tsx` owns the
+  Buddy Vault Git operator surface, including structured hunk/line diff review,
+  checkpointing, remote sync, discard controls, and local Git audit display.
 - Knowledge and Rules receive a Tolaria-style 250px secondary sidebar from
   `apps/desktop-shell/src/shell/Sidebar.tsx`.
 - Feature modules own UI and feature-specific orchestration.

@@ -162,6 +162,15 @@ Tolaria-inspired Buddy design.
   the hunk-discard API, and Rust coverage verifies audit entries do not dirty
   the Vault.
 
+## Implemented Slice 11
+
+- Connections now renders hunk/line metadata as a structured diff table with
+  old/new line numbers, hunk headers, and add/remove/context styling backed by
+  the existing diff design tokens.
+- Raw patch text remains the fallback for loading, empty, or metadata-free
+  sections, so the UI degrades safely if a future diff source cannot be parsed
+  into hunks.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
