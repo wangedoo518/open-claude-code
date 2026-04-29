@@ -492,6 +492,18 @@ export async function discardVaultGitPath(path: string): Promise<VaultGitDiscard
   });
 }
 
+/** POST `/api/wiki/git/discard-hunk` — discard one tracked unstaged hunk. */
+export async function discardVaultGitHunk(request: {
+  path: string;
+  hunk_index: number;
+  hunk_header?: string;
+}): Promise<VaultGitDiscardResult> {
+  return fetchJson<VaultGitDiscardResult>("/api/wiki/git/discard-hunk", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
 /** GET `/api/wiki/external-ai/write-policy` — controlled-write grants. */
 export async function getExternalAiWritePolicy(): Promise<ExternalAiWritePolicy> {
   return fetchJson<ExternalAiWritePolicy>("/api/wiki/external-ai/write-policy");

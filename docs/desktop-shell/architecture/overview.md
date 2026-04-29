@@ -98,17 +98,20 @@ This document answers: how `desktop-shell` is currently organized.
   `GET /api/wiki/git/status`, `GET /api/wiki/git/diff`, and
   `POST /api/wiki/git/commit`, `POST /api/wiki/git/pull`, and
   `POST /api/wiki/git/push`, `POST /api/wiki/git/remote`, and
-  `POST /api/wiki/git/discard` wrap `wiki_store::vault_git_*` helpers for live
-  status, diff preview, checkpoint commits, remote synchronization, remote
-  setup, and single-path discard. Diff previews return a combined patch plus
+  `POST /api/wiki/git/discard`, and `POST /api/wiki/git/discard-hunk` wrap
+  `wiki_store::vault_git_*` helpers for live status, diff preview, checkpoint
+  commits, remote synchronization, remote setup, single-path discard, and
+  tracked unstaged hunk discard. Diff previews return a combined patch plus
   file-level sections, including staged tracked changes and unstaged untracked
   files. Sections include hunk and line metadata so the UI can inspect
-  add/remove/context ranges without reparsing raw patches. Remote sync requires
-  a clean Vault; pull is fast-forward-only and push establishes upstream on
-  first use. Status responses may include the preferred remote name and a
-  redacted remote URL; Buddy never echoes plaintext URL credentials back to the
-  UI. Discard only accepts paths already reported by Git status and rejects
-  absolute or parent-traversing paths.
+  add/remove/context ranges without reparsing raw patches. Hunk discard is
+  server-validated against the current diff and uses reverse Git patch apply
+  after a dry-run check; it does not accept arbitrary client-supplied patches.
+  Remote sync requires a clean Vault; pull is fast-forward-only and push
+  establishes upstream on first use. Status responses may include the preferred
+  remote name and a redacted remote URL; Buddy never echoes plaintext URL
+  credentials back to the UI. Discard only accepts paths already reported by Git
+  status and rejects absolute or parent-traversing paths.
 - External AI controlled-write authorization is stored under
   `.clawwiki/external-ai-write-policy.json`. The desktop server exposes
   `GET /api/wiki/external-ai/write-policy`,

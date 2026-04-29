@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addExternalAiWriteGrant,
   commitVaultGit,
+  discardVaultGitHunk,
   discardVaultGitPath,
   getExternalAiWritePolicy,
   getVaultGitDiff,
@@ -189,6 +190,16 @@ export function ConnectionsPage() {
     mutationFn: discardVaultGitPath,
     onSuccess: (result) => {
       setSelectedDiffKey(null);
+      setSelectedHunkIndex(null);
+      setSyncMessage(result.summary);
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
+  const discardHunkMutation = useMutation({
+    mutationFn: discardVaultGitHunk,
+    onSuccess: (result) => {
+      setSelectedHunkIndex(null);
       setSyncMessage(result.summary);
       queryClient.setQueryData(["wiki", "git", "connections"], result.status);
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
@@ -252,6 +263,9 @@ export function ConnectionsPage() {
     : selectedDiffSection?.diff ||
       diffQuery.data?.diff ||
       (diffStaged ? "No staged diff." : git?.dirty ? "No unstaged diff." : "No diff.");
+  const canDiscardSelectedHunk = Boolean(
+    selectedDiffSection?.kind === "tracked" && selectedHunk && !diffStaged,
+  );
   const canSetRemote = Boolean(git?.git_available && git.initialized && remoteUrl.trim());
   const canRemoteSync = Boolean(
     git?.git_available && git.initialized && git.remote_connected && !git.dirty,
@@ -305,6 +319,27 @@ export function ConnectionsPage() {
     const confirmed = window.confirm(`丢弃 ${selectedDiffSection.path} 的未提交改动？`);
     if (!confirmed) return;
     discardMutation.mutate(selectedDiffSection.path);
+  }
+
+  function handleDiscardSelectedHunk() {
+    if (
+      !selectedDiffSection ||
+      !selectedHunk ||
+      selectedHunkIndex === null ||
+      !canDiscardSelectedHunk ||
+      discardHunkMutation.isPending
+    ) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `只丢弃 ${selectedDiffSection.path} 的 H${selectedHunkIndex + 1}？`,
+    );
+    if (!confirmed) return;
+    discardHunkMutation.mutate({
+      path: selectedDiffSection.path,
+      hunk_index: selectedHunkIndex,
+      hunk_header: selectedHunk.header,
+    });
   }
 
   function handleSessionGrant() {
@@ -510,6 +545,24 @@ export function ConnectionsPage() {
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         type="button"
+                        onClick={handleDiscardSelectedHunk}
+                        disabled={!canDiscardSelectedHunk || discardHunkMutation.isPending}
+                        title={
+                          canDiscardSelectedHunk
+                            ? "Discard selected unstaged hunk"
+                            : "选择未暂存 tracked hunk 后可用"
+                        }
+                        className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {discardHunkMutation.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                        丢弃 Hunk
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleDiscardSelectedPath}
                         disabled={!selectedDiffSection || discardMutation.isPending}
                         className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
@@ -634,10 +687,12 @@ export function ConnectionsPage() {
                       ) : null}
                     </div>
                   ) : null}
-                  {discardMutation.error && (
+                  {(discardMutation.error || discardHunkMutation.error) && (
                     <p className="border-t border-border/60 px-3 py-2 text-[11px] leading-5 text-[var(--color-warning)]">
                       {discardMutation.error instanceof Error
                         ? discardMutation.error.message
+                        : discardHunkMutation.error instanceof Error
+                          ? discardHunkMutation.error.message
                         : "Discard failed"}
                     </p>
                   )}

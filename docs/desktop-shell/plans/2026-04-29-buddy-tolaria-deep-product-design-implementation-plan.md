@@ -122,6 +122,20 @@ Tolaria-inspired Buddy design.
 - Rust coverage now verifies tracked edits and untracked previews expose
   line-level metadata.
 
+## Implemented Slice 8
+
+- Added `POST /api/wiki/git/discard-hunk` for discarding one tracked,
+  unstaged Buddy Vault diff hunk.
+- Hunk discard validates the path, requires the path to be dirty and tracked,
+  finds the requested hunk in the current server-side diff, checks the optional
+  hunk header for staleness, then runs `git apply --reverse --check` before
+  applying the reverse patch.
+- Connections now exposes a separate `丢弃 Hunk` action only when an individual
+  unstaged tracked hunk is selected; file-level discard remains available as
+  the broader rollback operation.
+- Rust coverage now verifies selected-hunk discard preserves other hunks in the
+  same file and rejects untracked or stale hunk requests.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -132,5 +146,6 @@ Tolaria-inspired Buddy design.
 
 ## Future Hardening
 
-- Add line-level patch apply/discard after hunk review, conflict behavior,
-  confirmation copy, and dogfood feedback are mature enough for mutation.
+- Add line-level patch apply/discard after hunk-level discard has enough
+  reviewer and dogfood feedback. Keep partial-line and staged-hunk mutation out
+  of scope until conflict behavior and rollback tests are explicit.

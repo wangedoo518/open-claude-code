@@ -46,8 +46,10 @@ design, tests, review discipline, or documentation.
   reported by Git status, require an explicit user confirmation in UI, and keep
   line-level patch mutation behind a separate reviewed interaction model.
 - Buddy Vault diff previews may expose hunk/line metadata for review and
-  selection. Treat those selections as read-only until a separate mutation
-  design defines conflict handling, confirmation language, and rollback tests.
+  selection. Hunk discard is allowed only for tracked unstaged changes, must be
+  confirmed in UI, and must be server-validated against the current diff before
+  reverse patch application. Keep line-level, staged-hunk, and partial-line
+  mutation behind a separate reviewed interaction model.
 - When copying Tolaria source, include provenance, license preservation, tests,
   and documentation in the same main-only slice.
 
