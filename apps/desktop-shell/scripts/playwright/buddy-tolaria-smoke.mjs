@@ -25,6 +25,7 @@ const routes = [
       "最近表达",
       "ask:smoke-session",
       "来源可追溯",
+      "来源线索",
       "最近 Git 操作",
     ],
     check: async (page) => {

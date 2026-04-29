@@ -500,6 +500,18 @@ Tolaria-inspired Buddy design.
 - Browser smoke now exercises the real Source filter select and verifies the
   hash route carries `source=sourced` before searching by a seeded source ref.
 
+## Implemented Slice 38
+
+- Home/Pulse now treats missing source lineage as an actionable health risk:
+  pages without `source_refs` or `source_raw_id` contribute to the headline risk
+  count.
+- The Top 3 action list now includes `补齐 N 页来源线索` when missing-source
+  pages exist, linking directly to `/wiki?source=missing`.
+- This complements the positive `来源可追溯` metric: Home now shows both
+  traceable knowledge and the cleanup queue needed to improve lineage quality.
+- Browser smoke now requires the Home/Pulse route to render the source-lineage
+  follow-up text in the real seeded Vault.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

@@ -108,6 +108,10 @@ export function DashboardPage() {
     () => (pagesQuery.data?.pages ?? []).filter(hasSourceLineage).length,
     [pagesQuery.data?.pages],
   );
+  const missingSourceCount = useMemo(
+    () => Math.max(0, (pagesQuery.data?.pages ?? []).length - sourcedPageCount),
+    [pagesQuery.data?.pages, sourcedPageCount],
+  );
   const recentExpressions = useMemo(
     () => buildRecentExpressions(pagesQuery.data?.pages ?? []),
     [pagesQuery.data?.pages],
@@ -124,6 +128,13 @@ export function DashboardPage() {
           ? {
               label: `审阅 ${pendingInbox} 条待整理建议`,
               href: "/inbox",
+              tone: "warning" as const,
+            }
+          : null,
+        missingSourceCount > 0
+          ? {
+              label: `补齐 ${missingSourceCount} 页来源线索`,
+              href: "/wiki?source=missing",
               tone: "warning" as const,
             }
           : null,
@@ -158,11 +169,20 @@ export function DashboardPage() {
         href: string;
         tone: "warning" | "neutral";
       }>,
-    [git?.changed_count, git?.dirty, orphanPages, pendingInbox, schemaViolations, stalePages],
+    [
+      git?.changed_count,
+      git?.dirty,
+      missingSourceCount,
+      orphanPages,
+      pendingInbox,
+      schemaViolations,
+      stalePages,
+    ],
   );
 
   const gitRisk = git?.dirty ? git.changed_count : 0;
-  const totalRisks = pendingInbox + schemaViolations + stalePages + orphanPages + gitRisk;
+  const totalRisks =
+    pendingInbox + schemaViolations + stalePages + orphanPages + missingSourceCount + gitRisk;
   const isLoading =
     statsQuery.isLoading ||
     inboxQuery.isLoading ||
