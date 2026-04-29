@@ -136,6 +136,18 @@ Tolaria-inspired Buddy design.
 - Rust coverage now verifies selected-hunk discard preserves other hunks in the
   same file and rejects untracked or stale hunk requests.
 
+## Implemented Slice 9
+
+- Expanded the Buddy Tolaria browser smoke with a real Buddy Vault hunk-discard
+  API exercise before UI navigation.
+- The smoke now creates a tracked fixture, checkpoints it, creates two
+  separated hunks, discards only the first hunk through
+  `POST /api/wiki/git/discard-hunk`, and verifies the unrelated hunk remains
+  on disk.
+- This keeps the Git quality loop closer to Tolaria discipline: mutation
+  endpoints must be covered both by Rust unit tests and by the real
+  desktop-server/Vite smoke path.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

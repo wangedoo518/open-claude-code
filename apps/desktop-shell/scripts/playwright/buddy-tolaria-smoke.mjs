@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { chromium } from "@playwright/test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ErrorCollector } from "./lib/error-collector.mjs";
 
@@ -9,6 +9,7 @@ const BASE_URL = process.env.BUDDY_SMOKE_URL ?? "http://127.0.0.1:5173/";
 const API_BASE = process.env.BUDDY_API_BASE ?? "http://127.0.0.1:4357";
 const HEADLESS = process.env.BUDDY_HEADLESS !== "false";
 const SMOKE_SLUG = "smoke-edit-page";
+const HUNK_SMOKE_PATH = "wiki/concepts/smoke-hunk-discard.md";
 
 const routes = [
   {
@@ -99,6 +100,79 @@ Original smoke body.
   );
 }
 
+function hunkSmokeBody(topLine, bottomLine) {
+  const lines = [];
+  for (let lineNumber = 1; lineNumber <= 80; lineNumber += 1) {
+    if (lineNumber === 2) {
+      lines.push(topLine);
+    } else if (lineNumber === 70) {
+      lines.push(bottomLine);
+    } else {
+      lines.push(`line ${String(lineNumber).padStart(2, "0")}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function fetchJson(pathname, options) {
+  const request = options
+    ? {
+        ...options,
+        headers: {
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+          ...(options.headers ?? {}),
+        },
+      }
+    : undefined;
+  const response = await fetch(`${API_BASE}${pathname}`, request);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${pathname} failed: ${response.status} ${body}`);
+  }
+  return response.json();
+}
+
+async function runGitHunkDiscardCheck() {
+  const status = await fetchJson("/api/wiki/git/status");
+  const absolutePath = path.join(status.vault_path, HUNK_SMOKE_PATH);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, hunkSmokeBody("line 02", "line 70"), "utf8");
+
+  await fetchJson("/api/wiki/git/commit", {
+    method: "POST",
+    body: JSON.stringify({ message: "Smoke hunk discard baseline" }),
+  });
+
+  await writeFile(
+    absolutePath,
+    hunkSmokeBody("line 02 changed", "line 70 changed"),
+    "utf8",
+  );
+
+  const diff = await fetchJson("/api/wiki/git/diff");
+  const section = diff.sections.find((candidate) => candidate.path === HUNK_SMOKE_PATH);
+  if (!section || section.hunks.length < 2) {
+    throw new Error(`hunk discard smoke expected at least 2 hunks for ${HUNK_SMOKE_PATH}`);
+  }
+
+  await fetchJson("/api/wiki/git/discard-hunk", {
+    method: "POST",
+    body: JSON.stringify({
+      path: HUNK_SMOKE_PATH,
+      hunk_index: 0,
+      hunk_header: section.hunks[0].header,
+    }),
+  });
+
+  const content = await readFile(absolutePath, "utf8");
+  if (content.includes("line 02 changed")) {
+    throw new Error("hunk discard smoke did not restore the selected hunk");
+  }
+  if (!content.includes("line 70 changed")) {
+    throw new Error("hunk discard smoke removed an unrelated hunk");
+  }
+}
+
 async function runWikiEditCheck(page) {
   const updatedContent = `---
 type: concept
@@ -131,6 +205,7 @@ Updated smoke body from Playwright.
 
 async function run() {
   await seedWikiEditPage();
+  await runGitHunkDiscardCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const page = await browser.newPage();
