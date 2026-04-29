@@ -51,6 +51,28 @@ const CATEGORY_STYLES: Record<string, string> = {
   compare: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
 };
 
+const ALLOWED_PAGE_TYPES = new Set([
+  "concept",
+  "evergreen",
+  "people",
+  "topic",
+  "compare",
+  "personal",
+  "research",
+]);
+
+const ALLOWED_PAGE_STATUSES = new Set([
+  "active",
+  "draft",
+  "canonical",
+  "stale",
+  "deprecated",
+  "ingested",
+  "archived",
+]);
+
+const FRONTMATTER_REF_PATTERN = /^[A-Za-z0-9:_./-]+$/;
+
 function formatShortDate(value?: string | null): string | null {
   if (!value) return null;
   return value.slice(0, 10);
@@ -91,6 +113,66 @@ interface DraftValidation {
   warnings: string[];
 }
 
+function stripYamlScalar(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, "");
+}
+
+function parseInlineListValues(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const withoutBrackets = trimmed.replace(/^\[/, "").replace(/\]$/, "").trim();
+  if (!withoutBrackets) return [];
+  return withoutBrackets
+    .split(",")
+    .map(stripYamlScalar)
+    .filter(Boolean);
+}
+
+function frontmatterScalar(frontmatter: string[], key: string): string | null {
+  const prefix = `${key}:`;
+  const line = frontmatter.find(
+    (item) =>
+      !item.startsWith(" ") &&
+      !item.startsWith("\t") &&
+      item.startsWith(prefix),
+  );
+  return line ? stripYamlScalar(line.slice(prefix.length)) : null;
+}
+
+function collectFrontmatterListValues(
+  frontmatter: string[],
+  key: string,
+): string[] {
+  const values: string[] = [];
+  const prefix = `${key}:`;
+  for (let index = 0; index < frontmatter.length; index += 1) {
+    const line = frontmatter[index];
+    if (line.startsWith(" ") || line.startsWith("\t") || !line.startsWith(prefix)) {
+      continue;
+    }
+    values.push(...parseInlineListValues(line.slice(prefix.length)));
+    for (let next = index + 1; next < frontmatter.length; next += 1) {
+      const candidate = frontmatter[next];
+      if (!candidate.startsWith(" ") && !candidate.startsWith("\t")) break;
+      const item = candidate.trim().replace(/^- /, "").trim();
+      if (item) values.push(stripYamlScalar(item));
+    }
+  }
+  return values;
+}
+
+function validateReferenceValues(
+  field: "expressed_in" | "source_refs",
+  values: string[],
+  errors: string[],
+) {
+  for (const value of values) {
+    if (!FRONTMATTER_REF_PATTERN.test(value)) {
+      errors.push(`${field} 值不可用：${value}`);
+    }
+  }
+}
+
 function validateWikiDraft(content: string): DraftValidation {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -106,38 +188,45 @@ function validateWikiDraft(content: string): DraftValidation {
   const frontmatter = lines.slice(1, closingIndex);
   const required = ["type", "status", "title"];
   for (const key of required) {
-    const line = frontmatter.find((item) => item.startsWith(`${key}:`));
-    if (!line || line.slice(key.length + 1).trim().length === 0) {
+    const value = frontmatterScalar(frontmatter, key);
+    if (!value) {
       errors.push(`frontmatter 缺少 ${key}`);
     }
   }
-  const purposeValues: string[] = [];
-  for (let index = 0; index < frontmatter.length; index += 1) {
-    const line = frontmatter[index];
-    if (line.startsWith("purpose:")) {
-      const inline = line.slice("purpose:".length).trim();
-      if (inline.length > 0) {
-        inline
-          .replace(/^\[/, "")
-          .replace(/\]$/, "")
-          .split(",")
-          .map((value) => value.trim().replace(/^['"]|['"]$/g, ""))
-          .filter(Boolean)
-          .forEach((value) => purposeValues.push(value));
-      }
-      for (let next = index + 1; next < frontmatter.length; next += 1) {
-        const candidate = frontmatter[next];
-        if (!candidate.startsWith(" ") && !candidate.startsWith("\t")) break;
-        const item = candidate.trim().replace(/^- /, "").trim();
-        if (item) purposeValues.push(item.replace(/^['"]|['"]$/g, ""));
-      }
-    }
+
+  const pageType = frontmatterScalar(frontmatter, "type")?.toLowerCase();
+  if (pageType && !ALLOWED_PAGE_TYPES.has(pageType)) {
+    errors.push(`type 值不可用：${pageType}`);
   }
+  const status = frontmatterScalar(frontmatter, "status")?.toLowerCase();
+  if (status && !ALLOWED_PAGE_STATUSES.has(status)) {
+    errors.push(`status 值不可用：${status}`);
+  }
+  const schema = frontmatterScalar(frontmatter, "schema")?.toLowerCase();
+  if (schema && schema !== "v1") {
+    errors.push(`schema 暂不支持：${schema}`);
+  }
+  const sourceRawId = frontmatterScalar(frontmatter, "source_raw_id");
+  if (sourceRawId && !/^\d+$/.test(sourceRawId)) {
+    errors.push(`source_raw_id 必须是数字：${sourceRawId}`);
+  }
+
+  const purposeValues = collectFrontmatterListValues(frontmatter, "purpose");
   for (const lens of purposeValues) {
     if (!isValidPurposeLens(lens)) {
       errors.push(`purpose 值不可用：${lens}`);
     }
   }
+  validateReferenceValues(
+    "expressed_in",
+    collectFrontmatterListValues(frontmatter, "expressed_in"),
+    errors,
+  );
+  validateReferenceValues(
+    "source_refs",
+    collectFrontmatterListValues(frontmatter, "source_refs"),
+    errors,
+  );
   if (purposeValues.length === 0) {
     warnings.push("建议至少保留一个 purpose lens");
   }

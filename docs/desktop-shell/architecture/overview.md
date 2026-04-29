@@ -81,6 +81,10 @@ This document answers: how `desktop-shell` is currently organized.
 - Wiki page summaries now carry optional `expressed_in` frontmatter refs. Home
   uses them for the `最近表达` pulse, and Purpose Lens digest counts expressed
   pages separately from pages that are still ready to express.
+- Wiki direct edit accepts the full Markdown/YAML file, but both the editor
+  save panel and `PUT /api/wiki/pages/{slug}` validate schema-sensitive
+  frontmatter fields (`type`, `status`, `schema`, `source_raw_id`, `purpose`,
+  `expressed_in`, `source_refs`) before writing.
 - Ask turns with an explicit `wiki:<slug>` source binding append
   `ask:<session-id>` to that page's `expressed_in` frontmatter once per
   session. This write is local-first and intentionally leaves Buddy Vault dirty

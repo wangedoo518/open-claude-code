@@ -423,6 +423,20 @@ Tolaria-inspired Buddy design.
   answers do not crystallize, and the SSE payload preserves crystallization
   ids.
 
+## Implemented Slice 32
+
+- Wiki direct edit now treats frontmatter as fully editable but guarded:
+  `type`, `status`, `schema`, `source_raw_id`, `purpose`, `expressed_in`, and
+  `source_refs` are validated before save.
+- The frontend save panel now shows schema-aware errors for unsupported page
+  types/statuses, invalid numeric raw ids, invalid schema versions, and unsafe
+  reference values before the user can submit.
+- The backend `PUT /api/wiki/pages/{slug}` path enforces the same critical
+  field checks while preserving custom frontmatter fields, so UI bypasses still
+  cannot write broken key metadata.
+- Rust coverage verifies valid custom frontmatter with `source_refs` survives
+  and invalid critical fields are rejected.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

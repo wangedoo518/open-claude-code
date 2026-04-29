@@ -3996,6 +3996,7 @@ fn validate_wiki_page_markdown_content(content: &str) -> Result<()> {
     let mut has_status = false;
     let mut has_title = false;
     let mut collecting_purpose = false;
+    let mut collecting_reference_list = false;
 
     for line in lines.by_ref() {
         if line == "---" {
@@ -4013,17 +4014,48 @@ fn validate_wiki_page_markdown_content(content: &str) -> Result<()> {
                 collecting_purpose = false;
             }
         }
+        if collecting_reference_list {
+            if let Some(rest) = trimmed.strip_prefix("- ") {
+                validate_expressed_ref_value(rest)?;
+                continue;
+            }
+            if !line.starts_with(' ') && !line.starts_with('\t') {
+                collecting_reference_list = false;
+            }
+        }
 
         if let Some(rest) = line.strip_prefix("type:") {
-            has_type = !rest.trim().is_empty();
+            let page_type = rest.trim();
+            has_type = !page_type.is_empty();
+            if has_type {
+                validate_wiki_page_type_value(page_type)?;
+            }
         } else if let Some(rest) = line.strip_prefix("status:") {
-            has_status = !rest.trim().is_empty();
+            let status = rest.trim();
+            has_status = !status.is_empty();
+            if has_status {
+                validate_wiki_page_status_value(status)?;
+            }
         } else if let Some(rest) = line.strip_prefix("title:") {
             has_title = !rest.trim().is_empty();
+        } else if let Some(rest) = line.strip_prefix("schema:") {
+            validate_wiki_schema_value(rest)?;
+        } else if let Some(rest) = line.strip_prefix("source_raw_id:") {
+            validate_optional_u32_frontmatter_value("source_raw_id", rest)?;
         } else if let Some(rest) = line.strip_prefix("purpose:") {
             collecting_purpose = true;
             for value in normalize_inline_purpose_values(rest) {
                 validate_purpose_lens_value(&value)?;
+            }
+        } else if let Some(rest) = line.strip_prefix("expressed_in:") {
+            collecting_reference_list = true;
+            for value in normalize_inline_purpose_values(rest) {
+                validate_expressed_ref_value(&value)?;
+            }
+        } else if let Some(rest) = line.strip_prefix("source_refs:") {
+            collecting_reference_list = true;
+            for value in normalize_inline_purpose_values(rest) {
+                validate_expressed_ref_value(&value)?;
             }
         }
     }
@@ -4039,6 +4071,71 @@ fn validate_wiki_page_markdown_content(content: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn normalize_frontmatter_scalar(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase()
+}
+
+fn validate_wiki_page_type_value(raw: &str) -> Result<()> {
+    let page_type = normalize_frontmatter_scalar(raw);
+    let allowed = [
+        "concept",
+        "evergreen",
+        "people",
+        "topic",
+        "compare",
+        "personal",
+        "research",
+    ];
+    if allowed.contains(&page_type.as_str()) {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "wiki page type is not allowed: {page_type}"
+    )))
+}
+
+fn validate_wiki_page_status_value(raw: &str) -> Result<()> {
+    let status = normalize_frontmatter_scalar(raw);
+    let allowed = [
+        "active",
+        "draft",
+        "canonical",
+        "stale",
+        "deprecated",
+        "ingested",
+        "archived",
+    ];
+    if allowed.contains(&status.as_str()) {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "wiki page status is not allowed: {status}"
+    )))
+}
+
+fn validate_wiki_schema_value(raw: &str) -> Result<()> {
+    let schema = normalize_frontmatter_scalar(raw);
+    if schema.is_empty() || schema == "v1" {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "wiki page schema is not supported: {schema}"
+    )))
+}
+
+fn validate_optional_u32_frontmatter_value(field: &str, raw: &str) -> Result<()> {
+    let value = raw.trim().trim_matches('"').trim_matches('\'');
+    if value.is_empty() {
+        return Ok(());
+    }
+    value.parse::<u32>().map(|_| ()).map_err(|_| {
+        WikiStoreError::Invalid(format!("{field} must be an unsigned integer: {value}"))
+    })
 }
 
 fn normalize_inline_purpose_values(raw: &str) -> Vec<String> {
@@ -8598,16 +8695,18 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
         write_wiki_page(&paths, "editable", "Editable", "summary", "Body.", None).unwrap();
 
-        let next = "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: Editable\nsummary: Updated\npurpose:\n  - personal\n  - research\nexpressed_in:\n  - ask:session-123\ncustom_field: keep-me\ncreated_at: 2026-04-29T00:00:00Z\n---\n\nUpdated body.\n";
+        let next = "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: Editable\nsummary: Updated\npurpose:\n  - personal\n  - research\nexpressed_in:\n  - ask:session-123\nsource_refs:\n  - raw:00001\nsource_raw_id: 7\ncustom_field: keep-me\ncreated_at: 2026-04-29T00:00:00Z\n---\n\nUpdated body.\n";
         overwrite_wiki_page_content(&paths, "editable", next).unwrap();
         let content = read_wiki_page_content(&paths, "editable").unwrap();
         assert!(content.contains("custom_field: keep-me"));
         assert!(content.contains("  - personal\n"));
+        assert!(content.contains("source_refs:\n  - raw:00001\n"));
 
         let (summary, body) = read_wiki_page(&paths, "editable").unwrap();
         assert_eq!(summary.summary, "Updated");
         assert_eq!(summary.purpose, vec!["personal", "research"]);
         assert_eq!(summary.expressed_in, vec!["ask:session-123"]);
+        assert_eq!(summary.source_raw_id, Some(7));
         assert_eq!(body.trim(), "Updated body.");
     }
 
@@ -8628,6 +8727,41 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
+
+        let bad_cases = [
+            (
+                "invalid type",
+                "---\ntype: asteroid\nstatus: active\ntitle: Editable\n---\nBody",
+            ),
+            (
+                "invalid status",
+                "---\ntype: concept\nstatus: maybe\ntitle: Editable\n---\nBody",
+            ),
+            (
+                "invalid schema",
+                "---\ntype: concept\nstatus: active\nschema: v2\ntitle: Editable\n---\nBody",
+            ),
+            (
+                "invalid source_raw_id",
+                "---\ntype: concept\nstatus: active\ntitle: Editable\nsource_raw_id: abc\n---\nBody",
+            ),
+            (
+                "invalid expressed_in",
+                "---\ntype: concept\nstatus: active\ntitle: Editable\nexpressed_in:\n  - bad ref\n---\nBody",
+            ),
+            (
+                "invalid source_refs",
+                "---\ntype: concept\nstatus: active\ntitle: Editable\nsource_refs:\n  - bad ref\n---\nBody",
+            ),
+        ];
+        for (label, content) in bad_cases {
+            let err = overwrite_wiki_page_content(&paths, "editable", content)
+                .unwrap_err();
+            assert!(
+                matches!(err, WikiStoreError::Invalid(_)),
+                "{label} should be rejected"
+            );
+        }
     }
 
     #[test]

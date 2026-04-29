@@ -2032,8 +2032,9 @@ pub(crate) async fn get_wiki_page_handler(
 /// `PUT /api/wiki/pages/{slug}`
 ///
 /// Human wiki edit path. Accepts the complete markdown file, including
-/// YAML frontmatter, validates the minimal required frontmatter shape,
-/// preserves all additional fields, writes atomically, and logs the edit.
+/// YAML frontmatter, validates required and schema-sensitive frontmatter
+/// fields, preserves all additional fields, writes atomically, and logs
+/// the edit.
 pub(crate) async fn put_wiki_page_handler(
     Path(slug): Path<String>,
     Json(body): Json<PutWikiPageRequest>,
