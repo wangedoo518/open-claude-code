@@ -32,6 +32,7 @@ import {
   FileText,
   ShieldAlert,
   Pencil,
+  RefreshCw,
   Save,
   X,
   CheckCircle2,
@@ -41,6 +42,7 @@ import {
 } from "lucide-react";
 import {
   getGuidanceFiles,
+  getPatrolReport,
   getPolicyFiles,
   getRulesFile,
   getSchemaTemplates,
@@ -48,9 +50,11 @@ import {
   getWikiSchema,
   putRulesFile,
   putWikiSchema,
+  triggerPatrol,
 } from "@/api/wiki/repository";
 import type {
   GuidanceFileInfo,
+  PatrolReport,
   PolicyFileInfo,
   RulesFileContent,
   SchemaTemplate,
@@ -109,6 +113,12 @@ export function SchemaEditorPage() {
     queryFn: () => getVaultGitStatus(),
     staleTime: 10_000,
     refetchInterval: 20_000,
+  });
+  const patrolQuery = useQuery({
+    queryKey: ["wiki", "patrol", "rules"],
+    queryFn: () => getPatrolReport(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -180,6 +190,13 @@ export function SchemaEditorPage() {
       void queryClient.invalidateQueries({ queryKey: ["wiki", "guidance"] });
       void queryClient.invalidateQueries({ queryKey: ["wiki", "policies"] });
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
+  const patrolMutation = useMutation({
+    mutationFn: () => triggerPatrol(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "patrol"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "inbox"] });
     },
   });
 
@@ -288,6 +305,12 @@ export function SchemaEditorPage() {
             rulesFileSaveError={(saveRulesFileMutation.error as Error | null)?.message ?? null}
             isRulesFileSaving={saveRulesFileMutation.isPending}
             gitStatus={rulesGitStatusLabel(gitQuery.data, Boolean(gitQuery.error))}
+            patrolReport={patrolMutation.data ?? patrolQuery.data ?? null}
+            patrolLoading={patrolQuery.isLoading || patrolMutation.isPending}
+            patrolError={
+              ((patrolMutation.error ?? patrolQuery.error) as Error | null)?.message ?? null
+            }
+            onRunPatrol={() => patrolMutation.mutate()}
             isEditing={isEditing}
             draft={draft}
             onDraftChange={setDraft}
@@ -327,6 +350,10 @@ interface SchemaBodyProps {
   rulesFileSaveError: string | null;
   isRulesFileSaving: boolean;
   gitStatus: string;
+  patrolReport: PatrolReport | null;
+  patrolLoading: boolean;
+  patrolError: string | null;
+  onRunPatrol: () => void;
   isEditing: boolean;
   draft: string;
   onDraftChange: (next: string) => void;
@@ -361,6 +388,10 @@ function SchemaBody({
   rulesFileSaveError,
   isRulesFileSaving,
   gitStatus,
+  patrolReport,
+  patrolLoading,
+  patrolError,
+  onRunPatrol,
   isEditing,
   draft,
   onDraftChange,
@@ -436,6 +467,13 @@ function SchemaBody({
           </div>
         </div>
       </div>
+
+      <ValidationSnapshotCard
+        report={patrolReport}
+        isLoading={patrolLoading}
+        error={patrolError}
+        onRunPatrol={onRunPatrol}
+      />
 
       <div className="rounded-md border border-border/50 bg-card px-4 py-4">
         <div className="flex items-center justify-between gap-3">
@@ -724,6 +762,76 @@ function SchemaBody({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function ValidationSnapshotCard({
+  report,
+  isLoading,
+  error,
+  onRunPatrol,
+}: {
+  report: PatrolReport | null;
+  isLoading: boolean;
+  error: string | null;
+  onRunPatrol: () => void;
+}) {
+  const summaryItems = report
+    ? [
+        ["Schema", report.summary.schema_violations],
+        ["Orphans", report.summary.orphans],
+        ["Stale", report.summary.stale],
+        ["Stubs", report.summary.stubs],
+        ["Oversized", report.summary.oversized],
+        ["Confidence", report.summary.confidence_decay],
+      ]
+    : [];
+  const checkedAt = report?.checked_at
+    ? report.checked_at.slice(0, 19).replace("T", " ")
+    : null;
+
+  return (
+    <div className="rounded-md border border-border/50 bg-card px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[14px] font-medium text-foreground">Validation snapshot</h2>
+          <p className="mt-1 text-[12px] text-muted-foreground">
+            巡检结果把 Rules 与 Wiki 的健康信号放在同一个默认工作区。
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onRunPatrol} disabled={isLoading}>
+          <RefreshCw className={`size-3 ${isLoading ? "animate-spin" : ""}`} />
+          运行巡检
+        </Button>
+      </div>
+
+      {error ? (
+        <div className="mt-3 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-[12px] text-[var(--color-error)]">
+          {error}
+        </div>
+      ) : null}
+
+      {report ? (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {summaryItems.map(([label, value]) => (
+              <div key={label} className="rounded-md border border-border/50 bg-background px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">{label}</div>
+                <div className="mt-1 text-[16px] font-medium text-foreground">{value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span>{report.issues.length} issues</span>
+            {checkedAt ? <span>checked {checkedAt}</span> : null}
+          </div>
+        </>
+      ) : (
+        <div className="mt-4 rounded-md border border-dashed border-border/70 bg-background px-3 py-3 text-[12px] text-muted-foreground">
+          {isLoading ? "正在读取巡检报告..." : "暂无巡检报告，运行一次巡检即可生成当前规则健康快照。"}
+        </div>
+      )}
     </div>
   );
 }

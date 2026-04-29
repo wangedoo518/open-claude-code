@@ -273,6 +273,20 @@ Tolaria-inspired Buddy design.
 - Browser smoke now edits `schema/policies/naming.md` through the real API and
   asserts the Rules Studio editor surface renders.
 
+## Implemented Slice 21
+
+- Rules Studio now reads the existing patrol report and shows a default
+  `Validation snapshot` beside templates, guidance, policies, rule editing,
+  and Git checkpoint state.
+- The snapshot exposes schema violations, orphan pages, stale pages, stubs,
+  oversized pages, confidence decay, issue count, and checked-at time without
+  requiring users to open the legacy Dashboard patrol view.
+- Rules Studio can trigger patrol directly through the existing
+  `POST /api/wiki/patrol` endpoint, then invalidates patrol and Inbox queries
+  so health signals converge across Home/Pulse, StatusBar, Inbox, and Rules.
+- Browser smoke now asserts the Rules Studio validation panel and patrol
+  trigger render by default.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

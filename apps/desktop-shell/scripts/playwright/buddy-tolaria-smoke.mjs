@@ -32,6 +32,8 @@ const routes = [
       "schema/policies/naming.md",
       "Rule file editor",
       "编辑选中文件",
+      "Validation snapshot",
+      "运行巡检",
     ],
     check: async (page) => {
       const advanced = page

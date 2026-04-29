@@ -45,9 +45,10 @@ This document answers: how `desktop-shell` is currently organized.
   Studio. It keeps Advanced YAML / CodeMirror folded by default, reads live
   Git/Vault status, renders the `schema/templates/*.md` template catalog by
   default, renders root/schema guidance file status from `GET /api/wiki/guidance`,
-  renders schema policy files from `GET /api/wiki/policies`, and can edit
-  allowlisted rule files through `GET/PUT /api/wiki/rules/file`. Rule file
-  saves invalidate Git state after writing.
+  renders schema policy files from `GET /api/wiki/policies`, surfaces the
+  latest patrol-backed Validation snapshot, and can edit allowlisted rule files
+  through `GET/PUT /api/wiki/rules/file`. Rule file saves invalidate Git state
+  after writing.
 - Feature modules own UI and feature-specific orchestration.
 - Neutral API clients under `apps/desktop-shell/src/api/` own cross-feature
   HTTP/SSE surfaces. Common Wiki repository access lives under
