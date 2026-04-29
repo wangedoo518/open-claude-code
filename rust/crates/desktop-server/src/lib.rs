@@ -82,8 +82,8 @@ pub(crate) use handlers::wiki_crud::{
 };
 pub(crate) use handlers::wiki_reports::{
     breakdown_handler, cleanup_handler, get_absorb_log_handler, get_backlinks_index_handler,
-    get_guidance_files_handler, get_patrol_report_handler, get_schema_templates_handler,
-    get_stats_handler, patrol_handler,
+    get_guidance_files_handler, get_patrol_report_handler, get_policy_files_handler,
+    get_schema_templates_handler, get_stats_handler, patrol_handler,
 };
 pub(crate) use handlers::wiki_tasks::{
     absorb_handler, query_wiki_handler, stream_absorb_events_handler,

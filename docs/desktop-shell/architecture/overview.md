@@ -45,7 +45,8 @@ This document answers: how `desktop-shell` is currently organized.
   Studio. It keeps Advanced YAML / CodeMirror folded by default, reads live
   Git/Vault status, renders the `schema/templates/*.md` template catalog by
   default, renders root/schema guidance file status from `GET /api/wiki/guidance`,
-  and invalidates Git state after schema saves.
+  renders schema policy files from `GET /api/wiki/policies`, and invalidates
+  Git state after schema saves.
 - Feature modules own UI and feature-specific orchestration.
 - Neutral API clients under `apps/desktop-shell/src/api/` own cross-feature
   HTTP/SSE surfaces. Common Wiki repository access lives under
@@ -94,7 +95,8 @@ This document answers: how `desktop-shell` is currently organized.
 - `rust/crates/desktop-server/src/handlers/` owns migrated handler bodies by
   domain. Landed slices include `handlers/wiki_reports.rs` for Wiki cleanup,
   breakdown, patrol, absorb-log, backlinks index, stats, patrol report, schema
-  template, and guidance status endpoints, plus `handlers/wiki_tasks.rs` for absorb/query task endpoints and
+  template, guidance status, and policy status endpoints, plus
+  `handlers/wiki_tasks.rs` for absorb/query task endpoints and
   absorb progress SSE, plus `handlers/provider_runtime.rs` for Codex
   runtime/auth and providers.json CRUD endpoints, plus
   `handlers/desktop_sessions.rs` for desktop/ask session lifecycle, source

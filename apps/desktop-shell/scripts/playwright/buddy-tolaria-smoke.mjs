@@ -28,6 +28,8 @@ const routes = [
       "schema/templates/research.md",
       "Root AGENTS.md",
       "schema/CLAUDE.md",
+      "schema/policies/maintenance.md",
+      "schema/policies/naming.md",
     ],
     check: async (page) => {
       const advanced = page

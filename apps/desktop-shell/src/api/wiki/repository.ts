@@ -23,6 +23,7 @@ import type {
   InboxResolveAction,
   IngestRawRequest,
   PatrolReport,
+  PolicyFilesResponse,
   RawDetailResponse,
   RawEntry,
   RawListResponse,
@@ -407,6 +408,11 @@ export async function getSchemaTemplates(): Promise<SchemaTemplate[]> {
 /** GET `/api/wiki/guidance` — root/schema guidance file status for Rules Studio. */
 export async function getGuidanceFiles(): Promise<GuidanceFilesResponse> {
   return fetchJson<GuidanceFilesResponse>("/api/wiki/guidance");
+}
+
+/** GET `/api/wiki/policies` — schema policy file status for Rules Studio. */
+export async function getPolicyFiles(): Promise<PolicyFilesResponse> {
+  return fetchJson<PolicyFilesResponse>("/api/wiki/policies");
 }
 
 /**

@@ -41,12 +41,13 @@ import {
 } from "lucide-react";
 import {
   getGuidanceFiles,
+  getPolicyFiles,
   getSchemaTemplates,
   getVaultGitStatus,
   getWikiSchema,
   putWikiSchema,
 } from "@/api/wiki/repository";
-import type { GuidanceFileInfo, SchemaTemplate } from "@/api/wiki/types";
+import type { GuidanceFileInfo, PolicyFileInfo, SchemaTemplate } from "@/api/wiki/types";
 import { Button } from "@/components/ui/button";
 import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 
@@ -84,6 +85,11 @@ export function SchemaEditorPage() {
   const guidanceQuery = useQuery({
     queryKey: ["wiki", "guidance"] as const,
     queryFn: () => getGuidanceFiles(),
+    staleTime: 60_000,
+  });
+  const policiesQuery = useQuery({
+    queryKey: ["wiki", "policies"] as const,
+    queryFn: () => getPolicyFiles(),
     staleTime: 60_000,
   });
   const gitQuery = useQuery({
@@ -178,6 +184,7 @@ export function SchemaEditorPage() {
             templateCount={templatesQuery.data?.length ?? 0}
             templates={templatesQuery.data ?? []}
             guidanceFiles={guidanceQuery.data?.files ?? []}
+            policyFiles={policiesQuery.data?.files ?? []}
             gitStatus={rulesGitStatusLabel(gitQuery.data, Boolean(gitQuery.error))}
             isEditing={isEditing}
             draft={draft}
@@ -203,6 +210,7 @@ interface SchemaBodyProps {
   templateCount: number;
   templates: SchemaTemplate[];
   guidanceFiles: GuidanceFileInfo[];
+  policyFiles: PolicyFileInfo[];
   gitStatus: string;
   isEditing: boolean;
   draft: string;
@@ -223,6 +231,7 @@ function SchemaBody({
   templateCount,
   templates,
   guidanceFiles,
+  policyFiles,
   gitStatus,
   isEditing,
   draft,
@@ -319,6 +328,30 @@ function SchemaBody({
           {guidanceFiles.length === 0 ? (
             <div className="rounded-md border border-border/50 bg-background px-3 py-3 text-[12px] text-muted-foreground">
               正在读取 root guidance 文件。
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border/50 bg-card px-4 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[14px] font-medium text-foreground">Policies</h2>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              schema/policies 约束维护流程如何命名、冲突、废弃和复盘。
+            </p>
+          </div>
+          <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+            {policyFiles.length} files
+          </span>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {policyFiles.map((file) => (
+            <PolicyFileCard key={file.id} file={file} />
+          ))}
+          {policyFiles.length === 0 ? (
+            <div className="rounded-md border border-border/50 bg-background px-3 py-3 text-[12px] text-muted-foreground">
+              暂无 schema/policies 文件。
             </div>
           ) : null}
         </div>
@@ -523,6 +556,29 @@ function GuidanceFileCard({ file }: { file: GuidanceFileInfo }) {
           }
         >
           {file.exists ? `${file.byte_size} bytes` : "missing"}
+        </span>
+      </div>
+      <p className="mt-3 truncate text-[12px] text-muted-foreground">
+        {file.first_heading ?? "未找到标题"}
+      </p>
+    </div>
+  );
+}
+
+function PolicyFileCard({ file }: { file: PolicyFileInfo }) {
+  return (
+    <div className="rounded-md border border-border/50 bg-background px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium text-foreground">
+            {file.label}
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+            {file.relative_path}
+          </div>
+        </div>
+        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          {file.byte_size} bytes
         </span>
       </div>
       <p className="mt-3 truncate text-[12px] text-muted-foreground">

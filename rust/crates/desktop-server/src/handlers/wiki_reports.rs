@@ -496,3 +496,19 @@ pub(crate) async fn get_guidance_files_handler() -> Result<Json<serde_json::Valu
         serde_json::to_value(&infos).unwrap_or_else(|_| serde_json::json!({ "files": [] })),
     ))
 }
+
+/// GET /api/wiki/policies - schema policy file status for Rules Studio.
+pub(crate) async fn get_policy_files_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let infos = wiki_store::load_policy_file_infos(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("POLICY_STATUS_FAILED: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(&infos).unwrap_or_else(|_| serde_json::json!({ "files": [] })),
+    ))
+}

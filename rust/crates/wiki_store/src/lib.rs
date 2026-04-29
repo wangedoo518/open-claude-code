@@ -6074,6 +6074,22 @@ pub struct GuidanceFileInfo {
     pub first_heading: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyFilesResponse {
+    pub vault_path: String,
+    pub files: Vec<PolicyFileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyFileInfo {
+    pub id: String,
+    pub label: String,
+    pub relative_path: String,
+    pub file_path: String,
+    pub byte_size: u64,
+    pub first_heading: Option<String>,
+}
+
 /// Chinese display label for a built-in template category.
 /// Unknown categories fall back to the raw category string.
 fn template_display_name(category: &str) -> String {
@@ -6202,6 +6218,56 @@ fn load_guidance_file_info(
         exists,
         byte_size,
         first_heading,
+    })
+}
+
+pub fn load_policy_file_infos(paths: &WikiPaths) -> Result<PolicyFilesResponse> {
+    let policies_dir = paths.schema.join("policies");
+    if !policies_dir.is_dir() {
+        return Ok(PolicyFilesResponse {
+            vault_path: paths.root.display().to_string(),
+            files: Vec::new(),
+        });
+    }
+
+    let mut files = Vec::new();
+    let dir =
+        fs::read_dir(&policies_dir).map_err(|e| WikiStoreError::io(policies_dir.clone(), e))?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let id = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let relative_path = format!("schema/policies/{id}.md");
+        let byte_size = fs::metadata(&path)
+            .map_err(|e| WikiStoreError::io(path.clone(), e))?
+            .len();
+        let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+        let first_heading = content
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(|line| line.trim_start_matches('#').trim().to_string())
+            .filter(|line| !line.is_empty());
+        let label = first_heading.clone().unwrap_or_else(|| id.clone());
+        files.push(PolicyFileInfo {
+            id,
+            label,
+            relative_path,
+            file_path: path.to_string_lossy().to_string(),
+            byte_size,
+            first_heading,
+        });
+    }
+    files.sort_by(|a, b| a.id.cmp(&b.id));
+
+    Ok(PolicyFilesResponse {
+        vault_path: paths.root.display().to_string(),
+        files,
     })
 }
 
@@ -10575,6 +10641,31 @@ mod tests {
                 "{relative} should expose a first heading"
             );
         }
+    }
+
+    #[test]
+    fn load_policy_file_infos_returns_seeded_policies() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let infos = load_policy_file_infos(&paths).unwrap();
+        let ids: Vec<&str> = infos.files.iter().map(|file| file.id.as_str()).collect();
+        for id in ["conflict", "deprecation", "maintenance", "naming"] {
+            assert!(ids.contains(&id), "missing policy {id}");
+        }
+
+        let maintenance = infos
+            .files
+            .iter()
+            .find(|file| file.id == "maintenance")
+            .unwrap();
+        assert_eq!(maintenance.relative_path, "schema/policies/maintenance.md");
+        assert!(maintenance.byte_size > 0);
+        assert_eq!(
+            maintenance.first_heading.as_deref(),
+            Some("Maintenance Policy")
+        );
     }
 
     // ── v2 wiki_stats tests ─────────────────────────────────────

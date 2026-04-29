@@ -249,6 +249,16 @@ Tolaria-inspired Buddy design.
   `init_wiki`, and browser smoke asserts the Guidance catalog appears on
   `/rules`.
 
+## Implemented Slice 19
+
+- Added `GET /api/wiki/policies` for Rules Studio to inspect
+  `schema/policies/*.md` without opening Advanced YAML.
+- Rules Studio now renders the policy catalog by default, including each
+  policy heading, relative path, and byte size.
+- Rust coverage verifies the seeded maintenance, conflict, deprecation, and
+  naming policies, and browser smoke asserts concrete policy paths render on
+  `/rules`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

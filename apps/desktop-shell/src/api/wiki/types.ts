@@ -581,6 +581,20 @@ export interface GuidanceFileInfo {
   first_heading?: string | null;
 }
 
+export interface PolicyFilesResponse {
+  vault_path: string;
+  files: PolicyFileInfo[];
+}
+
+export interface PolicyFileInfo {
+  id: string;
+  label: string;
+  relative_path: string;
+  file_path: string;
+  byte_size: number;
+  first_heading?: string | null;
+}
+
 /** POST /api/wiki/absorb response (§2.1). */
 export interface AbsorbTaskResponse {
   task_id: string;
