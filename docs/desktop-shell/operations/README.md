@@ -40,6 +40,8 @@ design, tests, review discipline, or documentation.
   pull/push only after local changes are committed, pull with fast-forward-only
   semantics, and surface Git non-fast-forward/conflict output instead of
   auto-merging.
+- Remote URL setup writes to Git config and status surfaces only redacted URLs;
+  do not log or duplicate credential-bearing remote URLs in Buddy-owned files.
 - When copying Tolaria source, include provenance, license preservation, tests,
   and documentation in the same main-only slice.
 

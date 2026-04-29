@@ -437,6 +437,8 @@ export interface VaultGitStatus {
   unstaged_count: number;
   untracked_count: number;
   remote_connected: boolean;
+  remote_name?: string | null;
+  remote_url_redacted?: string | null;
   last_commit?: string | null;
   changes: VaultGitChange[];
 }
@@ -469,6 +471,13 @@ export interface VaultGitSyncResult {
   ok: boolean;
   operation: "pull" | "push" | string;
   summary: string;
+  status: VaultGitStatus;
+}
+
+export interface VaultGitRemoteConfigResult {
+  ok: boolean;
+  remote: string;
+  remote_url_redacted: string;
   status: VaultGitStatus;
 }
 

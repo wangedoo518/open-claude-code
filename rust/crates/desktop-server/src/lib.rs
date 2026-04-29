@@ -75,7 +75,8 @@ pub(crate) use handlers::wiki_crud::{
     preview_wiki_fetch_handler, propose_wiki_inbox_handler, pull_vault_git_handler,
     push_vault_git_handler, put_wiki_page_handler, put_wiki_schema_handler,
     resolve_wiki_inbox_handler, resolve_wiki_root_for_handler,
-    revoke_external_ai_write_grant_handler, search_wiki_pages_handler, ws_wechat_inbox_handler,
+    revoke_external_ai_write_grant_handler, search_wiki_pages_handler, set_vault_git_remote_handler,
+    ws_wechat_inbox_handler,
 };
 pub(crate) use handlers::wiki_reports::{
     breakdown_handler, cleanup_handler, get_absorb_log_handler, get_backlinks_index_handler,

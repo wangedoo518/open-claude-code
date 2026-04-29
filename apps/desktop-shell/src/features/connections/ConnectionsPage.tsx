@@ -26,6 +26,7 @@ import {
   pullVaultGit,
   pushVaultGit,
   revokeExternalAiWriteGrant,
+  setVaultGitRemote,
 } from "@/api/wiki/repository";
 import type { ExternalAiWriteGrant, VaultGitStatus } from "@/api/wiki/types";
 
@@ -70,6 +71,7 @@ export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [commitMessage, setCommitMessage] = useState("");
   const [diffStaged, setDiffStaged] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState("");
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
   const [permanentNote, setPermanentNote] = useState("");
@@ -132,6 +134,15 @@ export function ConnectionsPage() {
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
   });
+  const remoteMutation = useMutation({
+    mutationFn: (url: string) => setVaultGitRemote({ remote: "origin", url }),
+    onSuccess: (result) => {
+      setRemoteUrl("");
+      setSyncMessage(`origin -> ${result.remote_url_redacted}`);
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+    },
+  });
   const policyQuery = useQuery({
     queryKey: ["wiki", "external-ai", "write-policy", "connections"],
     queryFn: () => getExternalAiWritePolicy(),
@@ -172,12 +183,14 @@ export function ConnectionsPage() {
     if (!git?.dirty) return "Checkpoint Buddy Vault";
     return `Checkpoint Buddy Vault: ${git.changed_count} changes`;
   }, [git?.changed_count, git?.dirty]);
-  const syncPending = pullMutation.isPending || pushMutation.isPending;
+  const syncPending =
+    pullMutation.isPending || pushMutation.isPending || remoteMutation.isPending;
+  const canSetRemote = Boolean(git?.git_available && git.initialized && remoteUrl.trim());
   const canRemoteSync = Boolean(
     git?.git_available && git.initialized && git.remote_connected && !git.dirty,
   );
   const syncDisabledReason = !git?.remote_connected
-    ? "先配置 Git remote"
+    ? "先设置 origin remote"
     : git?.dirty
       ? "先创建 checkpoint"
       : null;
@@ -211,6 +224,13 @@ export function ConnectionsPage() {
     if (!canRemoteSync || syncPending) return;
     setSyncMessage(null);
     pushMutation.mutate();
+  }
+
+  function handleSetRemote() {
+    const url = remoteUrl.trim();
+    if (!canSetRemote || remoteMutation.isPending) return;
+    setSyncMessage(null);
+    remoteMutation.mutate(url);
   }
 
   function handleSessionGrant() {
@@ -344,7 +364,17 @@ export function ConnectionsPage() {
               <GitFact label="Branch" value={git?.branch || "未识别"} />
               <GitFact
                 label="Remote"
-                value={git?.remote_connected ? "已连接" : "未连接"}
+                value={
+                  git?.remote_connected
+                    ? git.remote_name
+                      ? `已连接 ${git.remote_name}`
+                      : "已连接"
+                    : "未连接"
+                }
+              />
+              <GitFact
+                label="Remote URL"
+                value={git?.remote_url_redacted || "未设置"}
               />
               <GitFact
                 label="History"
@@ -500,14 +530,38 @@ export function ConnectionsPage() {
                         ? "工作区干净，可执行 fast-forward pull 或 push。"
                         : syncDisabledReason ?? "正在读取 remote 状态"}
                     </div>
+                    <div className="mt-2 grid gap-2">
+                      <input
+                        value={remoteUrl}
+                        onChange={(event) => setRemoteUrl(event.target.value)}
+                        className="h-8 rounded-md border border-border bg-background px-2 text-[11px] outline-none focus:border-primary"
+                        placeholder="origin URL: git@github.com:org/buddy-vault.git"
+                        aria-label="Buddy Vault origin URL"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSetRemote}
+                        disabled={!canSetRemote || remoteMutation.isPending}
+                        className="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {remoteMutation.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <GitBranch className="size-3.5" />
+                        )}
+                        保存 origin
+                      </button>
+                    </div>
                   </div>
-                  {(pullMutation.error || pushMutation.error) && (
+                  {(pullMutation.error || pushMutation.error || remoteMutation.error) && (
                     <p className="mt-2 text-[11px] leading-5 text-[var(--color-warning)]">
                       {pullMutation.error instanceof Error
                         ? pullMutation.error.message
                         : pushMutation.error instanceof Error
                           ? pushMutation.error.message
-                          : "Remote sync failed"}
+                          : remoteMutation.error instanceof Error
+                            ? remoteMutation.error.message
+                            : "Remote sync failed"}
                     </p>
                   )}
                   {syncMessage && (

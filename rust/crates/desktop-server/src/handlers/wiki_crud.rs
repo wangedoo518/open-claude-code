@@ -2125,6 +2125,34 @@ pub(crate) async fn push_vault_git_handler() -> Result<Json<serde_json::Value>, 
     ))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct GitRemoteRequest {
+    remote: Option<String>,
+    url: String,
+}
+
+pub(crate) async fn set_vault_git_remote_handler(
+    Json(body): Json<GitRemoteRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let remote = body.remote.as_deref().unwrap_or("origin");
+    let result = wiki_store::vault_git_set_remote(&paths, remote, &body.url).map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git remote failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 pub(crate) async fn get_external_ai_write_policy_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;

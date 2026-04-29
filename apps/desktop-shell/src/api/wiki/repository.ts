@@ -30,6 +30,7 @@ import type {
   UpdateProposal,
   VaultGitCommitResult,
   VaultGitDiff,
+  VaultGitRemoteConfigResult,
   VaultGitStatus,
   VaultGitSyncResult,
   WikiApproveWithWriteResponse,
@@ -468,6 +469,17 @@ export async function pullVaultGit(): Promise<VaultGitSyncResult> {
 export async function pushVaultGit(): Promise<VaultGitSyncResult> {
   return fetchJson<VaultGitSyncResult>("/api/wiki/git/push", {
     method: "POST",
+  });
+}
+
+/** POST `/api/wiki/git/remote` — add or replace the Buddy Vault remote URL. */
+export async function setVaultGitRemote(request: {
+  remote?: string;
+  url: string;
+}): Promise<VaultGitRemoteConfigResult> {
+  return fetchJson<VaultGitRemoteConfigResult>("/api/wiki/git/remote", {
+    method: "POST",
+    body: JSON.stringify(request),
   });
 }
 

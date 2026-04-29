@@ -83,6 +83,19 @@ Tolaria-inspired Buddy design.
 - Rust coverage now exercises push-to-bare-remote, fast-forward pull, and
   dirty-worktree sync rejection.
 
+## Implemented Slice 5
+
+- Added `POST /api/wiki/git/remote` to add or replace the Buddy Vault `origin`
+  remote through Git config.
+- `GET /api/wiki/git/status` now returns the preferred remote name and a
+  redacted remote URL, avoiding plaintext credential echo in the UI.
+- Connections now includes an origin URL field, saves the remote without
+  requiring a clean worktree, and keeps Pull/Push gated behind a clean
+  checkpoint state.
+- Rust coverage now verifies remote add/update, URL redaction, and invalid
+  remote rejection.
+- Browser smoke now asserts the Connections remote setup controls render.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -95,5 +108,3 @@ Tolaria-inspired Buddy design.
 
 - Add line-level diff selection and apply/discard actions after the Vault
   checkpoint model has reviewer-approved interaction rules.
-- Add remote setup/edit UI in Connections once the team finalizes how Buddy
-  should store and redact remote URLs.

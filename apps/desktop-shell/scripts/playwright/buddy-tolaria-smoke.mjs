@@ -35,7 +35,16 @@ const routes = [
   {
     name: "Connections",
     hash: "/connections",
-    mustContain: ["连接", "Buddy Vault / Git", "Remote sync", "Pull", "Push", "受控自动写入授权"],
+    mustContain: [
+      "连接",
+      "Buddy Vault / Git",
+      "Remote URL",
+      "Remote sync",
+      "Pull",
+      "Push",
+      "保存 origin",
+      "受控自动写入授权",
+    ],
   },
   {
     name: "Knowledge",

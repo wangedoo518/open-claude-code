@@ -633,6 +633,8 @@ pub struct VaultGitStatus {
     pub unstaged_count: usize,
     pub untracked_count: usize,
     pub remote_connected: bool,
+    pub remote_name: Option<String>,
+    pub remote_url_redacted: Option<String>,
     pub last_commit: Option<String>,
     pub changes: Vec<VaultGitChange>,
 }
@@ -669,6 +671,14 @@ pub struct VaultGitSyncResult {
     pub ok: bool,
     pub operation: String,
     pub summary: String,
+    pub status: VaultGitStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitRemoteConfigResult {
+    pub ok: bool,
+    pub remote: String,
+    pub remote_url_redacted: String,
     pub status: VaultGitStatus,
 }
 
@@ -781,6 +791,74 @@ fn parse_ahead_behind(root: &Path, upstream: Option<&str>) -> (u32, u32) {
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(0);
     (ahead, behind)
+}
+
+fn preferred_remote_name(root: &Path) -> Option<String> {
+    let remotes = try_run_git(root, &["remote"])?;
+    let mut first_remote: Option<String> = None;
+    for remote in remotes.lines().map(str::trim).filter(|remote| !remote.is_empty()) {
+        if first_remote.is_none() {
+            first_remote = Some(remote.to_string());
+        }
+        if remote == "origin" {
+            return Some(remote.to_string());
+        }
+    }
+    first_remote
+}
+
+fn remote_url(root: &Path, remote: &str) -> Option<String> {
+    try_run_git(root, &["remote", "get-url", remote])
+}
+
+fn redact_remote_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return trimmed.to_string();
+    };
+    let Some((userinfo, host_and_path)) = rest.split_once('@') else {
+        return trimmed.to_string();
+    };
+    if userinfo.is_empty() || userinfo == "git" {
+        return trimmed.to_string();
+    }
+    format!("{scheme}://***@{host_and_path}")
+}
+
+fn validate_git_remote_name(remote: &str) -> Result<()> {
+    if remote.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "git remote name must not be empty".to_string(),
+        ));
+    }
+    if remote.len() > 64 || remote.starts_with('-') {
+        return Err(WikiStoreError::Invalid(format!(
+            "invalid git remote name: {remote}"
+        )));
+    }
+    if !remote
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err(WikiStoreError::Invalid(format!(
+            "invalid git remote name: {remote}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_git_remote_url(url: &str) -> Result<()> {
+    if url.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "git remote URL must not be empty".to_string(),
+        ));
+    }
+    if url.len() > 4096 || url.chars().any(char::is_control) {
+        return Err(WikiStoreError::Invalid(
+            "git remote URL contains invalid characters".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn list_untracked_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -939,6 +1017,8 @@ pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
             unstaged_count: 0,
             untracked_count: 0,
             remote_connected: false,
+            remote_name: None,
+            remote_url_redacted: None,
             last_commit: None,
             changes: Vec::new(),
         });
@@ -962,7 +1042,12 @@ pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
     );
     let (ahead, behind) = parse_ahead_behind(&paths.root, upstream.as_deref());
     let last_commit = try_run_git(&paths.root, &["log", "-1", "--pretty=format:%h %s"]);
-    let remote_connected = try_run_git(&paths.root, &["remote"]).is_some();
+    let remote_name = preferred_remote_name(&paths.root);
+    let remote_url_redacted = remote_name
+        .as_deref()
+        .and_then(|remote| remote_url(&paths.root, remote))
+        .map(|url| redact_remote_url(&url));
+    let remote_connected = remote_name.is_some();
 
     Ok(VaultGitStatus {
         vault_path: paths.root.display().to_string(),
@@ -978,6 +1063,8 @@ pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
         unstaged_count,
         untracked_count,
         remote_connected,
+        remote_name,
+        remote_url_redacted,
         last_commit,
         changes,
     })
@@ -1150,6 +1237,43 @@ pub fn vault_git_push(paths: &WikiPaths) -> Result<VaultGitSyncResult> {
         ok: true,
         operation: "push".to_string(),
         summary,
+        status,
+    })
+}
+
+pub fn vault_git_set_remote(
+    paths: &WikiPaths,
+    remote: &str,
+    url: &str,
+) -> Result<VaultGitRemoteConfigResult> {
+    let remote = remote.trim();
+    let url = url.trim();
+    validate_git_remote_name(remote)?;
+    validate_git_remote_url(url)?;
+
+    let status = vault_git_status(paths)?;
+    if !status.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+
+    if remote_url(&paths.root, remote).is_some() {
+        run_git(&paths.root, &["remote", "set-url", remote, url])?;
+    } else {
+        run_git(&paths.root, &["remote", "add", remote, url])?;
+    }
+
+    let status = vault_git_status(paths)?;
+    Ok(VaultGitRemoteConfigResult {
+        ok: true,
+        remote: remote.to_string(),
+        remote_url_redacted: redact_remote_url(url),
         status,
     })
 }
@@ -8656,6 +8780,49 @@ mod tests {
         overwrite_schema_claude_md(&paths, "dirty local change").unwrap();
         let err = vault_git_pull(&paths).unwrap_err();
         assert!(err.to_string().contains("must be clean before git pull"));
+    }
+
+    #[test]
+    fn vault_git_set_remote_adds_and_updates_origin() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+
+        let first = vault_git_set_remote(
+            &paths,
+            "origin",
+            "https://token@example.com/acme/buddy-vault.git",
+        )
+        .unwrap();
+        assert!(first.ok);
+        assert_eq!(first.remote, "origin");
+        assert_eq!(
+            first.remote_url_redacted,
+            "https://***@example.com/acme/buddy-vault.git"
+        );
+        assert_eq!(first.status.remote_name.as_deref(), Some("origin"));
+        assert_eq!(
+            first.status.remote_url_redacted.as_deref(),
+            Some("https://***@example.com/acme/buddy-vault.git")
+        );
+
+        let second = vault_git_set_remote(&paths, "origin", "git@example.com:acme/next.git")
+            .unwrap();
+        assert_eq!(second.remote_url_redacted, "git@example.com:acme/next.git");
+        assert_eq!(
+            remote_url(&paths.root, "origin").as_deref(),
+            Some("git@example.com:acme/next.git")
+        );
+    }
+
+    #[test]
+    fn vault_git_set_remote_rejects_invalid_values() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+
+        assert!(vault_git_set_remote(&paths, "../origin", "https://example.com/repo.git").is_err());
+        assert!(vault_git_set_remote(&paths, "origin", "").is_err());
     }
 
     #[test]
