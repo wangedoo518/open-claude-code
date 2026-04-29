@@ -3571,13 +3571,38 @@ pub fn write_wiki_page(
     body: &str,
     source_raw_id: Option<u32>,
 ) -> Result<PathBuf> {
+    write_wiki_page_with_purpose(
+        paths,
+        slug,
+        title,
+        summary,
+        body,
+        source_raw_id,
+        &[],
+    )
+}
+
+/// Write a concept wiki page with explicit Purpose Lens frontmatter.
+///
+/// An empty `purpose` slice keeps the product default (`learning`) for
+/// backward compatibility with legacy maintainer writes.
+pub fn write_wiki_page_with_purpose(
+    paths: &WikiPaths,
+    slug: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    source_raw_id: Option<u32>,
+    purpose: &[String],
+) -> Result<PathBuf> {
     validate_wiki_slug(slug)?;
     let concepts_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
     fs::create_dir_all(&concepts_dir).map_err(|e| WikiStoreError::io(concepts_dir.clone(), e))?;
     let path = wiki_concept_path(paths, slug);
 
     // Compose the full file content: YAML frontmatter + blank line + body.
-    let frontmatter = WikiFrontmatter::for_concept(title, summary, source_raw_id);
+    let mut frontmatter = WikiFrontmatter::for_concept(title, summary, source_raw_id);
+    frontmatter.purpose = normalize_purpose_lens_values(purpose)?;
     let mut content = frontmatter.to_yaml_block();
     content.push('\n');
     content.push_str(body);
@@ -3590,6 +3615,24 @@ pub fn write_wiki_page(
     fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
     fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
     Ok(path)
+}
+
+fn normalize_purpose_lens_values(values: &[String]) -> Result<Vec<String>> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let lens = value.trim().to_ascii_lowercase();
+        if lens.is_empty() {
+            continue;
+        }
+        validate_purpose_lens_value(&lens)?;
+        if !normalized.iter().any(|existing| existing == &lens) {
+            normalized.push(lens);
+        }
+    }
+    if normalized.is_empty() {
+        normalized.push("learning".to_string());
+    }
+    Ok(normalized)
 }
 
 /// Write a wiki page to any category subdir. Generalizes
@@ -3610,6 +3653,35 @@ pub fn write_wiki_page_in_category(
     body: &str,
     source_raw_id: Option<u32>,
 ) -> Result<PathBuf> {
+    write_wiki_page_in_category_with_metadata(
+        paths,
+        category,
+        slug,
+        title,
+        summary,
+        body,
+        source_raw_id,
+        &[],
+        &[],
+    )
+}
+
+/// Write a wiki page to any category subdir with explicit reusable
+/// frontmatter metadata.
+///
+/// This is used by maintainer update flows that rewrite a page body but
+/// must keep Purpose Lens and expression refs attached to the knowledge.
+pub fn write_wiki_page_in_category_with_metadata(
+    paths: &WikiPaths,
+    category: &str,
+    slug: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    source_raw_id: Option<u32>,
+    purpose: &[String],
+    expressed_in: &[String],
+) -> Result<PathBuf> {
     validate_wiki_slug(slug)?;
     let subdir = WIKI_CATEGORIES
         .iter()
@@ -3626,6 +3698,8 @@ pub fn write_wiki_page_in_category(
 
     let mut fm = WikiFrontmatter::for_concept(title, summary, source_raw_id);
     fm.kind = category.to_string();
+    fm.purpose = normalize_purpose_lens_values(purpose)?;
+    fm.expressed_in = normalize_expressed_ref_values(expressed_in)?;
     let mut content = fm.to_yaml_block();
     content.push('\n');
     content.push_str(body);
@@ -3637,6 +3711,21 @@ pub fn write_wiki_page_in_category(
     fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
     fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
     Ok(path)
+}
+
+fn normalize_expressed_ref_values(values: &[String]) -> Result<Vec<String>> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let reference = value.trim().to_string();
+        if reference.is_empty() {
+            continue;
+        }
+        validate_expressed_ref_value(&reference)?;
+        if !normalized.iter().any(|existing| existing == &reference) {
+            normalized.push(reference);
+        }
+    }
+    Ok(normalized)
 }
 
 /// List every wiki concept page under `wiki/concepts/`, sorted by
@@ -8358,6 +8447,64 @@ mod tests {
         // Non-ASCII
         let err = write_wiki_page(&paths, "中文", "T", "s", "b", None).unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
+    }
+
+    #[test]
+    fn write_wiki_page_with_purpose_normalizes_and_deduplicates_lenses() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let purpose = vec![
+            "Research".to_string(),
+            "personal".to_string(),
+            "research".to_string(),
+        ];
+
+        write_wiki_page_with_purpose(
+            &paths,
+            "purposeful",
+            "Purposeful",
+            "summary",
+            "Body.",
+            None,
+            &purpose,
+        )
+        .unwrap();
+
+        let (summary, _body) = read_wiki_page(&paths, "purposeful").unwrap();
+        assert_eq!(summary.purpose, vec!["research", "personal"]);
+    }
+
+    #[test]
+    fn write_wiki_page_in_category_with_metadata_preserves_expression_refs() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let purpose = vec!["writing".to_string()];
+        let expressed_in = vec!["ask:session-123".to_string()];
+
+        write_wiki_page_in_category_with_metadata(
+            &paths,
+            "topic",
+            "memo-topic",
+            "Memo Topic",
+            "summary",
+            "Body.",
+            Some(9),
+            &purpose,
+            &expressed_in,
+        )
+        .unwrap();
+
+        let pages = list_all_wiki_pages(&paths).unwrap();
+        let summary = pages
+            .iter()
+            .find(|page| page.slug == "memo-topic")
+            .expect("topic page should be listed");
+        assert_eq!(summary.category, "topic");
+        assert_eq!(summary.purpose, vec!["writing"]);
+        assert_eq!(summary.expressed_in, vec!["ask:session-123"]);
+        assert_eq!(summary.source_raw_id, Some(9));
     }
 
     #[test]

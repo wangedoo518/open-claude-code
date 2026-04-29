@@ -421,8 +421,8 @@ pub fn concept_page_path(paths: &wiki_store::WikiPaths, slug: &str) -> PathBuf {
 /// Which maintainer action the user picked in the Workbench.
 ///
 /// Wire format: `#[serde(tag = "kind", rename_all = "snake_case")]`
-/// so the JSON looks like `{"kind":"create_new"}` /
-/// `{"kind":"update_existing","target_page_slug":"..."}` /
+/// so the JSON looks like `{"kind":"create_new","purpose_lenses":[]}` /
+/// `{"kind":"update_existing","target_page_slug":"...","purpose_lenses":[]}` /
 /// `{"kind":"reject","reason":"..."}`. The HTTP handler in
 /// `desktop-server` translates from the flat frontend contract
 /// (`action` / `target_page_slug` / `rejection_reason`) into this
@@ -432,10 +432,22 @@ pub fn concept_page_path(paths: &wiki_store::WikiPaths, slug: &str) -> PathBuf {
 pub enum MaintainAction {
     /// Generate a fresh wiki page from the inbox's raw entry.
     /// Legacy propose → approve-with-write path, now server-driven.
-    CreateNew,
+    CreateNew {
+        /// Purpose Lens values confirmed by the human reviewer. Empty
+        /// falls back to the Buddy default (`learning`).
+        #[serde(default)]
+        purpose_lenses: Vec<String>,
+    },
     /// Append the raw body into an existing wiki page. The merge
     /// strategy is pure append in v1; an LLM-driven merge is TODO.
-    UpdateExisting { target_page_slug: String },
+    UpdateExisting {
+        target_page_slug: String,
+        /// Purpose Lens values confirmed during review. For update flows
+        /// they are merged into the target page without dropping existing
+        /// purpose values.
+        #[serde(default)]
+        purpose_lenses: Vec<String>,
+    },
     /// Discard the inbox task with a user-provided reason. Does not
     /// touch the wiki — only audit-logs the decision.
     Reject { reason: String },
@@ -487,9 +499,14 @@ pub async fn execute_maintain(
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<MaintainOutcome> {
     match action {
-        MaintainAction::CreateNew => create_new(paths, inbox_id, broker).await,
-        MaintainAction::UpdateExisting { target_page_slug } => {
-            update_existing(paths, inbox_id, &target_page_slug)
+        MaintainAction::CreateNew { purpose_lenses } => {
+            create_new(paths, inbox_id, &purpose_lenses, broker).await
+        }
+        MaintainAction::UpdateExisting {
+            target_page_slug,
+            purpose_lenses,
+        } => {
+            update_existing(paths, inbox_id, &target_page_slug, &purpose_lenses)
         }
         MaintainAction::Reject { reason } => reject(paths, inbox_id, &reason),
     }
@@ -511,6 +528,7 @@ pub async fn execute_maintain(
 pub async fn create_new(
     paths: &wiki_store::WikiPaths,
     inbox_id: u32,
+    purpose_lenses: &[String],
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<MaintainOutcome> {
     // Step 1: locate the inbox entry + its raw_id.
@@ -527,13 +545,14 @@ pub async fn create_new(
     let proposal = propose_for_raw_entry(paths, raw_id, broker).await?;
 
     // Step 3: write concept page.
-    wiki_store::write_wiki_page(
+    wiki_store::write_wiki_page_with_purpose(
         paths,
         &proposal.slug,
         &proposal.title,
         &proposal.summary,
         &proposal.body,
         Some(proposal.source_raw_id),
+        purpose_lenses,
     )
     .map_err(|e| MaintainerError::Store(e.to_string()))?;
 
@@ -582,6 +601,7 @@ pub async fn create_new(
             metadata: serde_json::json!({
                 "path": "create_new",
                 "title": proposal.title,
+                "purpose_lenses": purpose_lenses,
             }),
         },
     );
@@ -589,6 +609,18 @@ pub async fn create_new(
     Ok(MaintainOutcome::Created {
         target_page_slug: proposal.slug,
     })
+}
+
+fn merge_reviewed_purpose_lenses(existing: &[String], reviewed: &[String]) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    for value in existing.iter().chain(reviewed.iter()) {
+        let lens = value.trim().to_ascii_lowercase();
+        if lens.is_empty() || merged.iter().any(|item| item == &lens) {
+            continue;
+        }
+        merged.push(lens);
+    }
+    merged
 }
 
 /// Path B — append the inbox's raw body into an existing wiki page.
@@ -608,6 +640,7 @@ pub fn update_existing(
     paths: &wiki_store::WikiPaths,
     inbox_id: u32,
     target_page_slug: &str,
+    purpose_lenses: &[String],
 ) -> Result<MaintainOutcome> {
     // Step 1: read the inbox entry (for source_raw_id) + raw body.
     let entries =
@@ -643,8 +676,11 @@ pub fn update_existing(
     merged.push_str(raw_body.trim_end_matches('\n'));
     merged.push('\n');
 
-    // Step 4: write back. Preserve existing title/summary — only body changes.
-    wiki_store::write_wiki_page_in_category(
+    let merged_purpose = merge_reviewed_purpose_lenses(&summary.purpose, purpose_lenses);
+
+    // Step 4: write back. Preserve existing title/summary and knowledge
+    // loop metadata — only body changes plus any reviewed purpose additions.
+    wiki_store::write_wiki_page_in_category_with_metadata(
         paths,
         &summary.category,
         &summary.slug,
@@ -652,6 +688,8 @@ pub fn update_existing(
         &summary.summary,
         &merged,
         summary.source_raw_id,
+        &merged_purpose,
+        &summary.expressed_in,
     )
     .map_err(|e| MaintainerError::Store(e.to_string()))?;
 
@@ -700,6 +738,7 @@ pub fn update_existing(
             ),
             metadata: serde_json::json!({
                 "path": "update_existing",
+                "purpose_lenses": merged_purpose,
             }),
         },
     );
@@ -4052,9 +4091,17 @@ mod tests {
         let canned = make_proposal_json("transformer", "Transformer", raw_id);
         let broker = MockBrokerSender { canned };
 
-        let outcome = execute_maintain(&paths, inbox_id, MaintainAction::CreateNew, &broker)
-            .await
-            .unwrap();
+        let purpose_lenses = vec!["Research".to_string(), "personal".to_string()];
+        let outcome = execute_maintain(
+            &paths,
+            inbox_id,
+            MaintainAction::CreateNew {
+                purpose_lenses: purpose_lenses.clone(),
+            },
+            &broker,
+        )
+        .await
+        .unwrap();
 
         match outcome {
             MaintainOutcome::Created { target_page_slug } => {
@@ -4064,7 +4111,8 @@ mod tests {
         }
 
         // Wiki page written.
-        assert!(wiki_store::read_wiki_page(&paths, "transformer").is_ok());
+        let (summary, _body) = wiki_store::read_wiki_page(&paths, "transformer").unwrap();
+        assert_eq!(summary.purpose, vec!["research", "personal"]);
 
         // Inbox patched.
         let entries = wiki_store::list_inbox_entries(&paths).unwrap();
@@ -4103,6 +4151,7 @@ mod tests {
             inbox_id,
             MaintainAction::UpdateExisting {
                 target_page_slug: "attention".to_string(),
+                purpose_lenses: vec!["building".to_string()],
             },
             &broker,
         )
@@ -4117,7 +4166,8 @@ mod tests {
         }
 
         // Page body now has both the original content and a dated update heading.
-        let (_summary, body) = wiki_store::read_wiki_page(&paths, "attention").unwrap();
+        let (summary, body) = wiki_store::read_wiki_page(&paths, "attention").unwrap();
+        assert_eq!(summary.purpose, vec!["learning", "building"]);
         assert!(body.contains("Original body."));
         assert!(
             body.contains("## 更新 ["),

@@ -3,7 +3,7 @@ title: Desktop Shell Architecture Overview
 doc_type: architecture
 status: active
 owner: desktop-shell
-last_verified: 2026-04-29
+last_verified: 2026-04-30
 source_of_truth: true
 related:
   - docs/desktop-shell/README.md
@@ -74,6 +74,10 @@ This document answers: how `desktop-shell` is currently organized.
   render a weekly Purpose Lens digest: each default lens shows new absorbed
   pages, reusable/expressible pages, and recent page titles, with a warning
   when wiki pages lack `purpose`.
+- Inbox Maintain decisions include a Purpose Lens picker. `create_new` writes
+  the selected lenses into the new wiki page frontmatter, while
+  `update_existing` merges reviewed lenses into the target page without
+  dropping existing `expressed_in` refs.
 - Wiki page summaries now carry optional `expressed_in` frontmatter refs. Home
   uses them for the `最近表达` pulse, and Purpose Lens digest counts expressed
   pages separately from pages that are still ready to express.

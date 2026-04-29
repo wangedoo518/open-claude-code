@@ -3,7 +3,7 @@ title: Buddy Tolaria Deep Product Design Implementation Plan
 doc_type: plan
 status: implemented
 owner: desktop-shell
-last_verified: 2026-04-29
+last_verified: 2026-04-30
 source_of_truth: false
 related:
   - docs/desktop-shell/specs/2026-04-29-buddy-tolaria-deep-product-design.md
@@ -393,6 +393,20 @@ Tolaria-inspired Buddy design.
   after expression writes.
 - Browser smoke now exercises the real bind -> Ask append -> wiki page read
   flow and verifies the automatic `expressed_in` mark.
+
+## Implemented Slice 30
+
+- Inbox Maintain decisions now expose a Purpose Lens picker so reviewers can
+  confirm whether an entry serves writing, building, operating, learning,
+  personal, or research before applying the action.
+- `POST /api/wiki/inbox/{id}/maintain` accepts optional `purpose_lenses` and
+  passes them through the maintainer path for both create and update decisions.
+- Maintainer-created wiki pages now write the reviewed purpose values into
+  frontmatter; update-existing flows merge reviewed purpose values into the
+  target page while preserving existing `expressed_in` refs.
+- Rust coverage verifies purpose normalization/deduping and maintainer
+  create/update writes, while browser smoke verifies the Inbox Purpose Lens
+  review surface renders from a real seeded inbox entry.
 
 ## Verification
 

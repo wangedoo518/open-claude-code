@@ -84,6 +84,7 @@ const routes = [
     name: "Inbox",
     hash: "/inbox",
     mustContain: ["INBOX", "Vault", "checkpoint"],
+    check: runInboxPurposeLensUiCheck,
   },
   {
     name: "Ask Purpose Lens",
@@ -143,6 +144,17 @@ Original smoke body.
 `,
     "utf8",
   );
+}
+
+async function seedInboxPurposeEntry() {
+  await fetchJson("/api/wiki/raw", {
+    method: "POST",
+    body: JSON.stringify({
+      source: "paste",
+      title: "Smoke Purpose Inbox",
+      body: "Smoke inbox item used to verify Purpose Lens review.",
+    }),
+  });
 }
 
 function hunkSmokeBody(topLine, bottomLine) {
@@ -511,6 +523,19 @@ async function runAskPurposeLensUiCheck(page) {
   );
 }
 
+async function runInboxPurposeLensUiCheck(page) {
+  const row = page.locator(".inbox-redesign-row").first();
+  await row.waitFor({ state: "visible", timeout: 10_000 });
+  await row.click();
+  await page.waitForFunction(
+    () =>
+      document.body.innerText.includes("Purpose Lens") &&
+      document.body.innerText.includes("学习"),
+    null,
+    { timeout: 10_000 },
+  );
+}
+
 async function runWikiEditCheck(page) {
   const updatedContent = `---
 type: concept
@@ -550,6 +575,7 @@ Updated smoke body from Playwright.
 
 async function run() {
   await seedWikiEditPage();
+  await seedInboxPurposeEntry();
   await runGitHunkDiscardCheck();
   await runGitAuditCheck();
   await runGitLineDiscardCheck();

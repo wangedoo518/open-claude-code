@@ -177,6 +177,8 @@ export interface UpdateProposal {
  */
 export interface MaintainRequest {
   action: MaintainAction;
+  /** Optional when `action === "create_new"`; empty falls back to `learning`. */
+  purpose_lenses?: string[];
   /** Required when `action === "update_existing"`. */
   target_page_slug?: string;
   /** Required when `action === "reject"`. Minimum 4 chars enforced client-side. */

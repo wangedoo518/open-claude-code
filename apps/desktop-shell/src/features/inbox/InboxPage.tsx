@@ -111,6 +111,10 @@ import {
   buildAskBindUrl,
   navigateToWikiPage,
 } from "@/features/wiki/navigate-helpers";
+import {
+  PURPOSE_LENSES,
+  type PurposeLensId,
+} from "@/features/purpose/purpose-lenses";
 
 /** InboxEntry enriched with the queue-intelligence envelope + decision. */
 export type IntelligentEntry = InboxEntry & {
@@ -424,6 +428,7 @@ export function InboxPage() {
   // instead of the per-entry Workbench.
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [purposeByEntryId, setPurposeByEntryId] = useState<Record<number, PurposeLensId[]>>({});
 
   // W3 sprint — CombinedPreviewDialog open state. The dialog receives
   // the derived `mergeTargetSlug` + selected ids so it can fan out to
@@ -609,6 +614,24 @@ export function InboxPage() {
     setSelectedIds(new Set());
   }, []);
 
+  const purposeForEntry = useCallback(
+    (entry: IntelligentEntry): PurposeLensId[] =>
+      purposeByEntryId[entry.id] ?? ["learning"],
+    [purposeByEntryId],
+  );
+
+  const toggleEntryPurpose = useCallback((entryId: number, lens: PurposeLensId) => {
+    setPurposeByEntryId((prev) => {
+      const current = prev[entryId] ?? ["learning"];
+      const next = current.includes(lens)
+        ? current.length > 1
+          ? current.filter((item) => item !== lens)
+          : current
+        : [...current, lens];
+      return { ...prev, [entryId]: next };
+    });
+  }, []);
+
   const selectedIdList = useMemo(
     () => Array.from(selectedIds),
     [selectedIds],
@@ -710,7 +733,10 @@ export function InboxPage() {
   const estimatedMinutes = Math.max(1, Math.ceil(pendingEntries.length * 7 / 60));
   const gitMetric = inboxGitMetric(gitQuery.data, Boolean(gitQuery.error));
 
-  const quickAcceptEntry = useCallback(async (entry: IntelligentEntry) => {
+  const quickAcceptEntry = useCallback(async (
+    entry: IntelligentEntry,
+    purposeLenses: PurposeLensId[] = ["learning"],
+  ) => {
     const action = entry.intelligence.recommended_action;
     const targetSlug =
       entry.intelligence.target_candidate?.slug ?? entry.target_page_slug ?? null;
@@ -724,23 +750,27 @@ export function InboxPage() {
       await maintainInboxEntry(entry.id, {
         action: "update_existing",
         target_page_slug: targetSlug,
+        purpose_lenses: purposeLenses,
       });
       return;
     }
 
-    await maintainInboxEntry(entry.id, { action: "create_new" });
+    await maintainInboxEntry(entry.id, {
+      action: "create_new",
+      purpose_lenses: purposeLenses,
+    });
   }, []);
 
   const handleQuickAccept = useCallback(
     async (entry: IntelligentEntry) => {
       try {
-        await quickAcceptEntry(entry);
+        await quickAcceptEntry(entry, purposeForEntry(entry));
       } finally {
         void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
         void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
       }
     },
-    [queryClient, quickAcceptEntry],
+    [purposeForEntry, queryClient, quickAcceptEntry],
   );
 
   const handleQuickReject = useCallback(
@@ -757,7 +787,7 @@ export function InboxPage() {
       if (items.length === 0) return;
       for (const entry of items) {
         try {
-          await quickAcceptEntry(entry);
+          await quickAcceptEntry(entry, purposeForEntry(entry));
         } catch (error) {
           console.warn("Failed to accept inbox entry", entry.id, error);
         }
@@ -765,7 +795,7 @@ export function InboxPage() {
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
-    [queryClient, quickAcceptEntry],
+    [purposeForEntry, queryClient, quickAcceptEntry],
   );
 
   const handleOpenEntryInAsk = useCallback(
@@ -894,6 +924,8 @@ export function InboxPage() {
           onToggleSelect={toggleSelected}
           onBulkSelect={bulkSelect}
           sharedTargetCounts={sharedTargetCounts}
+          purposeByEntryId={purposeByEntryId}
+          onTogglePurpose={toggleEntryPurpose}
         />
       </div>
 
@@ -1110,6 +1142,8 @@ function InboxRedesignList({
   selectedIds,
   onToggleSelect,
   onBulkSelect,
+  purposeByEntryId,
+  onTogglePurpose,
 }: {
   entries: IntelligentEntry[];
   isLoading: boolean;
@@ -1125,6 +1159,8 @@ function InboxRedesignList({
   onToggleSelect: (id: number) => void;
   onBulkSelect: (ids: number[], on: boolean) => void;
   sharedTargetCounts: Map<string, number>;
+  purposeByEntryId: Record<number, PurposeLensId[]>;
+  onTogglePurpose: (entryId: number, lens: PurposeLensId) => void;
 }) {
   const pendingEntries = useMemo(() => pendingByScore(entries), [entries]);
   const mergeEntries = useMemo(
@@ -1190,6 +1226,8 @@ function InboxRedesignList({
         selectedIds={selectedIds}
         onToggleSelect={onToggleSelect}
         onBulkSelect={onBulkSelect}
+        purposeByEntryId={purposeByEntryId}
+        onTogglePurpose={onTogglePurpose}
       />
       <InboxRedesignGroup
         title="建议新建页"
@@ -1206,6 +1244,8 @@ function InboxRedesignList({
         selectedIds={selectedIds}
         onToggleSelect={onToggleSelect}
         onBulkSelect={onBulkSelect}
+        purposeByEntryId={purposeByEntryId}
+        onTogglePurpose={onTogglePurpose}
       />
     </div>
   );
@@ -1227,6 +1267,8 @@ function InboxRedesignGroup({
   selectedIds,
   onToggleSelect,
   onBulkSelect,
+  purposeByEntryId,
+  onTogglePurpose,
 }: {
   title: string;
   count: number;
@@ -1243,6 +1285,8 @@ function InboxRedesignGroup({
   selectedIds: Set<number>;
   onToggleSelect: (id: number) => void;
   onBulkSelect: (ids: number[], on: boolean) => void;
+  purposeByEntryId: Record<number, PurposeLensId[]>;
+  onTogglePurpose: (entryId: number, lens: PurposeLensId) => void;
 }) {
   if (entries.length === 0) return null;
 
@@ -1297,6 +1341,8 @@ function InboxRedesignGroup({
             index={index}
             onSelect={() => onSelect(entry.id)}
             onToggleSelect={() => onToggleSelect(entry.id)}
+            selectedPurpose={purposeByEntryId[entry.id] ?? ["learning"]}
+            onTogglePurpose={(lens) => onTogglePurpose(entry.id, lens)}
             onAccept={() => void onAccept(entry)}
             onEdit={() => onEdit(entry)}
             onReject={() => void onReject(entry)}
@@ -1316,6 +1362,8 @@ function InboxRedesignRow({
   index,
   onSelect,
   onToggleSelect,
+  selectedPurpose,
+  onTogglePurpose,
   onAccept,
   onEdit,
   onReject,
@@ -1328,6 +1376,8 @@ function InboxRedesignRow({
   index: number;
   onSelect: () => void;
   onToggleSelect: () => void;
+  selectedPurpose: PurposeLensId[];
+  onTogglePurpose: (lens: PurposeLensId) => void;
   onAccept: () => void;
   onEdit: () => void;
   onReject: () => void;
@@ -1380,6 +1430,10 @@ function InboxRedesignRow({
           <span>·</span>
           <span>{getSourceLabel(entry)}</span>
         </div>
+        <InboxPurposeLensRow
+          selected={selectedPurpose}
+          onToggle={onTogglePurpose}
+        />
       </div>
 
       <div className="inbox-redesign-row-actions" onClick={(event) => event.stopPropagation()}>
@@ -1412,6 +1466,46 @@ function InboxRedesignRow({
         </button>
       </div>
     </article>
+  );
+}
+
+function InboxPurposeLensRow({
+  selected,
+  onToggle,
+}: {
+  selected: PurposeLensId[];
+  onToggle: (lens: PurposeLensId) => void;
+}) {
+  return (
+    <div
+      className="mt-2 flex flex-wrap items-center gap-1.5"
+      aria-label="Inbox Purpose Lens"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="text-muted-foreground/55" style={{ fontSize: 10 }}>
+        Purpose Lens
+      </span>
+      {PURPOSE_LENSES.map((lens) => {
+        const active = selected.includes(lens.id);
+        return (
+          <button
+            key={lens.id}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onToggle(lens.id)}
+            className={
+              "rounded-full border px-2 py-0.5 transition-colors " +
+              (active
+                ? "border-primary/35 bg-primary/10 text-primary"
+                : "border-border/35 bg-background/70 text-muted-foreground hover:border-border hover:text-foreground")
+            }
+            style={{ fontSize: 10 }}
+          >
+            {lens.zhLabel}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1642,6 +1736,7 @@ function EntryDetail({
   const [targetPageSlug, setTargetPageSlug] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState<string>("");
   const [maintainResult, setMaintainResult] = useState<MaintainResponse | null>(null);
+  const [purposeLenses, setPurposeLenses] = useState<PurposeLensId[]>(["learning"]);
 
   // W2 update_existing preview/apply state. Holds the live
   // `UpdateProposal` returned by `createProposal`; falls back to
@@ -1708,6 +1803,15 @@ function EntryDetail({
     candidatesQuery.data?.candidates ?? [];
   const topCandidate: TargetCandidate | null = candidates[0] ?? null;
 
+  const togglePurposeLens = useCallback((lens: PurposeLensId) => {
+    setPurposeLenses((prev) => {
+      if (prev.includes(lens)) {
+        return prev.length > 1 ? prev.filter((item) => item !== lens) : prev;
+      }
+      return [...prev, lens];
+    });
+  }, []);
+
   // Legacy Propose → Approve flow — fallback inside §2, unchanged.
   const resolveMutation = useMutation({
     mutationFn: (action: InboxResolveAction) => resolveInboxEntry(entry.id, action),
@@ -1729,14 +1833,18 @@ function EntryDetail({
 
   // W1 primary mutation: `POST /api/wiki/inbox/{id}/maintain`.
   const maintainMutation = useMutation({
-    mutationFn: () =>
-      maintainInboxEntry(entry.id, {
+    mutationFn: () => {
+      const payload = {
         action: maintainAction,
         target_page_slug:
           maintainAction === "update_existing" ? targetPageSlug ?? undefined : undefined,
         rejection_reason:
           maintainAction === "reject" ? rejectionReason.trim() : undefined,
-      }),
+        purpose_lenses:
+          maintainAction !== "reject" ? purposeLenses : undefined,
+      };
+      return maintainInboxEntry(entry.id, payload);
+    },
     onSuccess: (response) => {
       setMaintainResult(response);
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
@@ -1833,6 +1941,7 @@ function EntryDetail({
     setRejectionReason("");
     setMaintainResult(null);
     setActiveProposal(null);
+    setPurposeLenses(["learning"]);
     // Q2 — reset duplicate-guard state so a previously-dismissed guard
     // on a different entry doesn't silently carry over.
     setGuardDismissed(false);
@@ -1923,7 +2032,7 @@ function EntryDetail({
     if (isResolved || anyPending) return false;
     switch (maintainAction) {
       case "create_new":
-        return true;
+        return purposeLenses.length > 0;
       case "update_existing":
         if (displayProposal) return true;
         return (targetPageSlug?.trim().length ?? 0) > 0;
@@ -1936,6 +2045,7 @@ function EntryDetail({
     isResolved,
     anyPending,
     maintainAction,
+    purposeLenses.length,
     targetPageSlug,
     rejectionReason,
     displayProposal,
@@ -2215,6 +2325,11 @@ function EntryDetail({
                   ) : null}
                 </div>
               ) : null}
+              <InboxPurposeLensPicker
+                selected={purposeLenses}
+                disabled={anyPending || isResolved}
+                onToggle={togglePurposeLens}
+              />
               <MaintainActionRadio
                 value={maintainAction}
                 onValueChange={setMaintainAction}
@@ -2453,6 +2568,67 @@ function EntryDetail({
         />
       )}
     </div>
+  );
+}
+
+function InboxPurposeLensPicker({
+  selected,
+  disabled,
+  onToggle,
+}: {
+  selected: PurposeLensId[];
+  disabled: boolean;
+  onToggle: (lens: PurposeLensId) => void;
+}) {
+  return (
+    <section
+      className="rounded-md border border-border/30 bg-muted/10 px-3 py-2"
+      aria-labelledby="inbox-purpose-lens-heading"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h4
+            id="inbox-purpose-lens-heading"
+            className="font-medium text-foreground/85"
+            style={{ fontSize: 12 }}
+          >
+            Purpose Lens
+          </h4>
+          <p className="text-muted-foreground/65" style={{ fontSize: 11 }}>
+            这条知识服务什么产出？
+          </p>
+        </div>
+        <span
+          className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-primary"
+          style={{ fontSize: 10 }}
+        >
+          已选 {selected.length}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {PURPOSE_LENSES.map((lens) => {
+          const active = selected.includes(lens.id);
+          return (
+            <button
+              key={lens.id}
+              type="button"
+              aria-pressed={active}
+              disabled={disabled}
+              onClick={() => onToggle(lens.id)}
+              className={
+                "rounded-md border px-2 py-1 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 " +
+                (active
+                  ? "border-primary/45 bg-primary/10 text-primary"
+                  : "border-border/40 bg-background text-muted-foreground hover:border-border hover:text-foreground")
+              }
+              style={{ fontSize: 11 }}
+            >
+              {lens.zhLabel}
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

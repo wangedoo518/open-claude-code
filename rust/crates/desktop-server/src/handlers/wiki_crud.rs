@@ -1349,6 +1349,7 @@ pub(crate) async fn approve_wiki_inbox_with_write_handler(
 //
 // Flat request body (aligned with the TS `MaintainRequest` shape):
 //   { action: "create_new" | "update_existing" | "reject",
+//     purpose_lenses?: string[],
 //     target_page_slug?: string,
 //     rejection_reason?: string }
 //
@@ -1372,6 +1373,10 @@ pub(crate) struct InboxMaintainRequest {
     /// free string here so an unknown action returns a friendly 400
     /// instead of a serde parse error.
     action: String,
+    /// Optional when `action == "create_new"`; empty falls back to the
+    /// Buddy default (`learning`) inside wiki_store.
+    #[serde(default)]
+    purpose_lenses: Vec<String>,
     /// Required when `action == "update_existing"`.
     #[serde(default)]
     target_page_slug: Option<String>,
@@ -1412,7 +1417,9 @@ pub(crate) async fn inbox_maintain_handler(
     // Step 1: translate the flat action into the tagged enum, with
     // strict validation of the per-variant required fields.
     let action = match body.action.as_str() {
-        "create_new" => wiki_maintainer::MaintainAction::CreateNew,
+        "create_new" => wiki_maintainer::MaintainAction::CreateNew {
+            purpose_lenses: body.purpose_lenses.clone(),
+        },
         "update_existing" => {
             let slug = body
                 .target_page_slug
@@ -1430,6 +1437,7 @@ pub(crate) async fn inbox_maintain_handler(
             }
             wiki_maintainer::MaintainAction::UpdateExisting {
                 target_page_slug: slug,
+                purpose_lenses: body.purpose_lenses.clone(),
             }
         }
         "reject" => {
