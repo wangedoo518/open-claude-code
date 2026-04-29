@@ -5,6 +5,7 @@ owner: maintainer
 schema: v1
 title: "{A} vs {B}"
 summary: "Structured comparison of {A} and {B}"
+expressed_in: []
 created_at: "{created_at}"
 ---
 

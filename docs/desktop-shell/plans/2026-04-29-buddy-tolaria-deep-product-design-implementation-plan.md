@@ -367,6 +367,19 @@ Tolaria-inspired Buddy design.
 - Browser smoke now seeds a current-week learning page and verifies the Home
   Purpose Lens digest renders that absorbed wiki page.
 
+## Implemented Slice 28
+
+- Wiki page summaries now parse and expose optional `expressed_in` frontmatter
+  refs, allowing Buddy to represent Tolaria's capture -> organize -> express
+  loop as local Markdown/YAML instead of an external database concept.
+- Home/Pulse now renders a `最近表达` pulse from `expressed_in`, while Purpose
+  Lens cards split `可表达` pages from `已表达` pages so the health check shows
+  whether knowledge is being used.
+- Built-in Rules Studio templates now include `expressed_in: []`, and Wiki
+  article metadata shows an `已表达 N` badge when a page has output refs.
+- Browser smoke seeds an expressed wiki page and verifies the Home/Pulse
+  expression signal renders end to end.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

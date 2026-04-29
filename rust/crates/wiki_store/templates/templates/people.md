@@ -5,6 +5,7 @@ owner: maintainer
 schema: v1
 title: "{name}"
 summary: "{role_or_affiliation}"
+expressed_in: []
 created_at: "{created_at}"
 ---
 

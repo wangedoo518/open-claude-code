@@ -74,11 +74,15 @@ function localizePageKind(kind: string): string {
 function buildEditableMarkdown(summary: WikiPageSummary, body: string): string {
   const purpose = summary.purpose?.length ? summary.purpose : ["learning"];
   const purposeBlock = purpose.map((lens) => `  - ${lens}`).join("\n");
+  const expressedIn = summary.expressed_in ?? [];
+  const expressedInBlock = expressedIn.length
+    ? `expressed_in:\n${expressedIn.map((reference) => `  - ${reference}`).join("\n")}\n`
+    : "expressed_in: []\n";
   const sourceRaw =
     typeof summary.source_raw_id === "number"
       ? `source_raw_id: ${summary.source_raw_id}\n`
       : "";
-  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
+  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${expressedInBlock}${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
 }
 
 interface DraftValidation {
@@ -260,6 +264,7 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   const lastVerified = formatVerifiedDate(summary.last_verified);
   const editableMarkdown = data.content ?? buildEditableMarkdown(summary, body);
   const purpose = summary.purpose ?? [];
+  const expressedIn = summary.expressed_in ?? [];
 
   const handleEdit = () => {
     setDraft(editableMarkdown);
@@ -415,6 +420,11 @@ export function WikiArticle({ slug }: WikiArticleProps) {
             {purposeLensLabel(lens)}
           </span>
         ))}
+        {expressedIn.length ? (
+          <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            已表达 {expressedIn.length}
+          </span>
+        ) : null}
         {savedAt && Date.now() - savedAt < 5000 && (
           <>
             <span>&middot;</span>

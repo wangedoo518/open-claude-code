@@ -74,6 +74,9 @@ This document answers: how `desktop-shell` is currently organized.
   render a weekly Purpose Lens digest: each default lens shows new absorbed
   pages, reusable/expressible pages, and recent page titles, with a warning
   when wiki pages lack `purpose`.
+- Wiki page summaries now carry optional `expressed_in` frontmatter refs. Home
+  uses them for the `最近表达` pulse, and Purpose Lens digest counts expressed
+  pages separately from pages that are still ready to express.
 - Ask Purpose mode is carried on
   `POST /api/desktop/sessions/{id}/messages` as optional `purpose` values.
   The Rust layer normalizes the slugs, stores them on

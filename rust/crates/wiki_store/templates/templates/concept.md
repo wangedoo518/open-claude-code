@@ -5,6 +5,7 @@ owner: maintainer
 schema: v1
 title: "{title}"
 summary: "{summary}"
+expressed_in: []
 source_raw_id: {source_raw_id}
 created_at: "{created_at}"
 ---

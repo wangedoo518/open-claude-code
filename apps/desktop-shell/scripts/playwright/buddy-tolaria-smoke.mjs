@@ -17,7 +17,15 @@ const routes = [
   {
     name: "Home / Pulse",
     hash: "/",
-    mustContain: ["Home / Pulse", "外脑", "本周目的流动", "Smoke Edit Page", "最近 Git 操作"],
+    mustContain: [
+      "Home / Pulse",
+      "外脑",
+      "本周目的流动",
+      "Smoke Edit Page",
+      "最近表达",
+      "ask:smoke-session",
+      "最近 Git 操作",
+    ],
     check: async (page) => {
       await runStatusBarLinkCheck(page);
       await runCommandPaletteManifestCheck(page);
@@ -126,6 +134,8 @@ title: Smoke Edit Page
 summary: Browser smoke fixture for wiki editing
 purpose:
   - learning
+expressed_in:
+  - ask:smoke-session
 created_at: ${createdAt}
 ---
 

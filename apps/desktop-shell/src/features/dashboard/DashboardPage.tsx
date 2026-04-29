@@ -41,9 +41,15 @@ type PurposeDigestItem = {
   output: string;
   weeklyCount: number;
   readyCount: number;
+  expressedCount: number;
   totalCount: number;
   recentPages: Array<Pick<WikiPageSummary, "slug" | "title" | "created_at">>;
 };
+
+type RecentExpressionItem = Pick<
+  WikiPageSummary,
+  "slug" | "title" | "created_at" | "expressed_in"
+>;
 
 export function DashboardPage() {
   const statsQuery = useQuery({
@@ -96,6 +102,10 @@ export function DashboardPage() {
   const latestGitAudit = gitAuditQuery.data?.entries[0] ?? null;
   const purposeDigest = useMemo(
     () => buildPurposeDigest(pagesQuery.data?.pages ?? []),
+    [pagesQuery.data?.pages],
+  );
+  const recentExpressions = useMemo(
+    () => buildRecentExpressions(pagesQuery.data?.pages ?? []),
     [pagesQuery.data?.pages],
   );
   const activeExternalAiGrants =
@@ -299,6 +309,16 @@ export function DashboardPage() {
             </div>
             <div className="mt-5 border-t border-border/60 pt-4">
               <div className="flex items-center gap-2">
+                <MessageCircle className="size-4 text-primary" />
+                <h2 className="text-[15px] font-medium">最近表达</h2>
+              </div>
+              <RecentExpressionPulse
+                items={recentExpressions}
+                loading={pagesQuery.isLoading}
+              />
+            </div>
+            <div className="mt-5 border-t border-border/60 pt-4">
+              <div className="flex items-center gap-2">
                 <History className="size-4 text-primary" />
                 <h2 className="text-[15px] font-medium">最近 Git 操作</h2>
               </div>
@@ -336,6 +356,7 @@ function buildPurposeDigest(pages: WikiPageSummary[]): {
         output: lens.output,
         weeklyCount: 0,
         readyCount: 0,
+        expressedCount: 0,
         totalCount: 0,
         recentPages: [],
       },
@@ -354,11 +375,13 @@ function buildPurposeDigest(pages: WikiPageSummary[]): {
 
     const isRecent = isWithinLastWeek(page.created_at, now);
     const isReady = isExpressiblePage(page);
+    const hasExpression = Boolean(page.expressed_in?.length);
     for (const purpose of purposeIds) {
       const item = byId.get(purpose);
       if (!item) continue;
       item.totalCount += 1;
-      if (isReady) item.readyCount += 1;
+      if (hasExpression) item.expressedCount += 1;
+      if (isReady && !hasExpression) item.readyCount += 1;
       if (isRecent) {
         item.weeklyCount += 1;
         item.recentPages.push({
@@ -389,6 +412,19 @@ function isWithinLastWeek(value: string, now: number): boolean {
 function isExpressiblePage(page: WikiPageSummary): boolean {
   if (page.category && EXPRESSIBLE_CATEGORIES.has(page.category)) return true;
   return (page.confidence ?? 0) >= 0.6;
+}
+
+function buildRecentExpressions(pages: WikiPageSummary[]): RecentExpressionItem[] {
+  return pages
+    .filter((page) => page.expressed_in?.length)
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, 3)
+    .map((page) => ({
+      slug: page.slug,
+      title: page.title || page.slug,
+      created_at: page.created_at,
+      expressed_in: page.expressed_in,
+    }));
 }
 
 function PurposeWeeklyDigest({
@@ -442,9 +478,10 @@ function PurposeWeeklyDigest({
                 </div>
                 <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 text-[12px]">
+              <div className="mt-4 grid grid-cols-3 gap-2 text-[12px]">
                 <DigestMetric label="本周吸收" value={item.weeklyCount} />
                 <DigestMetric label="可表达" value={item.readyCount} />
+                <DigestMetric label="已表达" value={item.expressedCount} />
               </div>
               <div className="mt-3 space-y-1.5">
                 {item.recentPages.length ? (
@@ -487,6 +524,47 @@ function DigestMetric({ label, value }: { label: string; value: number }) {
     <div className="rounded-md bg-muted/50 px-2.5 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-1 text-[18px] font-semibold leading-none">{value}</div>
+    </div>
+  );
+}
+
+function RecentExpressionPulse({
+  items,
+  loading,
+}: {
+  items: RecentExpressionItem[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="mt-3 rounded-md bg-muted/50 px-3 py-3 text-[12px] text-muted-foreground">
+        正在同步表达记录
+      </div>
+    );
+  }
+
+  if (!items.length) {
+    return (
+      <div className="mt-3 rounded-md bg-muted/50 px-3 py-3 text-[12px] leading-5 text-muted-foreground">
+        暂无 expressed_in 记录。表达后可在页面 frontmatter 标记输出位置。
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      {items.map((item) => (
+        <Link
+          key={item.slug}
+          to={`/wiki/${item.slug}`}
+          className="block rounded-md bg-muted/50 px-3 py-2 text-[12px] transition-colors hover:bg-muted"
+        >
+          <div className="min-w-0 truncate text-foreground">{item.title}</div>
+          <div className="mt-1 min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+            {(item.expressed_in ?? []).slice(0, 2).join(" / ")}
+          </div>
+        </Link>
+      ))}
     </div>
   );
 }

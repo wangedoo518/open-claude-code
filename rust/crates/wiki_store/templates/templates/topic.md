@@ -5,6 +5,7 @@ owner: maintainer
 schema: v1
 title: "{topic_name}"
 summary: "{one_line_summary}"
+expressed_in: []
 created_at: "{created_at}"
 ---
 
