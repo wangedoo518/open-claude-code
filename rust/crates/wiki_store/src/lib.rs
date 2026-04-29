@@ -4220,17 +4220,17 @@ pub struct WikiGraphNode {
 }
 
 /// A directed edge in the wiki graph: `from` references `to`.
-/// Today the only edge type is `derived-from` (a concept page that
-/// was generated from a raw entry via the maintainer flow). Future
-/// edge types: `references` (concept-to-concept link in body),
-/// `mentions` (named entity overlap), `conflicts-with` (conflict
-/// detection from canonical §8 Triggers row 4).
+/// Today the edge types are `derived-from` (a concept page traces to
+/// a raw entry through `source_raw_id` or `source_refs`) and
+/// `references` (concept-to-concept link in body). Future edge
+/// types: `mentions` (named entity overlap), `conflicts-with`
+/// (conflict detection from canonical §8 Triggers row 4).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WikiGraphEdge {
     pub from: String,
     pub to: String,
-    /// Edge category: "derived-from" for raw->concept,
-    /// "references" for concept->concept (future), etc.
+    /// Edge category: "derived-from" for wiki->raw, "references"
+    /// for wiki->wiki, etc.
     pub kind: String,
 }
 
@@ -4250,11 +4250,11 @@ pub struct WikiGraph {
 /// edge force layout without doing its own filesystem walks.
 ///
 /// Edge construction (today):
-///   * For every concept page with a `source_raw_id` in its
-///     frontmatter, emit a `derived-from` edge from
-///     `wiki-{slug}` to `raw-{id}`. This is the only edge kind
-///     in the MVP — future feat(Q) backlinks pass adds
-///     `references` edges between concept pages.
+///   * For every concept page with a `source_raw_id` or `raw:<id>`
+///     in `source_refs`, emit a `derived-from` edge from
+///     `wiki-{slug}` to `raw-{id}`.
+///   * For every internal wiki link in a page body, emit a
+///     `references` edge from the source page to the target page.
 ///
 /// Empty wiki returns an empty graph (`raw_count = concept_count
 /// = edge_count = 0`). Missing wiki dir returns the same empty
@@ -4301,8 +4301,8 @@ pub fn build_wiki_graph(paths: &WikiPaths) -> Result<WikiGraph> {
             category: concept.category.clone(),
         });
 
-        // Edge: concept → raw via source_raw_id frontmatter.
-        if let Some(raw_id) = concept.source_raw_id {
+        // Edge: concept → raw via source_raw_id and source_refs frontmatter.
+        for raw_id in source_lineage_raw_ids(concept.source_raw_id, &concept.source_refs) {
             edges.push(WikiGraphEdge {
                 from: format!("wiki-{}", concept.slug),
                 to: format!("raw-{raw_id}"),
@@ -4407,6 +4407,69 @@ fn push_internal_link_slug(slugs: &mut Vec<String>, candidate: &str) {
         return;
     }
     slugs.push(slug);
+}
+
+fn raw_id_from_source_ref(reference: &str) -> Option<u32> {
+    let trimmed = reference.trim().to_ascii_lowercase();
+    let rest = trimmed.strip_prefix("raw:")?;
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+fn normalize_source_ref(reference: &str) -> Option<String> {
+    let trimmed = reference.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(raw_id) = raw_id_from_source_ref(trimmed) {
+        return Some(format!("raw:{raw_id:05}"));
+    }
+    Some(trimmed.to_ascii_lowercase())
+}
+
+fn push_normalized_source_ref(out: &mut Vec<String>, reference: &str) {
+    let Some(normalized) = normalize_source_ref(reference) else {
+        return;
+    };
+    if !out.iter().any(|existing| existing == &normalized) {
+        out.push(normalized);
+    }
+}
+
+fn source_lineage_refs(source_raw_id: Option<u32>, source_refs: &[String]) -> Vec<String> {
+    let mut refs = Vec::new();
+    if let Some(raw_id) = source_raw_id {
+        push_normalized_source_ref(&mut refs, &format!("raw:{raw_id:05}"));
+    }
+    for reference in source_refs {
+        push_normalized_source_ref(&mut refs, reference);
+    }
+    refs
+}
+
+fn source_lineage_raw_ids(source_raw_id: Option<u32>, source_refs: &[String]) -> Vec<u32> {
+    let mut ids = Vec::new();
+    if let Some(raw_id) = source_raw_id {
+        ids.push(raw_id);
+    }
+    for reference in source_refs {
+        if let Some(raw_id) = raw_id_from_source_ref(reference) {
+            if !ids.contains(&raw_id) {
+                ids.push(raw_id);
+            }
+        }
+    }
+    ids
+}
+
+fn source_ref_display_label(reference: &str) -> String {
+    if let Some(raw_id) = raw_id_from_source_ref(reference) {
+        format!("raw #{raw_id:05}")
+    } else {
+        reference.to_string()
+    }
 }
 
 /// List all concept pages that link to `target_slug` in their body.
@@ -4614,11 +4677,11 @@ fn locate_wiki_page_file(paths: &WikiPaths, slug: &str) -> Option<(PathBuf, &'st
 ///      Each match adds `+2` to score and appends a
 ///      `"共同链接: {C}"` reason.
 ///
-///   2. **Shared `source_raw_id`** — if both A and B were derived
-///      from the same raw entry, they're almost certainly covering
-///      the same underlying material. Adds `+3` (strictly stronger
-///      than a single shared link) and a
-///      `"共享来源: raw #{id:05}"` reason.
+///   2. **Shared source lineage** — if both A and B share the same
+///      `source_raw_id` or `source_refs` value, they're almost
+///      certainly covering the same underlying material. Adds `+3`
+///      (strictly stronger than a single shared link) and a
+///      `"共享来源: raw #{id:05}"` / `"共享来源: {ref}"` reason.
 ///
 /// Pages with `score = 0` (no shared signals) are dropped. Results
 /// are sorted by score descending, then slug ascending for stable
@@ -4644,7 +4707,7 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
     validate_wiki_slug(target_slug)?;
 
     // Find the target page's own on-disk file so we can read its
-    // body (for outgoing links) and frontmatter (for source_raw_id).
+    // body (for outgoing links) and frontmatter (for source lineage).
     // Searching across all categories mirrors how the page-graph UI
     // treats people/topic/compare pages as first-class citizens too.
     let (target_path, _target_category) = locate_wiki_page_file(paths, target_slug)
@@ -4658,11 +4721,12 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
         _t_summary,
         _t_purpose,
         _t_expressed_in,
-        _t_source_refs,
+        target_source_refs,
         target_source_raw,
         _t_created,
         _t_last_verified,
     ) = parse_wiki_frontmatter_fields(&target_content);
+    let target_lineage_refs = source_lineage_refs(target_source_raw, &target_source_refs);
 
     // Build the target's outgoing link set, lowercased (the parser
     // already lowercases) and with self-references removed so we
@@ -4713,13 +4777,14 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
             }
         }
 
-        // Signal 2: shared source_raw_id. Strictly stronger than
-        // a single link overlap (one well-chosen raw seed often
-        // spawns a cluster of tightly-related concept pages).
-        if let (Some(my_id), Some(their_id)) = (target_source_raw, page.source_raw_id) {
-            if my_id == their_id {
+        // Signal 2: shared source lineage. Strictly stronger than
+        // a single link overlap (one well-chosen source often spawns
+        // a cluster of tightly-related concept pages).
+        let page_lineage_refs = source_lineage_refs(page.source_raw_id, &page.source_refs);
+        for shared_ref in &target_lineage_refs {
+            if page_lineage_refs.contains(shared_ref) {
                 score += 3;
-                reasons.push(format!("共享来源: raw #{my_id:05}"));
+                reasons.push(format!("共享来源: {}", source_ref_display_label(shared_ref)));
             }
         }
 
@@ -9679,6 +9744,45 @@ mod tests {
         assert!(!g.edges.iter().any(|e| e.from == "wiki-orphan"));
     }
 
+    #[test]
+    fn build_wiki_graph_emits_derived_from_edges_from_source_refs() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        let raw = write_raw_entry(
+            &paths,
+            "paste",
+            "Source Ref",
+            "body",
+            &RawFrontmatter::for_paste("paste", None),
+        )
+        .unwrap();
+        write_wiki_page(
+            &paths,
+            "source-ref-page",
+            "Source Ref Page",
+            "summary",
+            "body",
+            None,
+        )
+        .unwrap();
+        let content = read_wiki_page_content(&paths, "source-ref-page")
+            .unwrap()
+            .replace(
+                "created_at:",
+                &format!("source_refs:\n  - raw:{:05}\ncreated_at:", raw.id),
+            );
+        overwrite_wiki_page_content(&paths, "source-ref-page", &content).unwrap();
+
+        let g = build_wiki_graph(&paths).unwrap();
+        assert!(g.edges.iter().any(|e| {
+            e.from == "wiki-source-ref-page"
+                && e.to == format!("raw-{}", raw.id)
+                && e.kind == "derived-from"
+        }));
+    }
+
     // ── G1 related-pages + page-graph tests ──────────────────────
 
     /// Pages A and B both link to X (a third page). Page C links
@@ -9805,6 +9909,46 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("共享来源") && r.contains("00042")),
             "expected a 共享来源 raw #00042 reason, got {:?}",
+            echo_hit.reasons
+        );
+        assert!(!related.iter().any(|r| r.slug == "foxtrot"));
+    }
+
+    #[test]
+    fn compute_related_shared_source_refs() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page(&paths, "delta", "Delta", "summary d", "Body d.", None).unwrap();
+        write_wiki_page(&paths, "echo", "Echo", "summary e", "Body e.", None).unwrap();
+        write_wiki_page(&paths, "foxtrot", "Foxtrot", "summary f", "Body f.", None).unwrap();
+
+        let delta = read_wiki_page_content(&paths, "delta")
+            .unwrap()
+            .replace("created_at:", "source_refs:\n  - raw:00042\ncreated_at:");
+        overwrite_wiki_page_content(&paths, "delta", &delta).unwrap();
+        let echo = read_wiki_page_content(&paths, "echo")
+            .unwrap()
+            .replace("created_at:", "source_refs:\n  - raw:42\ncreated_at:");
+        overwrite_wiki_page_content(&paths, "echo", &echo).unwrap();
+        let foxtrot = read_wiki_page_content(&paths, "foxtrot")
+            .unwrap()
+            .replace("created_at:", "source_refs:\n  - raw:00099\ncreated_at:");
+        overwrite_wiki_page_content(&paths, "foxtrot", &foxtrot).unwrap();
+
+        let related = compute_related_pages(&paths, "delta").unwrap();
+        let echo_hit = related
+            .iter()
+            .find(|r| r.slug == "echo")
+            .expect("expected echo as related via shared source_refs");
+        assert_eq!(echo_hit.score, 3);
+        assert!(
+            echo_hit
+                .reasons
+                .iter()
+                .any(|r| r.contains("共享来源") && r.contains("00042")),
+            "expected a source_refs reason, got {:?}",
             echo_hit.reasons
         );
         assert!(!related.iter().any(|r| r.slug == "foxtrot"));

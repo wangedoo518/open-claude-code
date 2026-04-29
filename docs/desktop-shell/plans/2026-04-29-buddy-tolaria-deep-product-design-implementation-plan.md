@@ -512,6 +512,20 @@ Tolaria-inspired Buddy design.
 - Browser smoke now requires the Home/Pulse route to render the source-lineage
   follow-up text in the real seeded Vault.
 
+## Implemented Slice 39
+
+- Wiki relation scoring now normalizes legacy `source_raw_id` and modern
+  `source_refs` into the same lineage refs, so pages sharing `raw:00042` relate
+  even when one uses old frontmatter and the other uses the Tolaria-style list.
+- `build_wiki_graph` now emits `derived-from` edges for `raw:<id>` values in
+  `source_refs`, not only for `source_raw_id`.
+- Related-page reasons keep the existing user-facing copy (`共享来源: raw
+  #00042`) after normalization, so Wiki Article relations do not expose schema
+  implementation details.
+- Rust coverage verifies source-ref graph edges and source-ref related scoring;
+  browser smoke checks the real page graph endpoint returns a related peer via
+  shared `source_refs`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

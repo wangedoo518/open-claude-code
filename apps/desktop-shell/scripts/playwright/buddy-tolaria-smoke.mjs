@@ -9,6 +9,7 @@ const BASE_URL = process.env.BUDDY_SMOKE_URL ?? "http://127.0.0.1:5173/";
 const API_BASE = process.env.BUDDY_API_BASE ?? "http://127.0.0.1:4357";
 const HEADLESS = process.env.BUDDY_HEADLESS !== "false";
 const SMOKE_SLUG = "smoke-edit-page";
+const SMOKE_SOURCE_PEER_SLUG = "smoke-source-peer";
 const HUNK_SMOKE_PATH = "wiki/concepts/smoke-hunk-discard.md";
 const LINE_SMOKE_PATH = "wiki/concepts/smoke-line-discard.md";
 const CHANGE_BLOCK_SMOKE_PATH = "wiki/concepts/smoke-change-block-discard.md";
@@ -146,6 +147,26 @@ created_at: ${createdAt}
 ---
 
 Original smoke body.
+`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(conceptsDir, `${SMOKE_SOURCE_PEER_SLUG}.md`),
+    `---
+type: concept
+status: active
+owner: smoke
+schema: v1
+title: Smoke Source Peer
+summary: Browser smoke fixture for source-ref related pages
+purpose:
+  - research
+source_refs:
+  - raw:00042
+created_at: ${createdAt}
+---
+
+Peer smoke body.
 `,
     "utf8",
   );
@@ -516,6 +537,18 @@ async function runAskWikiExpressionMarkCheck() {
   }
 }
 
+async function runSourceRefsRelatedGraphCheck() {
+  const graph = await fetchJson(`/api/wiki/pages/${encodeURIComponent(SMOKE_SLUG)}/graph`);
+  const peer = graph.related?.find((item) => item.slug === SMOKE_SOURCE_PEER_SLUG);
+  if (!peer) {
+    throw new Error("source_refs graph smoke expected the source peer in related pages");
+  }
+  const reasons = JSON.stringify(peer.reasons ?? []);
+  if (!reasons.includes("共享来源") || !reasons.includes("00042")) {
+    throw new Error(`source_refs graph smoke expected shared-source reason, got ${reasons}`);
+  }
+}
+
 async function runKnowledgeSourceRefsSearchCheck(page) {
   const sourceSelect = page.getByLabel("来源筛选");
   await sourceSelect.selectOption("sourced");
@@ -607,6 +640,7 @@ async function run() {
   await runRulesFileEditCheck();
   await runAskPurposeLensApiCheck();
   await runAskWikiExpressionMarkCheck();
+  await runSourceRefsRelatedGraphCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const page = await browser.newPage();

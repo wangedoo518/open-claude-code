@@ -87,7 +87,9 @@ This document answers: how `desktop-shell` is currently organized.
   filter, while the positive stat links to `source=sourced`. Purpose Lens
   digest counts expressed pages separately from pages that are still ready to
   express, Knowledge search/listing can scan and preview `source_refs`, and
-  Wiki Article surfaces them as compact lineage chips.
+  Wiki Article surfaces them as compact lineage chips. Page relations and the
+  graph layer treat `source_refs` and `source_raw_id` as one normalized lineage
+  signal for related-page scoring and `derived-from` edges.
 - Wiki direct edit accepts the full Markdown/YAML file, but both the editor
   save panel and `PUT /api/wiki/pages/{slug}` validate schema-sensitive
   frontmatter fields (`type`, `status`, `schema`, `source_raw_id`, `purpose`,
