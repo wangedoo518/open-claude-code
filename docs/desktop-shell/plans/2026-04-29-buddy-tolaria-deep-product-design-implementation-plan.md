@@ -476,6 +476,17 @@ Tolaria-inspired Buddy design.
   list renders that lineage, and searches by the source ref through the real
   API/UI path.
 
+## Implemented Slice 36
+
+- Home/Pulse now includes `来源可追溯` in the first health-stat band, counting
+  wiki pages that carry either legacy `source_raw_id` or modern `source_refs`
+  lineage.
+- This keeps Tolaria's source-trail discipline visible on the default homepage:
+  users can see whether organized knowledge is traceable without opening
+  Knowledge or editing YAML.
+- Browser smoke now requires the Home/Pulse route to render the lineage health
+  label after seeding a page with `source_refs`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

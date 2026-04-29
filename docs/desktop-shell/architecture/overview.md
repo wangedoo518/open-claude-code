@@ -81,10 +81,11 @@ This document answers: how `desktop-shell` is currently organized.
   `update_existing` merges reviewed lenses into the target page without
   dropping existing `expressed_in` refs.
 - Wiki page summaries now carry optional `expressed_in` and `source_refs`
-  frontmatter refs. Home uses `expressed_in` for the `最近表达` pulse, Purpose
-  Lens digest counts expressed pages separately from pages that are still ready
-  to express, Knowledge search/listing can scan and preview `source_refs`, and
-  Wiki Article surfaces them as compact lineage chips.
+  frontmatter refs. Home uses `expressed_in` for the `最近表达` pulse and counts
+  pages with source lineage in the health stats, Purpose Lens digest counts
+  expressed pages separately from pages that are still ready to express,
+  Knowledge search/listing can scan and preview `source_refs`, and Wiki Article
+  surfaces them as compact lineage chips.
 - Wiki direct edit accepts the full Markdown/YAML file, but both the editor
   save panel and `PUT /api/wiki/pages/{slug}` validate schema-sensitive
   frontmatter fields (`type`, `status`, `schema`, `source_raw_id`, `purpose`,

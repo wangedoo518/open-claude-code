@@ -104,6 +104,10 @@ export function DashboardPage() {
     () => buildPurposeDigest(pagesQuery.data?.pages ?? []),
     [pagesQuery.data?.pages],
   );
+  const sourcedPageCount = useMemo(
+    () => (pagesQuery.data?.pages ?? []).filter(hasSourceLineage).length,
+    [pagesQuery.data?.pages],
+  );
   const recentExpressions = useMemo(
     () => buildRecentExpressions(pagesQuery.data?.pages ?? []),
     [pagesQuery.data?.pages],
@@ -331,10 +335,11 @@ export function DashboardPage() {
           </div>
         </section>
 
-        <section className="grid gap-3 md:grid-cols-4">
+        <section className="grid gap-3 md:grid-cols-5">
           <MiniStat icon={FileText} label="知识页" value={stats?.wiki_count ?? 0} />
           <MiniStat icon={ClipboardList} label="原始素材" value={stats?.raw_count ?? 0} />
           <MiniStat icon={MessageCircle} label="今日摄入" value={stats?.today_ingest_count ?? 0} />
+          <MiniStat icon={History} label="来源可追溯" value={sourcedPageCount} />
           <MiniStat icon={AlertTriangle} label="Schema 风险" value={schemaViolations} />
         </section>
       </div>
@@ -412,6 +417,13 @@ function isWithinLastWeek(value: string, now: number): boolean {
 function isExpressiblePage(page: WikiPageSummary): boolean {
   if (page.category && EXPRESSIBLE_CATEGORIES.has(page.category)) return true;
   return (page.confidence ?? 0) >= 0.6;
+}
+
+function hasSourceLineage(page: WikiPageSummary): boolean {
+  return (
+    (typeof page.source_raw_id === "number" && page.source_raw_id > 0) ||
+    Boolean(page.source_refs?.length)
+  );
 }
 
 function buildRecentExpressions(pages: WikiPageSummary[]): RecentExpressionItem[] {
