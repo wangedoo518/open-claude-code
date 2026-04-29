@@ -516,6 +516,13 @@ async function runAskWikiExpressionMarkCheck() {
 }
 
 async function runKnowledgeSourceRefsSearchCheck(page) {
+  const sourceSelect = page.getByLabel("来源筛选");
+  await sourceSelect.selectOption("sourced");
+  await page.waitForFunction(
+    () => window.location.hash.includes("source=sourced"),
+    null,
+    { timeout: 10_000 },
+  );
   const input = page.getByPlaceholder("搜索标题、摘要或来源…");
   await input.fill("raw:00042");
   await page.waitForFunction(

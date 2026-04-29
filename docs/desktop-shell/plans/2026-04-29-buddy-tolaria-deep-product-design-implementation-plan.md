@@ -487,6 +487,19 @@ Tolaria-inspired Buddy design.
 - Browser smoke now requires the Home/Pulse route to render the lineage health
   label after seeding a page with `source_refs`.
 
+## Implemented Slice 37
+
+- Knowledge now has a dedicated Source filter with `全部来源`, `有来源`, and
+  `缺来源`, backed by shareable `?source=sourced|missing` query params.
+- The Home/Pulse `来源可追溯` health stat now links directly to
+  `/wiki?source=sourced`, turning the homepage signal into a concrete Knowledge
+  workbench view.
+- The filter recognizes both modern `source_refs` and legacy `source_raw_id`,
+  so older maintained pages and newer Tolaria-style lineage pages behave
+  consistently.
+- Browser smoke now exercises the real Source filter select and verifies the
+  hash route carries `source=sourced` before searching by a seeded source ref.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

@@ -25,6 +25,7 @@ import {
 type SortMode = "recent" | "oldest" | "words" | "refs";
 type FilterMode = "all" | "concept" | "derived";
 type PurposeFilterMode = "all" | PurposeLensId;
+type SourceFilterMode = "all" | "sourced" | "missing";
 type GroupKey = "today" | "yesterday" | "week" | "older";
 
 const GROUPS: Array<{ key: GroupKey; label: string }> = [
@@ -49,13 +50,17 @@ function classifyPage(page: WikiPageSummary): "concept" | "derived" | "other" {
   if (category === "concept" || slug.includes("concept/") || slug.includes("concepts/")) {
     return "concept";
   }
-  if (
-    (typeof page.source_raw_id === "number" && page.source_raw_id > 0) ||
-    (page.source_refs?.length ?? 0) > 0
-  ) {
+  if (hasSourceLineage(page)) {
     return "derived";
   }
   return "other";
+}
+
+function hasSourceLineage(page: WikiPageSummary): boolean {
+  return (
+    (typeof page.source_raw_id === "number" && page.source_raw_id > 0) ||
+    (page.source_refs?.length ?? 0) > 0
+  );
 }
 
 function groupByTime(raw: string): GroupKey {
@@ -154,6 +159,11 @@ function parsePurposeFilter(raw: string | null): PurposeFilterMode {
     : "all";
 }
 
+function parseSourceFilter(raw: string | null): SourceFilterMode {
+  if (raw === "sourced" || raw === "missing") return raw;
+  return "all";
+}
+
 function searchHitSourceLabel(hit: WikiSearchHit, query: string): string {
   if (includesQuery(hit.page.title, query)) return "标题";
   if (includesQuery(hit.page.summary, query)) return "摘要";
@@ -191,6 +201,9 @@ export function KnowledgePagesList() {
   const [purposeMode, setPurposeMode] = useState<PurposeFilterMode>(() =>
     parsePurposeFilter(searchParams.get("purpose")),
   );
+  const [sourceMode, setSourceMode] = useState<SourceFilterMode>(() =>
+    parseSourceFilter(searchParams.get("source")),
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const rawSearchTerm = searchTerm.trim();
   const debouncedQuery = useDebouncedValue(rawSearchTerm, 250);
@@ -206,6 +219,7 @@ export function KnowledgePagesList() {
 
   useEffect(() => {
     setPurposeMode(parsePurposeFilter(searchParams.get("purpose")));
+    setSourceMode(parseSourceFilter(searchParams.get("source")));
   }, [searchParams]);
 
   const updatePurposeMode = (next: PurposeFilterMode) => {
@@ -215,6 +229,17 @@ export function KnowledgePagesList() {
       params.delete("purpose");
     } else {
       params.set("purpose", next);
+    }
+    setSearchParams(params, { replace: true });
+  };
+
+  const updateSourceMode = (next: SourceFilterMode) => {
+    setSourceMode(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "all") {
+      params.delete("source");
+    } else {
+      params.set("source", next);
     }
     setSearchParams(params, { replace: true });
   };
@@ -264,8 +289,11 @@ export function KnowledgePagesList() {
     return [...pages]
       .filter((page) => {
         const kind = classifyPage(page);
+        const hasSource = hasSourceLineage(page);
         if (filterMode === "concept" && kind !== "concept") return false;
         if (filterMode === "derived" && kind !== "derived") return false;
+        if (sourceMode === "sourced" && !hasSource) return false;
+        if (sourceMode === "missing" && hasSource) return false;
         if (
           purposeMode !== "all" &&
           !(page.purpose ?? []).includes(purposeMode)
@@ -284,7 +312,7 @@ export function KnowledgePagesList() {
         }
         return toTime(b.created_at) - toTime(a.created_at);
       });
-  }, [degreeById, filterMode, pages, purposeMode, sortMode]);
+  }, [degreeById, filterMode, pages, purposeMode, sortMode, sourceMode]);
 
   const searchHits: WikiSearchHit[] = useMemo(
     () => searchQuery.data?.hits ?? [],
@@ -443,6 +471,18 @@ export function KnowledgePagesList() {
                 {lens.zhLabel}
               </option>
             ))}
+          </select>
+          <select
+            className="ds-kb-sort"
+            value={sourceMode}
+            onChange={(event) =>
+              updateSourceMode(event.target.value as SourceFilterMode)
+            }
+            aria-label="来源筛选"
+          >
+            <option value="all">全部来源</option>
+            <option value="sourced">有来源</option>
+            <option value="missing">缺来源</option>
           </select>
         </div>
       </div>

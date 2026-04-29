@@ -339,7 +339,12 @@ export function DashboardPage() {
           <MiniStat icon={FileText} label="知识页" value={stats?.wiki_count ?? 0} />
           <MiniStat icon={ClipboardList} label="原始素材" value={stats?.raw_count ?? 0} />
           <MiniStat icon={MessageCircle} label="今日摄入" value={stats?.today_ingest_count ?? 0} />
-          <MiniStat icon={History} label="来源可追溯" value={sourcedPageCount} />
+          <MiniStat
+            icon={History}
+            label="来源可追溯"
+            value={sourcedPageCount}
+            href="/wiki?source=sourced"
+          />
           <MiniStat icon={AlertTriangle} label="Schema 风险" value={schemaViolations} />
         </section>
       </div>
@@ -740,13 +745,15 @@ function MiniStat({
   icon: Icon,
   label,
   value,
+  href,
 }: {
   icon: LucideIcon;
   label: string;
   value: number;
+  href?: string;
 }) {
-  return (
-    <div className="rounded-lg border border-border bg-card px-4 py-4">
+  const content = (
+    <>
       <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
         <Icon className="size-3.5" />
         <span>{label}</span>
@@ -759,6 +766,21 @@ function MiniStat({
           </span>
         ) : null}
       </div>
+    </>
+  );
+  const className =
+    "rounded-lg border border-border bg-card px-4 py-4" +
+    (href ? " transition-colors hover:border-primary/40 hover:bg-muted/30" : "");
+  if (href) {
+    return (
+      <Link to={href} className={className}>
+        {content}
+      </Link>
+    );
+  }
+  return (
+    <div className={className}>
+      {content}
     </div>
   );
 }
