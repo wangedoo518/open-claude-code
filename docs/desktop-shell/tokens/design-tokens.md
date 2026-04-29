@@ -3,14 +3,30 @@ title: Desktop Shell Design Tokens
 doc_type: token
 status: active
 owner: desktop-shell
-last_verified: 2026-04-06
+last_verified: 2026-04-29
 source_of_truth: true
 related:
   - docs/desktop-shell/README.md
   - docs/desktop-shell/operations/README.md
+  - docs/desktop-shell/specs/2026-04-29-buddy-tolaria-deep-product-design.md
 ---
 
 # Warwolf Desktop Design Token 规范
+
+## 2026-04-29 Tolaria-style Shell Additions
+
+The current desktop shell now includes a quiet Tolaria-style workbench layer:
+
+| Token / class | Role |
+|---|---|
+| `.ds-rail` | 56px primary rail for Home, Ask, Inbox, Knowledge, Rules, Connections, Settings |
+| `.ds-workspace-sidebar` | 250px secondary sidebar for Knowledge and Rules |
+| `.ds-status-bar` | 30px global status bar for Vault/Git, Inbox, permission, and external AI state |
+| `.ds-status-item[data-tone]` | `success`, `warning`, `muted` state language |
+| `.ds-kb-purpose-chip` | Purpose Lens chip inside Knowledge rows |
+
+Purpose Lens default values are `writing`, `building`, `operating`,
+`learning`, `personal`, and `research`.
 
 > 基于 Claude Code v2.1.88 `src/utils/theme.ts` 逆向提取
 > 原始定义：89 个语义化 token，6 套主题变体（light/dark × normal/daltonized/ansi）

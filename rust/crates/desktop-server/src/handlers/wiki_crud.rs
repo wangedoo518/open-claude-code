@@ -1943,10 +1943,80 @@ pub(crate) async fn get_wiki_page_handler(
             }),
         ),
     })?;
+    let content = wiki_store::read_wiki_page_content(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read_wiki_page_content failed: {e}"),
+            }),
+        )
+    })?;
     Ok(Json(serde_json::json!({
         "summary": summary,
         "body": body,
+        "content": content,
     })))
+}
+
+/// `PUT /api/wiki/pages/{slug}`
+///
+/// Human wiki edit path. Accepts the complete markdown file, including
+/// YAML frontmatter, validates the minimal required frontmatter shape,
+/// preserves all additional fields, writes atomically, and logs the edit.
+pub(crate) async fn put_wiki_page_handler(
+    Path(slug): Path<String>,
+    Json(body): Json<PutWikiPageRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let written_path =
+        wiki_store::overwrite_wiki_page_content(&paths, &slug, &body.content).map_err(|e| {
+            let status = match e {
+                wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: format!("wiki page write failed: {e}"),
+                }),
+            )
+        })?;
+
+    if let Err(e) = wiki_store::append_wiki_log(&paths, "human-edit-wiki-page", &slug) {
+        eprintln!("put_wiki_page: page written but log append failed: {e}");
+    }
+
+    let (summary, body) = wiki_store::read_wiki_page(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read_wiki_page after write failed: {e}"),
+            }),
+        )
+    })?;
+    let content = wiki_store::read_wiki_page_content(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read_wiki_page_content after write failed: {e}"),
+            }),
+        )
+    })?;
+    let byte_size = content.len();
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "path": written_path.display().to_string(),
+        "byte_size": byte_size,
+        "summary": summary,
+        "body": body,
+        "content": content,
+    })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PutWikiPageRequest {
+    content: String,
 }
 
 /// `WS /ws/wechat-inbox` (canonical §9.3 · feat O)

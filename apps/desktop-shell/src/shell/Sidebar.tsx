@@ -54,9 +54,8 @@ export function AppSidebar() {
   const appMode = useSettingsStore((s) => s.appMode);
   const setAppMode = useSettingsStore((s) => s.setAppMode);
 
-  const primaryItems = CLAWWIKI_ROUTES.filter(
-    (r) => r.section === "primary" || r.section === "funnel",
-  );
+  const dailyItems = CLAWWIKI_ROUTES.filter((r) => r.section === "daily");
+  const tuneItems = CLAWWIKI_ROUTES.filter((r) => r.section === "tune");
   const settingsRoute = CLAWWIKI_ROUTES.find((r) => r.key === "settings");
 
   // Keep `appMode` auto-synced with the route. Legacy consumers still
@@ -70,6 +69,7 @@ export function AppSidebar() {
       path.startsWith("/wiki") ||
       path.startsWith("/graph") ||
       path.startsWith("/schema") ||
+      path.startsWith("/rules") ||
       path.startsWith("/inbox") ||
       path.startsWith("/raw")
     ) {
@@ -84,11 +84,19 @@ export function AppSidebar() {
   return (
     <>
       <aside className="ds-rail" aria-label="主导航">
-        <Link to="/dashboard" className="ds-rail-brand" title="ClawWiki · 你的外脑">
-          C
+        <Link to="/" className="ds-rail-brand" title="Buddy · 你的外脑">
+          B
         </Link>
         <div className="ds-rail-items">
-          {primaryItems.map((route) => (
+          {dailyItems.map((route) => (
+            <RailItem
+              key={route.key}
+              route={route}
+              active={isActive(location.pathname, route.path)}
+            />
+          ))}
+          <div className="ds-rail-separator" aria-hidden="true" />
+          {tuneItems.map((route) => (
             <RailItem
               key={route.key}
               route={route}
@@ -116,6 +124,14 @@ export function AppSidebar() {
           able to switch conversations without re-introducing a 256px
           sidebar on every other route. */}
       {onAsk && <AskSecondaryColumn />}
+      {!onAsk && location.pathname.startsWith("/wiki") && (
+        <WorkspaceSecondaryColumn kind="knowledge" />
+      )}
+      {!onAsk &&
+        (location.pathname.startsWith("/rules") ||
+          location.pathname.startsWith("/schema")) && (
+          <WorkspaceSecondaryColumn kind="rules" />
+        )}
     </>
   );
 }
@@ -193,5 +209,50 @@ function AskSecondaryColumn() {
         </button>
       </div>
     </div>
+  );
+}
+
+function WorkspaceSecondaryColumn({
+  kind,
+}: {
+  kind: "knowledge" | "rules";
+}) {
+  const title = kind === "knowledge" ? "知识库" : "整理规则";
+  const subtitle = kind === "knowledge" ? "页面、目的、来源" : "Types / Templates / Policies";
+  const items =
+    kind === "knowledge"
+      ? [
+          { label: "页面", href: "/wiki" },
+          { label: "关系图", href: "/wiki?view=graph" },
+          { label: "原始素材", href: "/wiki?view=raw" },
+          { label: "Writing", href: "/wiki?purpose=writing" },
+          { label: "Research", href: "/wiki?purpose=research" },
+          { label: "Personal", href: "/wiki?purpose=personal" },
+        ]
+      : [
+          { label: "Types", href: "/rules#types" },
+          { label: "Templates", href: "/rules#templates" },
+          { label: "Policies", href: "/rules#policies" },
+          { label: "Guidance", href: "/rules#guidance" },
+          { label: "Validation", href: "/rules#validation" },
+        ];
+
+  return (
+    <aside className="ds-workspace-sidebar" aria-label={`${title}侧栏`}>
+      <div className="ds-workspace-sidebar-head">
+        <div className="ds-workspace-sidebar-title">{title}</div>
+        <div className="ds-workspace-sidebar-subtitle">{subtitle}</div>
+      </div>
+      <nav className="ds-workspace-sidebar-nav">
+        {items.map((item) => (
+          <Link key={item.href} to={item.href} className="ds-workspace-sidebar-link">
+            {item.label}
+          </Link>
+        ))}
+      </nav>
+      <div className="ds-workspace-sidebar-note">
+        250px 默认展开；高级视图仍可通过 ⌘K 进入。
+      </div>
+    </aside>
   );
 }

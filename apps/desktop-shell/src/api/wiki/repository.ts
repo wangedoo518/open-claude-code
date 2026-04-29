@@ -29,6 +29,7 @@ import type {
   WikiPageDetailResponse,
   WikiPageProposal,
   WikiPagesListResponse,
+  WikiPageWriteResponse,
   WikiProposalResponse,
   WikiSearchResponse,
   WikiSpecialFileResponse,
@@ -288,6 +289,20 @@ export async function listWikiPages(): Promise<WikiPagesListResponse> {
 export async function getWikiPage(slug: string): Promise<WikiPageDetailResponse> {
   return fetchJson<WikiPageDetailResponse>(
     `/api/wiki/pages/${encodeURIComponent(slug)}`,
+  );
+}
+
+/** PUT `/api/wiki/pages/:slug` — overwrite a wiki page's full markdown. */
+export async function putWikiPage(
+  slug: string,
+  content: string,
+): Promise<WikiPageWriteResponse> {
+  return fetchJson<WikiPageWriteResponse>(
+    `/api/wiki/pages/${encodeURIComponent(slug)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    },
   );
 }
 

@@ -29,15 +29,16 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
-  Ruler,
   FileText,
   ShieldAlert,
   Pencil,
   Save,
   X,
   CheckCircle2,
+  Bot,
+  FileCode2,
 } from "lucide-react";
-import { getWikiSchema, putWikiSchema } from "@/api/wiki/repository";
+import { getSchemaTemplates, getWikiSchema, putWikiSchema } from "@/api/wiki/repository";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 
@@ -47,6 +48,11 @@ export function SchemaEditorPage() {
     queryKey: ["wiki", "schema"] as const,
     queryFn: () => getWikiSchema(),
     staleTime: 30_000,
+  });
+  const templatesQuery = useQuery({
+    queryKey: ["wiki", "schema", "templates"] as const,
+    queryFn: () => getSchemaTemplates(),
+    staleTime: 60_000,
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -97,10 +103,10 @@ export function SchemaEditorPage() {
       {/* Hero */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
         <h1 className="text-lg text-foreground">
-          整理规则
+          Rules Studio
         </h1>
         <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-          AI 整理知识时遵循的规则。只能由你改写。
+          用户教外脑如何整理：Types、Templates、Policies、Guidance 与 Validation 收束在一个工作区。
         </p>
       </div>
 
@@ -130,6 +136,7 @@ export function SchemaEditorPage() {
             path={schemaQuery.data.path}
             source={schemaQuery.data.source}
             byteSize={schemaQuery.data.byte_size}
+            templateCount={templatesQuery.data?.length ?? 0}
             isEditing={isEditing}
             draft={draft}
             onDraftChange={setDraft}
@@ -151,6 +158,7 @@ interface SchemaBodyProps {
   path: string;
   source: "disk";
   byteSize: number;
+  templateCount: number;
   isEditing: boolean;
   draft: string;
   onDraftChange: (next: string) => void;
@@ -167,6 +175,7 @@ function SchemaBody({
   path,
   source,
   byteSize,
+  templateCount,
   isEditing,
   draft,
   onDraftChange,
@@ -181,6 +190,31 @@ function SchemaBody({
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
+      <div className="grid gap-2 md:grid-cols-5">
+        {[
+          ["Types", "字段与类型"],
+          ["Templates", `${templateCount} 个模板`],
+          ["Policies", "维护策略"],
+          ["Guidance", "AGENTS / CLAUDE"],
+          ["Validation", "巡检结果"],
+        ].map(([title, desc]) => (
+          <div key={title} className="rounded-md border border-border/50 bg-card px-3 py-3">
+            <div className="text-[12px] font-medium text-foreground">{title}</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{desc}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md border border-border/50 bg-card px-4 py-3">
+        <div className="flex items-start gap-2">
+          <Bot className="mt-0.5 size-4 text-primary" />
+          <div className="text-[12px] leading-5 text-muted-foreground">
+            外部 AI 首期允许受控写入 <code>wiki/</code>、
+            <code>schema/templates</code> 与 root guidance；自动写入分为本次会话有效和永久规则。
+          </div>
+        </div>
+      </div>
+
       {/* Path card */}
       <div className="rounded-md border border-border/40 px-4 py-3">
         <div className="mb-1.5 flex items-center gap-2 uppercase tracking-widest text-muted-foreground/60" style={{ fontSize: 11 }}>
@@ -249,14 +283,14 @@ function SchemaBody({
       )}
 
       {/* Content pane */}
-      <div className="rounded-md border border-border bg-background">
-        <div className="flex items-center gap-2 border-b border-border/40 px-4 py-2">
-          <Ruler
+      <details className="rounded-md border border-border bg-background" open={isEditing}>
+        <summary className="flex cursor-pointer list-none items-center gap-2 border-b border-border/40 px-4 py-2">
+          <FileCode2
             className="size-3.5"
             style={{ color: "var(--claude-orange)" }}
           />
-          <span className="font-mono text-muted-foreground/50" style={{ fontSize: 11 }}>
-            CLAUDE.md
+          <span className="font-mono text-muted-foreground/70" style={{ fontSize: 11 }}>
+            Advanced YAML / CodeMirror · CLAUDE.md
           </span>
           {justSaved ? (
             <span
@@ -267,7 +301,7 @@ function SchemaBody({
               Saved
             </span>
           ) : null}
-        </div>
+        </summary>
         {isEditing ? (
           <Textarea
             value={draft}
@@ -288,7 +322,7 @@ function SchemaBody({
             {content}
           </pre>
         )}
-      </div>
+      </details>
 
       {/* Action bar */}
       <div className="flex items-center justify-end gap-2">

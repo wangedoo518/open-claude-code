@@ -3,20 +3,25 @@
  * Per component-spec.md §3 and 02-wiki-explorer.md §6.2.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import { MessageCircleQuestion } from "lucide-react";
+import { CheckCircle2, Loader2, MessageCircleQuestion, Pencil, X } from "lucide-react";
 
-import { getWikiPage } from "@/api/wiki/repository";
+import { getWikiPage, putWikiPage } from "@/api/wiki/repository";
+import type { WikiPageSummary } from "@/api/wiki/types";
 import {
   preprocessWikilinks,
   useWikiLinkRenderer,
 } from "./wiki-link-utils";
 import { WikiArticleRelationsPanel } from "./WikiArticleRelationsPanel";
 import { ConfidenceBadge } from "./components/ConfidenceBadge";
+import {
+  isValidPurposeLens,
+  purposeLensLabel,
+} from "@/features/purpose/purpose-lenses";
 
 /* ── Reading time ──────────────────────────────────────────────── */
 function estimateReadingMinutes(body: string): number {
@@ -65,6 +70,79 @@ function localizePageKind(kind: string): string {
   return map[kind] ?? kind;
 }
 
+function buildEditableMarkdown(summary: WikiPageSummary, body: string): string {
+  const purpose = summary.purpose?.length ? summary.purpose : ["learning"];
+  const purposeBlock = purpose.map((lens) => `  - ${lens}`).join("\n");
+  const sourceRaw =
+    typeof summary.source_raw_id === "number"
+      ? `source_raw_id: ${summary.source_raw_id}\n`
+      : "";
+  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
+}
+
+interface DraftValidation {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+function validateWikiDraft(content: string): DraftValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const lines = content.split(/\r?\n/);
+  if (lines[0] !== "---") {
+    errors.push("缺少开头 frontmatter 分隔符");
+  }
+  const closingIndex = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (closingIndex < 0) {
+    errors.push("缺少结尾 frontmatter 分隔符");
+    return { ok: false, errors, warnings };
+  }
+  const frontmatter = lines.slice(1, closingIndex);
+  const required = ["type", "status", "title"];
+  for (const key of required) {
+    const line = frontmatter.find((item) => item.startsWith(`${key}:`));
+    if (!line || line.slice(key.length + 1).trim().length === 0) {
+      errors.push(`frontmatter 缺少 ${key}`);
+    }
+  }
+  const purposeValues: string[] = [];
+  for (let index = 0; index < frontmatter.length; index += 1) {
+    const line = frontmatter[index];
+    if (line.startsWith("purpose:")) {
+      const inline = line.slice("purpose:".length).trim();
+      if (inline.length > 0) {
+        inline
+          .replace(/^\[/, "")
+          .replace(/\]$/, "")
+          .split(",")
+          .map((value) => value.trim().replace(/^['"]|['"]$/g, ""))
+          .filter(Boolean)
+          .forEach((value) => purposeValues.push(value));
+      }
+      for (let next = index + 1; next < frontmatter.length; next += 1) {
+        const candidate = frontmatter[next];
+        if (!candidate.startsWith(" ") && !candidate.startsWith("\t")) break;
+        const item = candidate.trim().replace(/^- /, "").trim();
+        if (item) purposeValues.push(item.replace(/^['"]|['"]$/g, ""));
+      }
+    }
+  }
+  for (const lens of purposeValues) {
+    if (!isValidPurposeLens(lens)) {
+      errors.push(`purpose 值不可用：${lens}`);
+    }
+  }
+  if (purposeValues.length === 0) {
+    warnings.push("建议至少保留一个 purpose lens");
+  }
+  const body = lines.slice(closingIndex + 1).join("\n").trim();
+  if (body.length === 0) {
+    warnings.push("正文为空");
+  }
+  return { ok: errors.length === 0, errors, warnings };
+}
+
 /* ── Markdown custom components ────────────────────────────────── */
 /**
  * Article-page Markdown renderer. The `<a>` handler is shared with
@@ -91,6 +169,10 @@ interface WikiArticleProps {
 
 export function WikiArticle({ slug }: WikiArticleProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["wiki", "pages", "detail", slug],
     queryFn: () => getWikiPage(slug),
@@ -98,6 +180,17 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   });
 
   const components = useMarkdownComponents();
+  const saveMutation = useMutation({
+    mutationFn: (content: string) => putWikiPage(slug, content),
+    onSuccess: async () => {
+      setIsEditing(false);
+      setSavedAt(Date.now());
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["wiki", "pages", "detail", slug] }),
+        queryClient.invalidateQueries({ queryKey: ["wiki", "pages", "list"] }),
+      ]);
+    },
+  });
 
   const handleAsk = () => {
     const params = new URLSearchParams();
@@ -123,11 +216,116 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   }
 
   const { summary, body } = data;
+  const validation = validateWikiDraft(draft);
   const category = summary.category ?? "concept";
   const categoryStyle = CATEGORY_STYLES[category] ?? CATEGORY_STYLES.concept;
   const readingTime = localizeReadingTime(estimateReadingMinutes(body));
   const expandedBody = preprocessWikilinks(body);
   const lastVerified = formatVerifiedDate(summary.last_verified);
+  const editableMarkdown = data.content ?? buildEditableMarkdown(summary, body);
+  const purpose = summary.purpose ?? [];
+
+  const handleEdit = () => {
+    setDraft(editableMarkdown);
+    setIsEditing(true);
+    setSavedAt(null);
+    saveMutation.reset();
+  };
+
+  const handleCancelEdit = () => {
+    setDraft(editableMarkdown);
+    setIsEditing(false);
+    saveMutation.reset();
+  };
+
+  const handleSave = () => {
+    if (!validation.ok) return;
+    saveMutation.mutate(draft);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="mx-auto max-w-[960px] px-8 py-6">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-[22px] leading-[1.3] text-[var(--color-foreground)]">
+              {summary.title}
+            </h1>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              正在编辑 wiki/{summary.slug}.md
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              disabled={saveMutation.isPending}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-[12px] text-muted-foreground transition-colors hover:bg-muted"
+            >
+              <X className="size-3.5" />
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!validation.ok || saveMutation.isPending}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12px] text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saveMutation.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="size-3.5" />
+              )}
+              保存
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            spellCheck={false}
+            className="min-h-[620px] resize-y rounded-md border border-border bg-background px-4 py-3 font-mono text-[13px] leading-6 text-foreground outline-none focus:border-primary"
+          />
+          <aside className="space-y-3">
+            <div className="rounded-md border border-border bg-card px-3 py-3 text-[12px]">
+              <div className="mb-2 font-medium text-foreground">保存前检查</div>
+              {validation.errors.length === 0 ? (
+                <div className="text-[var(--color-success)]">必填字段正常</div>
+              ) : (
+                <ul className="space-y-1 text-[var(--color-error)]">
+                  {validation.errors.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              )}
+              {validation.warnings.length > 0 && (
+                <ul className="mt-2 space-y-1 text-muted-foreground">
+                  {validation.warnings.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-md border border-border bg-card px-3 py-3 text-[12px] text-muted-foreground">
+              <div className="mb-2 font-medium text-foreground">Git / Lineage</div>
+              保存会直接写入磁盘，并由后端记录
+              <code className="mx-1 rounded bg-muted px-1">human-edit-wiki-page</code>
+              日志；Git diff 会出现在 Vault 版本历史里。
+            </div>
+            {saveMutation.error && (
+              <div className="rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-[12px] text-[var(--color-error)]">
+                {saveMutation.error instanceof Error
+                  ? saveMutation.error.message
+                  : String(saveMutation.error)}
+              </div>
+            )}
+          </aside>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[720px] px-8 py-6">
@@ -159,6 +357,20 @@ export function WikiArticle({ slug }: WikiArticleProps) {
             </span>
           </>
         )}
+        {purpose.map((lens) => (
+          <span
+            key={lens}
+            className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+          >
+            {purposeLensLabel(lens)}
+          </span>
+        ))}
+        {savedAt && Date.now() - savedAt < 5000 && (
+          <>
+            <span>&middot;</span>
+            <span className="text-[var(--color-success)]">已保存</span>
+          </>
+        )}
         <button
           type="button"
           onClick={handleAsk}
@@ -168,6 +380,16 @@ export function WikiArticle({ slug }: WikiArticleProps) {
         >
           <MessageCircleQuestion className="size-3" />
           用此页提问
+        </button>
+        <button
+          type="button"
+          onClick={handleEdit}
+          className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+          title="编辑此页"
+          aria-label="编辑此页"
+        >
+          <Pencil className="size-3" />
+          编辑
         </button>
       </div>
 

@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -15,9 +15,15 @@ import type { WikiPageSummary, WikiSearchHit } from "@/api/wiki/types";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ConfidenceBadge } from "./components/ConfidenceBadge";
 import { SearchHighlight } from "./components/SearchHighlight";
+import {
+  PURPOSE_LENSES,
+  purposeLensLabel,
+  type PurposeLensId,
+} from "@/features/purpose/purpose-lenses";
 
 type SortMode = "recent" | "oldest" | "words" | "refs";
 type FilterMode = "all" | "concept" | "derived";
+type PurposeFilterMode = "all" | PurposeLensId;
 type GroupKey = "today" | "yesterday" | "week" | "older";
 
 const GROUPS: Array<{ key: GroupKey; label: string }> = [
@@ -121,6 +127,13 @@ function includesQuery(value: string | null | undefined, query: string): boolean
   return value.toLocaleLowerCase().includes(normalized);
 }
 
+function parsePurposeFilter(raw: string | null): PurposeFilterMode {
+  if (!raw) return "all";
+  return PURPOSE_LENSES.some((lens) => lens.id === raw)
+    ? (raw as PurposeLensId)
+    : "all";
+}
+
 function searchHitSourceLabel(hit: WikiSearchHit, query: string): string {
   if (includesQuery(hit.page.title, query)) return "标题";
   if (includesQuery(hit.page.summary, query)) return "摘要";
@@ -151,8 +164,12 @@ function SearchEmptyState({ query }: { query: string }) {
 
 export function KnowledgePagesList() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [purposeMode, setPurposeMode] = useState<PurposeFilterMode>(() =>
+    parsePurposeFilter(searchParams.get("purpose")),
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const rawSearchTerm = searchTerm.trim();
   const debouncedQuery = useDebouncedValue(rawSearchTerm, 250);
@@ -165,6 +182,21 @@ export function KnowledgePagesList() {
     week: false,
     older: false,
   });
+
+  useEffect(() => {
+    setPurposeMode(parsePurposeFilter(searchParams.get("purpose")));
+  }, [searchParams]);
+
+  const updatePurposeMode = (next: PurposeFilterMode) => {
+    setPurposeMode(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "all") {
+      params.delete("purpose");
+    } else {
+      params.set("purpose", next);
+    }
+    setSearchParams(params, { replace: true });
+  };
 
   const listQuery = useQuery({
     queryKey: ["wiki", "pages", "list"],
@@ -213,6 +245,12 @@ export function KnowledgePagesList() {
         const kind = classifyPage(page);
         if (filterMode === "concept" && kind !== "concept") return false;
         if (filterMode === "derived" && kind !== "derived") return false;
+        if (
+          purposeMode !== "all" &&
+          !(page.purpose ?? []).includes(purposeMode)
+        ) {
+          return false;
+        }
         return true;
       })
       .sort((a, b) => {
@@ -225,7 +263,7 @@ export function KnowledgePagesList() {
         }
         return toTime(b.created_at) - toTime(a.created_at);
       });
-  }, [degreeById, filterMode, pages, sortMode]);
+  }, [degreeById, filterMode, pages, purposeMode, sortMode]);
 
   const searchHits: WikiSearchHit[] = useMemo(
     () => searchQuery.data?.hits ?? [],
@@ -370,6 +408,21 @@ export function KnowledgePagesList() {
               </button>
             ))}
           </div>
+          <select
+            className="ds-kb-sort"
+            value={purposeMode}
+            onChange={(event) =>
+              updatePurposeMode(event.target.value as PurposeFilterMode)
+            }
+            aria-label="Purpose Lens"
+          >
+            <option value="all">全部目的</option>
+            {PURPOSE_LENSES.map((lens) => (
+              <option key={lens.id} value={lens.id}>
+                {lens.zhLabel}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -454,6 +507,11 @@ export function KnowledgePagesList() {
                             </span>
                             <span>{formatKnowledgeTime(page.created_at)}</span>
                             <span>{estimateWords(page.byte_size)}</span>
+                            {page.purpose?.slice(0, 2).map((lens) => (
+                              <span key={lens} className="ds-kb-purpose-chip">
+                                {purposeLensLabel(lens)}
+                              </span>
+                            ))}
                             <ConfidenceBadge confidence={page.confidence} />
                           </span>
                         </span>
@@ -549,6 +607,11 @@ export function KnowledgePagesList() {
                                 </span>
                                 <span>{formatKnowledgeTime(page.created_at)}</span>
                                 <span>{estimateWords(page.byte_size)}</span>
+                                {page.purpose?.slice(0, 2).map((lens) => (
+                                  <span key={lens} className="ds-kb-purpose-chip">
+                                    {purposeLensLabel(lens)}
+                                  </span>
+                                ))}
                                 <ConfidenceBadge confidence={page.confidence} />
                               </span>
                             </span>

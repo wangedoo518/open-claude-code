@@ -1,0 +1,24 @@
+# Buddy Purpose Lens registry
+#
+# These are the product-default lenses used by frontmatter `purpose`.
+# Teams may add lowercase dash-case values here; the desktop editor accepts
+# custom dash-case extensions while keeping the default six stable.
+lenses:
+  writing:
+    label: Writing
+    output: Articles, essays, posts, reports
+  building:
+    label: Building
+    output: Products, code, project decisions
+  operating:
+    label: Operating
+    output: Systems, workflows, KPI decisions
+  learning:
+    label: Learning
+    output: Mastery, explanation, study cards
+  personal:
+    label: Personal
+    output: Reflection, habits, life decisions
+  research:
+    label: Research
+    output: Literature maps, hypotheses, analysis memos

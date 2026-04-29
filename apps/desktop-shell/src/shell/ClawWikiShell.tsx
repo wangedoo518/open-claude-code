@@ -10,6 +10,7 @@ import { AbsorbEventsBridge } from "@/features/wiki/AbsorbEventsBridge";
 import { ChannelStatusModal } from "@/features/wechat-kefu/ChannelStatusModal";
 import { ConnectWeChatModal } from "@/features/wechat-kefu/ConnectWeChatModal";
 import { AppSidebar } from "./Sidebar";
+import { BuddyStatusBar } from "./BuddyStatusBar";
 import {
   CLAWWIKI_DEFAULT_ROUTE,
   CLAWWIKI_ROUTER_ROUTES,
@@ -71,6 +72,7 @@ export function ClawWikiShell() {
                 </div>
               </ErrorBoundary>
             </main>
+            <BuddyStatusBar />
 
             {!isAskRoute &&
               !isDashboardRoute &&

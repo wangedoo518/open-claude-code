@@ -266,6 +266,7 @@ export interface WikiPageSummary {
   slug: string;
   title: string;
   summary: string;
+  purpose?: string[];
   source_raw_id?: number | null;
   created_at: string;
   byte_size: number;
@@ -282,6 +283,14 @@ export interface WikiPagesListResponse {
 export interface WikiPageDetailResponse {
   summary: WikiPageSummary;
   body: string;
+  /** Complete markdown file including YAML frontmatter. */
+  content?: string;
+}
+
+export interface WikiPageWriteResponse extends WikiPageDetailResponse {
+  ok: boolean;
+  path: string;
+  byte_size: number;
 }
 
 /**

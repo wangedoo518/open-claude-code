@@ -8,6 +8,7 @@
 import type { ReactNode } from "react";
 import {
   BookOpen,
+  Cable,
   Eye,
   FileStack,
   Home,
@@ -23,6 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AskPage } from "@/features/ask/AskPage";
+import { ConnectionsPage } from "@/features/connections/ConnectionsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { GraphPage } from "@/features/graph/GraphPage";
 import { InboxPage } from "@/features/inbox/InboxPage";
@@ -36,7 +38,7 @@ import { WeChatBridgePage } from "@/features/wechat/WeChatBridgePage";
 import { ConnectWeChatPipelinePage } from "@/features/wechat-kefu/ConnectWeChatPipelinePage";
 import { KnowledgeHubPage } from "@/features/wiki/KnowledgeHubPage";
 
-export type ClawWikiSection = "primary" | "funnel" | "advanced" | "settings";
+export type ClawWikiSection = "daily" | "tune" | "system" | "hidden";
 
 export interface ClawWikiRoute {
   /** Stable key for palette actions, tests, and analytics. */
@@ -61,11 +63,21 @@ export type ClawWikiRoutableRoute = ClawWikiRoute & {
 export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
   {
     key: "dashboard",
-    path: "/dashboard",
+    path: "/",
+    routePath: "/",
     icon: Home,
     label: "首页",
-    section: "primary",
+    section: "daily",
     sprint: "S3",
+    render: () => <DashboardPage />,
+  },
+  {
+    key: "dashboard.legacy",
+    path: "/dashboard",
+    icon: Home,
+    label: "旧首页入口",
+    section: "hidden",
+    sprint: "compat",
     render: () => <DashboardPage />,
   },
   {
@@ -74,7 +86,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     routePath: "/ask/*",
     icon: MessageCircle,
     label: "问问题",
-    section: "primary",
+    section: "daily",
     sprint: "S3",
     render: () => <AskPage />,
   },
@@ -83,7 +95,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/inbox",
     icon: Inbox,
     label: "待整理",
-    section: "primary",
+    section: "daily",
     sprint: "S4",
     badge: "•",
     render: () => <InboxPage />,
@@ -94,7 +106,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     routePath: "/wiki/*",
     icon: BookOpen,
     label: "知识库",
-    section: "primary",
+    section: "daily",
     sprint: "S4",
     render: () => <KnowledgeHubPage />,
   },
@@ -103,7 +115,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/wechat",
     icon: Link2,
     label: "微信接入",
-    section: "funnel",
+    section: "hidden",
     sprint: "S5 (iLink)",
     render: () => <WeChatBridgePage />,
   },
@@ -113,7 +125,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     routePath: "/raw/*",
     icon: FileStack,
     label: "素材库",
-    section: "advanced",
+    section: "hidden",
     sprint: "S1",
     render: () => <RawLibraryPage />,
   },
@@ -122,7 +134,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/graph",
     icon: Network,
     label: "关系图",
-    section: "advanced",
+    section: "hidden",
     sprint: "S6",
     render: () => <GraphPage />,
   },
@@ -131,7 +143,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/cleanup",
     icon: ShieldCheck,
     label: "清理建议",
-    section: "advanced",
+    section: "hidden",
     sprint: "Phase 4",
     render: () => <CleanupPage />,
   },
@@ -140,7 +152,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/breakdown",
     icon: Scissors,
     label: "页面拆解",
-    section: "advanced",
+    section: "hidden",
     sprint: "Phase 4",
     render: () => <BreakdownPage />,
   },
@@ -150,7 +162,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     routePath: "/viewer/*",
     icon: Eye,
     label: "只读查看",
-    section: "advanced",
+    section: "hidden",
     sprint: "Phase 4",
     render: () => <WebViewerPage />,
   },
@@ -160,16 +172,36 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     routePath: "/schema/*",
     icon: Sigma,
     label: "整理规则",
-    section: "advanced",
+    section: "hidden",
     sprint: "S6",
     render: () => <SchemaEditorPage />,
+  },
+  {
+    key: "rules",
+    path: "/rules",
+    routePath: "/rules/*",
+    icon: Sigma,
+    label: "规则",
+    section: "tune",
+    sprint: "Tolaria deep design",
+    render: () => <SchemaEditorPage />,
+  },
+  {
+    key: "connections",
+    path: "/connections",
+    routePath: "/connections/*",
+    icon: Cable,
+    label: "连接",
+    section: "tune",
+    sprint: "Tolaria deep design",
+    render: () => <ConnectionsPage />,
   },
   {
     key: "settings",
     path: "/settings",
     icon: Settings,
     label: "设置",
-    section: "settings",
+    section: "system",
     sprint: "reused",
     render: () => <SettingsPage />,
   },
@@ -178,7 +210,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/connect-wechat",
     icon: Link2,
     label: "连接微信",
-    section: "advanced",
+    section: "hidden",
     sprint: "Kefu onboarding",
     render: () => <ConnectWeChatPipelinePage />,
   },
@@ -187,7 +219,7 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     path: "/ask",
     icon: Play,
     label: "查看演示对话",
-    section: "advanced",
+    section: "hidden",
     sprint: "Batch-E",
   },
 ] as const;
@@ -198,4 +230,4 @@ export const CLAWWIKI_ROUTER_ROUTES: readonly ClawWikiRoutableRoute[] =
       typeof route.render === "function",
   );
 
-export const CLAWWIKI_DEFAULT_ROUTE = "/dashboard";
+export const CLAWWIKI_DEFAULT_ROUTE = "/";

@@ -57,7 +57,10 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             get(list_inbox_candidates_handler),
         )
         .route("/api/wiki/pages", get(list_wiki_pages_handler))
-        .route("/api/wiki/pages/{slug}", get(get_wiki_page_handler))
+        .route(
+            "/api/wiki/pages/{slug}",
+            get(get_wiki_page_handler).put(put_wiki_page_handler),
+        )
         .route("/api/wiki/search", get(search_wiki_pages_handler))
         .route("/api/wiki/index", get(get_wiki_index_handler))
         .route("/api/wiki/log", get(get_wiki_log_handler))

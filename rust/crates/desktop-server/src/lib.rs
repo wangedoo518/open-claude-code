@@ -70,9 +70,9 @@ pub(crate) use handlers::wiki_crud::{
     get_wiki_page_handler, get_wiki_raw_handler, get_wiki_schema_handler, inbox_maintain_handler,
     ingest_wiki_raw_handler, install_inbox_notify, list_inbox_candidates_handler,
     list_wiki_inbox_handler, list_wiki_pages_handler, list_wiki_raw_handler,
-    preview_wiki_fetch_handler, propose_wiki_inbox_handler, put_wiki_schema_handler,
-    resolve_wiki_inbox_handler, resolve_wiki_root_for_handler, search_wiki_pages_handler,
-    ws_wechat_inbox_handler,
+    preview_wiki_fetch_handler, propose_wiki_inbox_handler, put_wiki_page_handler,
+    put_wiki_schema_handler, resolve_wiki_inbox_handler, resolve_wiki_root_for_handler,
+    search_wiki_pages_handler, ws_wechat_inbox_handler,
 };
 pub(crate) use handlers::wiki_reports::{
     breakdown_handler, cleanup_handler, get_absorb_log_handler, get_backlinks_index_handler,
