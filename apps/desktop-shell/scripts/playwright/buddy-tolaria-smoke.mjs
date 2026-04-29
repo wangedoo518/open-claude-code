@@ -174,6 +174,24 @@ async function runGitHunkDiscardCheck() {
   }
 }
 
+async function runGitAuditCheck() {
+  const audit = await fetchJson("/api/wiki/git/audit?limit=5");
+  if (!Array.isArray(audit.entries)) {
+    throw new Error("git audit smoke expected an entries array");
+  }
+
+  const latest = audit.entries[0];
+  if (!latest || latest.operation !== "discard-hunk") {
+    throw new Error("git audit smoke expected latest operation to be discard-hunk");
+  }
+  if (latest.path !== HUNK_SMOKE_PATH || latest.hunk_index !== 0) {
+    throw new Error("git audit smoke did not record the discarded hunk metadata");
+  }
+  if (!audit.entries.some((entry) => entry.operation === "commit")) {
+    throw new Error("git audit smoke expected the baseline commit entry");
+  }
+}
+
 async function runWikiEditCheck(page) {
   const updatedContent = `---
 type: concept
@@ -207,6 +225,7 @@ Updated smoke body from Playwright.
 async function run() {
   await seedWikiEditPage();
   await runGitHunkDiscardCheck();
+  await runGitAuditCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const page = await browser.newPage();

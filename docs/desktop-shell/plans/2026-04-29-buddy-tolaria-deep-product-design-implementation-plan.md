@@ -183,6 +183,15 @@ Tolaria-inspired Buddy design.
   `最近 Git 操作` section after the smoke creates a real commit and hunk
   discard through the API.
 
+## Implemented Slice 13
+
+- Browser smoke now directly calls `GET /api/wiki/git/audit?limit=5` after the
+  real hunk-discard API exercise.
+- The smoke asserts the latest audit entry is `discard-hunk`, carries the
+  expected path and hunk index, and that the baseline `commit` entry is present.
+  This keeps the Git audit log covered as a backend contract, not only as text
+  rendered by Connections or Home/Pulse.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
