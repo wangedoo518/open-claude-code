@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addExternalAiWriteGrant,
   commitVaultGit,
+  discardVaultGitChangeBlock,
   discardVaultGitHunk,
   discardVaultGitLine,
   discardVaultGitPath,
@@ -250,6 +251,16 @@ export function ConnectionsPage() {
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
     },
   });
+  const discardChangeBlockMutation = useMutation({
+    mutationFn: discardVaultGitChangeBlock,
+    onSuccess: (result) => {
+      setSelectedDiffLine(null);
+      setSyncMessage(result.summary);
+      queryClient.setQueryData(["wiki", "git", "connections"], result.status);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
+      void queryClient.invalidateQueries({ queryKey: ["wiki", "git", "audit"] });
+    },
+  });
   const policyQuery = useQuery({
     queryKey: ["wiki", "external-ai", "write-policy", "connections"],
     queryFn: () => getExternalAiWritePolicy(),
@@ -327,6 +338,14 @@ export function ConnectionsPage() {
       selectedLineHunk &&
       isStandaloneAddedLine(selectedLineHunk, selectedDiffLine.lineIndex) &&
       !discardLineMutation.isPending,
+  );
+  const canDiscardSelectedChangeBlock = Boolean(
+    canSelectDiffLine &&
+      selectedDiffLine &&
+      selectedLine &&
+      selectedLineHunk &&
+      isReplacementChangeBlock(selectedLineHunk, selectedDiffLine.lineIndex) &&
+      !discardChangeBlockMutation.isPending,
   );
   const canSetRemote = Boolean(git?.git_available && git.initialized && remoteUrl.trim());
   const canRemoteSync = Boolean(
@@ -420,6 +439,31 @@ export function ConnectionsPage() {
     );
     if (!confirmed) return;
     discardLineMutation.mutate({
+      path: selectedDiffSection.path,
+      hunk_index: selectedDiffLine.hunkIndex,
+      line_index: selectedDiffLine.lineIndex,
+      hunk_header: selectedLineHunk.header,
+      line_text: selectedLine.text,
+      new_line: selectedLine.new_line ?? null,
+    });
+  }
+
+  function handleDiscardSelectedChangeBlock() {
+    if (
+      !selectedDiffSection ||
+      !selectedDiffLine ||
+      !selectedLineHunk ||
+      !selectedLine ||
+      !canDiscardSelectedChangeBlock
+    ) {
+      return;
+    }
+    const lineLabel = selectedLine.new_line ? `L${selectedLine.new_line}` : "选中行";
+    const confirmed = window.confirm(
+      `恢复 ${selectedDiffSection.path} 的替换块 ${lineLabel}？`,
+    );
+    if (!confirmed) return;
+    discardChangeBlockMutation.mutate({
       path: selectedDiffSection.path,
       hunk_index: selectedDiffLine.hunkIndex,
       line_index: selectedDiffLine.lineIndex,
@@ -650,6 +694,24 @@ export function ConnectionsPage() {
                       </button>
                       <button
                         type="button"
+                        onClick={handleDiscardSelectedChangeBlock}
+                        disabled={!canDiscardSelectedChangeBlock}
+                        title={
+                          canSelectDiffLine
+                            ? "选择替换型新增行后可用"
+                            : "仅支持未暂存 tracked diff"
+                        }
+                        className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {discardChangeBlockMutation.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                        丢弃替换块
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleDiscardSelectedHunk}
                         disabled={!canDiscardSelectedHunk || discardHunkMutation.isPending}
                         title={
@@ -826,7 +888,10 @@ export function ConnectionsPage() {
                       ) : null}
                     </div>
                   ) : null}
-                  {(discardMutation.error || discardHunkMutation.error || discardLineMutation.error) && (
+                  {(discardMutation.error ||
+                    discardHunkMutation.error ||
+                    discardLineMutation.error ||
+                    discardChangeBlockMutation.error) && (
                     <p className="border-t border-border/60 px-3 py-2 text-[11px] leading-5 text-[var(--color-warning)]">
                       {discardMutation.error instanceof Error
                         ? discardMutation.error.message
@@ -834,6 +899,8 @@ export function ConnectionsPage() {
                           ? discardHunkMutation.error.message
                         : discardLineMutation.error instanceof Error
                           ? discardLineMutation.error.message
+                        : discardChangeBlockMutation.error instanceof Error
+                          ? discardChangeBlockMutation.error.message
                         : "Discard failed"}
                     </p>
                   )}
@@ -1079,9 +1146,9 @@ function isChangeLineKind(kind: string): boolean {
   return kind === "add" || kind === "remove";
 }
 
-function isStandaloneAddedLine(hunk: VaultGitDiffHunk, lineIndex: number): boolean {
+function changeBlockLines(hunk: VaultGitDiffHunk, lineIndex: number): VaultGitDiffLine[] {
   const line = hunk.lines[lineIndex];
-  if (!line || line.kind !== "add") return false;
+  if (!line || !isChangeLineKind(line.kind)) return [];
 
   let start = lineIndex;
   while (start > 0 && isChangeLineKind(hunk.lines[start - 1].kind)) {
@@ -1092,7 +1159,27 @@ function isStandaloneAddedLine(hunk: VaultGitDiffHunk, lineIndex: number): boole
     end += 1;
   }
 
-  return !hunk.lines.slice(start, end).some((candidate) => candidate.kind === "remove");
+  return hunk.lines.slice(start, end);
+}
+
+function isStandaloneAddedLine(hunk: VaultGitDiffHunk, lineIndex: number): boolean {
+  const line = hunk.lines[lineIndex];
+  if (!line || line.kind !== "add") return false;
+  return !changeBlockLines(hunk, lineIndex).some((candidate) => candidate.kind === "remove");
+}
+
+function isReplacementChangeBlock(hunk: VaultGitDiffHunk, lineIndex: number): boolean {
+  const line = hunk.lines[lineIndex];
+  if (!line || line.kind !== "add") return false;
+  const block = changeBlockLines(hunk, lineIndex);
+  return (
+    block.some((candidate) => candidate.kind === "add") &&
+    block.some((candidate) => candidate.kind === "remove")
+  );
+}
+
+function isSelectableDiffLine(hunk: VaultGitDiffHunk, lineIndex: number): boolean {
+  return isStandaloneAddedLine(hunk, lineIndex) || isReplacementChangeBlock(hunk, lineIndex);
 }
 
 function formatDiffHunkPreview(hunk: VaultGitDiffHunk): string {
@@ -1140,7 +1227,7 @@ function DiffHunkBlock({
             selected={
               selectedLine?.hunkIndex === index && selectedLine.lineIndex === lineIndex
             }
-            selectable={lineSelectionEnabled && isStandaloneAddedLine(hunk, lineIndex)}
+            selectable={lineSelectionEnabled && isSelectableDiffLine(hunk, lineIndex)}
             onSelect={() => onSelectLine(lineIndex)}
           />
         ))}
@@ -1213,6 +1300,7 @@ function GitAuditRow({ entry }: { entry: VaultGitAuditEntry }) {
 }
 
 function gitAuditLabel(operation: string): string {
+  if (operation === "discard-change-block") return "block";
   if (operation === "discard-line") return "line";
   if (operation === "discard-hunk") return "hunk";
   if (operation === "discard-path") return "discard";

@@ -302,6 +302,18 @@ Tolaria-inspired Buddy design.
   smoke exercises the real discard-line API while checking that unrelated
   added lines remain on disk.
 
+## Implemented Slice 23
+
+- Added `POST /api/wiki/git/discard-change-block` for restoring one tracked,
+  unstaged replacement block from a selected added line.
+- The backend validates the current hunk, selected line text, line number, and
+  contiguous add/remove change block, then swaps the working-tree added lines
+  back to the removed lines from the current diff.
+- Connections now exposes `丢弃替换块` separately from `丢弃新增行`, keeping
+  pure additions and replacement edits visually and behaviorally distinct.
+- Browser smoke now exercises the real change-block API and verifies an
+  unrelated replacement hunk remains dirty after the selected block is restored.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
@@ -312,6 +324,5 @@ Tolaria-inspired Buddy design.
 
 ## Future Hardening
 
-- Add line-level restore for replacement edits after conflict behavior is
-  explicit enough to preserve removed lines safely. Keep partial-line and
-  staged-hunk mutation out of scope until rollback tests cover those cases.
+- Keep partial-line and staged-hunk mutation out of scope until rollback tests
+  cover those cases.

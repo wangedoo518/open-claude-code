@@ -559,6 +559,21 @@ export async function discardVaultGitLine(request: {
   });
 }
 
+/** POST `/api/wiki/git/discard-change-block` — restore one replacement block. */
+export async function discardVaultGitChangeBlock(request: {
+  path: string;
+  hunk_index: number;
+  line_index: number;
+  hunk_header?: string;
+  line_text?: string;
+  new_line?: number | null;
+}): Promise<VaultGitDiscardResult> {
+  return fetchJson<VaultGitDiscardResult>("/api/wiki/git/discard-change-block", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
 /** GET `/api/wiki/external-ai/write-policy` — controlled-write grants. */
 export async function getExternalAiWritePolicy(): Promise<ExternalAiWritePolicy> {
   return fetchJson<ExternalAiWritePolicy>("/api/wiki/external-ai/write-policy");

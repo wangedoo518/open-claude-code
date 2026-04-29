@@ -1436,12 +1436,10 @@ fn is_change_line_kind(kind: &str) -> bool {
     kind == "add" || kind == "remove"
 }
 
-fn is_standalone_added_line(hunk: &VaultGitDiffHunk, line_index: usize) -> bool {
-    let Some(line) = hunk.lines.get(line_index) else {
-        return false;
-    };
-    if line.kind != "add" {
-        return false;
+fn change_block_bounds(hunk: &VaultGitDiffHunk, line_index: usize) -> Option<(usize, usize)> {
+    let line = hunk.lines.get(line_index)?;
+    if !is_change_line_kind(&line.kind) {
+        return None;
     }
 
     let mut start = line_index;
@@ -1452,10 +1450,39 @@ fn is_standalone_added_line(hunk: &VaultGitDiffHunk, line_index: usize) -> bool 
     while end < hunk.lines.len() && is_change_line_kind(&hunk.lines[end].kind) {
         end += 1;
     }
+    Some((start, end))
+}
 
+fn is_standalone_added_line(hunk: &VaultGitDiffHunk, line_index: usize) -> bool {
+    let Some(line) = hunk.lines.get(line_index) else {
+        return false;
+    };
+    if line.kind != "add" {
+        return false;
+    }
+
+    let Some((start, end)) = change_block_bounds(hunk, line_index) else {
+        return false;
+    };
     !hunk.lines[start..end]
         .iter()
         .any(|candidate| candidate.kind == "remove")
+}
+
+fn is_replacement_change_block(hunk: &VaultGitDiffHunk, line_index: usize) -> bool {
+    let Some(line) = hunk.lines.get(line_index) else {
+        return false;
+    };
+    if line.kind != "add" {
+        return false;
+    }
+
+    let Some((start, end)) = change_block_bounds(hunk, line_index) else {
+        return false;
+    };
+    let block = &hunk.lines[start..end];
+    block.iter().any(|candidate| candidate.kind == "add")
+        && block.iter().any(|candidate| candidate.kind == "remove")
 }
 
 fn remove_exact_line(content: &str, line_number: u32, expected_text: &str) -> Result<String> {
@@ -1485,6 +1512,78 @@ fn remove_exact_line(content: &str, line_number: u32, expected_text: &str) -> Re
 
     lines.remove(index);
     Ok(lines.join(""))
+}
+
+fn line_text_without_ending(segment: &str) -> &str {
+    segment.trim_end_matches('\n').trim_end_matches('\r')
+}
+
+fn preferred_line_ending(content: &str) -> &'static str {
+    if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn restore_replacement_block(
+    content: &str,
+    hunk: &VaultGitDiffHunk,
+    line_index: usize,
+) -> Result<String> {
+    let Some((start, end)) = change_block_bounds(hunk, line_index) else {
+        return Err(WikiStoreError::Invalid(
+            "selected line is not a change block".to_string(),
+        ));
+    };
+    let block = &hunk.lines[start..end];
+    let added: Vec<&VaultGitDiffLine> = block.iter().filter(|line| line.kind == "add").collect();
+    let removed: Vec<&VaultGitDiffLine> =
+        block.iter().filter(|line| line.kind == "remove").collect();
+    if added.is_empty() || removed.is_empty() {
+        return Err(WikiStoreError::Invalid(
+            "change-block discard only supports replacement edits".to_string(),
+        ));
+    }
+    let Some(first_new_line) = added.iter().filter_map(|line| line.new_line).min() else {
+        return Err(WikiStoreError::Invalid(
+            "replacement block is missing working-tree line numbers".to_string(),
+        ));
+    };
+
+    let lines: Vec<&str> = if content.is_empty() {
+        Vec::new()
+    } else {
+        content.split_inclusive('\n').collect()
+    };
+    let first_index = usize::try_from(first_new_line - 1).unwrap_or(usize::MAX);
+    if first_index + added.len() > lines.len() {
+        return Err(WikiStoreError::Invalid(
+            "replacement block is no longer present in Buddy Vault".to_string(),
+        ));
+    }
+    for (offset, added_line) in added.iter().enumerate() {
+        let actual = line_text_without_ending(lines[first_index + offset]);
+        if actual != added_line.text {
+            return Err(WikiStoreError::Invalid(
+                "replacement block no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+
+    let newline = preferred_line_ending(content);
+    let mut next = String::new();
+    for segment in &lines[..first_index] {
+        next.push_str(segment);
+    }
+    for removed_line in removed {
+        next.push_str(&removed_line.text);
+        next.push_str(newline);
+    }
+    for segment in &lines[first_index + added.len()..] {
+        next.push_str(segment);
+    }
+    Ok(next)
 }
 
 pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
@@ -2053,6 +2152,120 @@ pub fn vault_git_discard_added_line(
         ok: true,
         path: path.clone(),
         mode: "line".to_string(),
+        summary,
+        status,
+    })
+}
+
+pub fn vault_git_discard_change_block(
+    paths: &WikiPaths,
+    path: &str,
+    hunk_index: usize,
+    line_index: usize,
+    hunk_header: Option<&str>,
+    line_text: Option<&str>,
+    new_line: Option<u32>,
+) -> Result<VaultGitDiscardResult> {
+    let path = validate_git_relative_path(path)?;
+    let status = vault_git_status(paths)?;
+    if !status.git_available {
+        return Err(WikiStoreError::Invalid(
+            "git is not available on PATH".to_string(),
+        ));
+    }
+    if !status.initialized {
+        return Err(WikiStoreError::Invalid(
+            "Buddy Vault is not initialized as a git repository".to_string(),
+        ));
+    }
+    let Some(change) = status.changes.iter().find(|change| change.path == path) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "path is not dirty in Buddy Vault: {path}"
+        )));
+    };
+    if change.xy == "??" || change.unstaged == " " {
+        return Err(WikiStoreError::Invalid(
+            "change-block discard only supports tracked unstaged changes".to_string(),
+        ));
+    }
+
+    let diff = vault_git_diff(paths, false)?;
+    let Some(section) = diff
+        .sections
+        .iter()
+        .find(|section| section.kind == "tracked" && section.path == path)
+    else {
+        return Err(WikiStoreError::Invalid(format!(
+            "tracked unstaged diff not found for {path}"
+        )));
+    };
+    let Some(hunk) = section.hunks.get(hunk_index) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "hunk index is not dirty in Buddy Vault: {hunk_index}"
+        )));
+    };
+    if let Some(expected_header) = hunk_header {
+        if expected_header != hunk.header {
+            return Err(WikiStoreError::Invalid(
+                "hunk no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+    let Some(line) = hunk.lines.get(line_index) else {
+        return Err(WikiStoreError::Invalid(format!(
+            "line index is not dirty in Buddy Vault: {line_index}"
+        )));
+    };
+    if line.kind != "add" {
+        return Err(WikiStoreError::Invalid(
+            "change-block discard starts from an added replacement line".to_string(),
+        ));
+    }
+    if !is_replacement_change_block(hunk, line_index) {
+        return Err(WikiStoreError::Invalid(
+            "change-block discard only supports replacement edits".to_string(),
+        ));
+    }
+    if let Some(expected_text) = line_text {
+        if expected_text != line.text {
+            return Err(WikiStoreError::Invalid(
+                "line no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+    if let Some(expected_new_line) = new_line {
+        if Some(expected_new_line) != line.new_line {
+            return Err(WikiStoreError::Invalid(
+                "line number no longer matches the current Buddy Vault diff".to_string(),
+            ));
+        }
+    }
+
+    let target = paths.root.join(&path);
+    let content = fs::read_to_string(&target).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+    let next_content = restore_replacement_block(&content, hunk, line_index)?;
+    fs::write(&target, next_content).map_err(|e| WikiStoreError::io(target.clone(), e))?;
+
+    let status = vault_git_status(paths)?;
+    let summary = format!(
+        "Discarded replacement block at line {} in hunk {} for {path}",
+        line_index + 1,
+        hunk_index + 1
+    );
+    record_vault_git_audit(
+        paths,
+        "discard-change-block",
+        &summary,
+        Some(&path),
+        Some(hunk_index),
+        Some(line_index),
+        None,
+        None,
+    );
+    Ok(VaultGitDiscardResult {
+        ok: true,
+        path: path.clone(),
+        mode: "change-block".to_string(),
         summary,
         status,
     })
@@ -10219,6 +10432,108 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("standalone added lines"));
+    }
+
+    #[test]
+    fn vault_git_discard_change_block_restores_selected_replacement_only() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let page = paths.wiki.join("concepts").join("block-replace.md");
+        fs::write(&page, hunk_test_body("line 02", "line 70")).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        fs::write(
+            &page,
+            hunk_test_body("line 02 changed", "line 70 changed"),
+        )
+        .unwrap();
+        let diff = vault_git_diff(&paths, false).unwrap();
+        let section = diff
+            .sections
+            .iter()
+            .find(|section| section.path == "wiki/concepts/block-replace.md")
+            .expect("replacement block diff section");
+        let (hunk_index, hunk, line_index, line) = section
+            .hunks
+            .iter()
+            .enumerate()
+            .find_map(|(hunk_index, hunk)| {
+                hunk.lines
+                    .iter()
+                    .enumerate()
+                    .find(|(_, line)| line.kind == "add" && line.text == "line 02 changed")
+                    .map(|(line_index, line)| (hunk_index, hunk, line_index, line))
+            })
+            .expect("replacement line metadata");
+
+        let discarded = vault_git_discard_change_block(
+            &paths,
+            "wiki/concepts/block-replace.md",
+            hunk_index,
+            line_index,
+            Some(&hunk.header),
+            Some(&line.text),
+            line.new_line,
+        )
+        .unwrap();
+        assert!(discarded.ok);
+        assert_eq!(discarded.mode, "change-block");
+        assert!(discarded.status.dirty);
+
+        let content = fs::read_to_string(&page).unwrap();
+        assert!(content.contains("line 02\n"));
+        assert!(!content.contains("line 02 changed"));
+        assert!(content.contains("line 70 changed"));
+
+        let audit = vault_git_audit_log(&paths, 10).unwrap();
+        assert!(audit.entries.iter().any(|entry| {
+            entry.operation == "discard-change-block"
+                && entry.path.as_deref() == Some("wiki/concepts/block-replace.md")
+                && entry.hunk_index == Some(hunk_index)
+                && entry.line_index == Some(line_index)
+        }));
+    }
+
+    #[test]
+    fn vault_git_discard_change_block_rejects_pure_additions() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let page = paths.wiki.join("concepts").join("block-add.md");
+        let base = hunk_test_body("line 02", "line 70");
+        fs::write(&page, &base).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        fs::write(
+            &page,
+            base.replace("line 02\n", "line 02\nline 02 inserted\n"),
+        )
+        .unwrap();
+        let diff = vault_git_diff(&paths, false).unwrap();
+        let section = diff
+            .sections
+            .iter()
+            .find(|section| section.path == "wiki/concepts/block-add.md")
+            .expect("pure addition diff section");
+        let (line_index, line) = section.hunks[0]
+            .lines
+            .iter()
+            .enumerate()
+            .find(|(_, line)| line.kind == "add" && line.text == "line 02 inserted")
+            .expect("pure addition line");
+
+        let err = vault_git_discard_change_block(
+            &paths,
+            "wiki/concepts/block-add.md",
+            0,
+            line_index,
+            Some(&section.hunks[0].header),
+            Some(&line.text),
+            line.new_line,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("replacement edits"));
     }
 
     #[test]

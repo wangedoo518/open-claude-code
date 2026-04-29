@@ -2339,6 +2339,36 @@ pub(crate) async fn discard_vault_git_line_handler(
     ))
 }
 
+pub(crate) async fn discard_vault_git_change_block_handler(
+    Json(body): Json<GitDiscardLineRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let result = wiki_store::vault_git_discard_change_block(
+        &paths,
+        &body.path,
+        body.hunk_index,
+        body.line_index,
+        body.hunk_header.as_deref(),
+        body.line_text.as_deref(),
+        body.new_line,
+    )
+    .map_err(|e| {
+        let status = match e {
+            wiki_store::WikiStoreError::Invalid(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: format!("git change-block discard failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 pub(crate) async fn get_external_ai_write_policy_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;

@@ -11,6 +11,7 @@ const HEADLESS = process.env.BUDDY_HEADLESS !== "false";
 const SMOKE_SLUG = "smoke-edit-page";
 const HUNK_SMOKE_PATH = "wiki/concepts/smoke-hunk-discard.md";
 const LINE_SMOKE_PATH = "wiki/concepts/smoke-line-discard.md";
+const CHANGE_BLOCK_SMOKE_PATH = "wiki/concepts/smoke-change-block-discard.md";
 
 const routes = [
   {
@@ -60,6 +61,7 @@ const routes = [
       "Push",
       "保存 origin",
       "丢弃新增行",
+      "丢弃替换块",
       "丢弃 Hunk",
       "丢弃文件",
       "最近 Git 操作",
@@ -284,6 +286,74 @@ async function runGitLineDiscardCheck() {
   }
 }
 
+async function runGitChangeBlockDiscardCheck() {
+  const status = await fetchJson("/api/wiki/git/status");
+  const absolutePath = path.join(status.vault_path, CHANGE_BLOCK_SMOKE_PATH);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, hunkSmokeBody("line 02", "line 70"), "utf8");
+
+  await fetchJson("/api/wiki/git/commit", {
+    method: "POST",
+    body: JSON.stringify({ message: "Smoke change-block discard baseline" }),
+  });
+
+  await writeFile(
+    absolutePath,
+    hunkSmokeBody("line 02 changed", "line 70 changed"),
+    "utf8",
+  );
+
+  const diff = await fetchJson("/api/wiki/git/diff");
+  const section = diff.sections.find((candidate) => candidate.path === CHANGE_BLOCK_SMOKE_PATH);
+  if (!section) {
+    throw new Error(`change-block smoke expected a diff section for ${CHANGE_BLOCK_SMOKE_PATH}`);
+  }
+  const selected = section.hunks
+    .flatMap((hunk, hunkIndex) =>
+      hunk.lines.map((line, lineIndex) => ({ hunk, hunkIndex, line, lineIndex })),
+    )
+    .find((candidate) => candidate.line.kind === "add" && candidate.line.text === "line 02 changed");
+  if (!selected) {
+    throw new Error("change-block smoke expected replacement-line metadata");
+  }
+
+  await fetchJson("/api/wiki/git/discard-change-block", {
+    method: "POST",
+    body: JSON.stringify({
+      path: CHANGE_BLOCK_SMOKE_PATH,
+      hunk_index: selected.hunkIndex,
+      line_index: selected.lineIndex,
+      hunk_header: selected.hunk.header,
+      line_text: selected.line.text,
+      new_line: selected.line.new_line,
+    }),
+  });
+
+  const content = await readFile(absolutePath, "utf8");
+  if (content.includes("line 02 changed")) {
+    throw new Error("change-block smoke did not restore the selected replacement block");
+  }
+  if (!content.includes("line 02\n")) {
+    throw new Error("change-block smoke did not restore the original line");
+  }
+  if (!content.includes("line 70 changed")) {
+    throw new Error("change-block smoke removed an unrelated replacement block");
+  }
+
+  const audit = await fetchJson("/api/wiki/git/audit?limit=5");
+  const latest = audit.entries[0];
+  if (
+    !latest ||
+    latest.operation !== "discard-change-block" ||
+    latest.path !== CHANGE_BLOCK_SMOKE_PATH
+  ) {
+    throw new Error("change-block smoke expected latest git audit operation to be discard-change-block");
+  }
+  if (latest.hunk_index !== selected.hunkIndex || latest.line_index !== selected.lineIndex) {
+    throw new Error("change-block smoke did not record hunk/line metadata");
+  }
+}
+
 async function runRulesFileEditCheck() {
   const targetPath = "schema/policies/naming.md";
   const before = await fetchJson(`/api/wiki/rules/file?path=${encodeURIComponent(targetPath)}`);
@@ -351,6 +421,7 @@ async function run() {
   await runGitHunkDiscardCheck();
   await runGitAuditCheck();
   await runGitLineDiscardCheck();
+  await runGitChangeBlockDiscardCheck();
   await runRulesFileEditCheck();
 
   const browser = await chromium.launch({ headless: HEADLESS });

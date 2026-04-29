@@ -114,6 +114,10 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             post(discard_vault_git_line_handler),
         )
         .route(
+            "/api/wiki/git/discard-change-block",
+            post(discard_vault_git_change_block_handler),
+        )
+        .route(
             "/api/wiki/external-ai/write-policy",
             get(get_external_ai_write_policy_handler),
         )
