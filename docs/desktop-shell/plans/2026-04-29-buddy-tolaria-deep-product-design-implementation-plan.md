@@ -437,6 +437,17 @@ Tolaria-inspired Buddy design.
 - Rust coverage verifies valid custom frontmatter with `source_refs` survives
   and invalid critical fields are rejected.
 
+## Implemented Slice 33
+
+- Connections now makes the staged diff tab explicitly read-only: hunk, line,
+  replacement-block, and file discard controls remain scoped to unstaged
+  tracked changes.
+- The staged diff preview shows a compact notice explaining that staged diffs
+  are for review and that rollback controls only affect unstaged changes.
+- Backend coverage now pins the boundary by verifying staged hunks are visible
+  through `vault_git_diff(staged=true)` but rejected by
+  `vault_git_discard_hunk`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

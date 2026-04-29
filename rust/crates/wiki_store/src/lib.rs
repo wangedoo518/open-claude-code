@@ -10866,6 +10866,37 @@ mod tests {
     }
 
     #[test]
+    fn vault_git_discard_hunk_rejects_staged_hunks() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        let page = paths.wiki.join("concepts").join("staged-hunk.md");
+        fs::write(&page, hunk_test_body("line 02", "line 70")).unwrap();
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        fs::write(&page, hunk_test_body("line 02 staged", "line 70")).unwrap();
+        run_git(&paths.root, &["add", "--", "wiki/concepts/staged-hunk.md"]).unwrap();
+
+        let staged = vault_git_diff(&paths, true).unwrap();
+        assert!(staged.staged);
+        assert!(staged.diff.contains("line 02 staged"));
+
+        let err = vault_git_discard_hunk(
+            &paths,
+            "wiki/concepts/staged-hunk.md",
+            0,
+            None,
+        )
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("hunk discard only supports tracked unstaged changes"));
+
+        let content = fs::read_to_string(&page).unwrap();
+        assert!(content.contains("line 02 staged"));
+    }
+
+    #[test]
     fn vault_git_discard_added_line_removes_only_selected_line() {
         let Some((_tmp, paths)) = git_test_paths() else {
             return;

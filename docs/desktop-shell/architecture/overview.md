@@ -41,6 +41,8 @@ This document answers: how `desktop-shell` is currently organized.
 - `apps/desktop-shell/src/features/connections/ConnectionsPage.tsx` owns the
   Buddy Vault Git operator surface, including structured hunk/line diff review,
   checkpointing, remote sync, discard controls, and local Git audit display.
+  Discard controls are intentionally scoped to unstaged changes; staged diffs
+  are shown as read-only review material.
 - `apps/desktop-shell/src/features/inbox/InboxPage.tsx` surfaces Git/Vault
   checkpoint pressure inside the review metrics row and invalidates Git state
   after Inbox mutations that can change the Vault.

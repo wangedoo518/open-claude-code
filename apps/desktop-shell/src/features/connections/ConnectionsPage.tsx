@@ -347,6 +347,9 @@ export function ConnectionsPage() {
       isReplacementChangeBlock(selectedLineHunk, selectedDiffLine.lineIndex) &&
       !discardChangeBlockMutation.isPending,
   );
+  const canDiscardSelectedPath = Boolean(
+    selectedDiffSection && !diffStaged && !discardMutation.isPending,
+  );
   const canSetRemote = Boolean(git?.git_available && git.initialized && remoteUrl.trim());
   const canRemoteSync = Boolean(
     git?.git_available && git.initialized && git.remote_connected && !git.dirty,
@@ -396,7 +399,7 @@ export function ConnectionsPage() {
   }
 
   function handleDiscardSelectedPath() {
-    if (!selectedDiffSection || discardMutation.isPending) return;
+    if (!selectedDiffSection || !canDiscardSelectedPath) return;
     const confirmed = window.confirm(`丢弃 ${selectedDiffSection.path} 的未提交改动？`);
     if (!confirmed) return;
     discardMutation.mutate(selectedDiffSection.path);
@@ -731,7 +734,12 @@ export function ConnectionsPage() {
                       <button
                         type="button"
                         onClick={handleDiscardSelectedPath}
-                        disabled={!selectedDiffSection || discardMutation.isPending}
+                        disabled={!canDiscardSelectedPath}
+                        title={
+                          diffStaged
+                            ? "已暂存 diff 为只读；如需回滚请先在 Git 中取消暂存"
+                            : "丢弃选中文件的未暂存改动"
+                        }
                         className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {discardMutation.isPending ? (
@@ -769,6 +777,11 @@ export function ConnectionsPage() {
                       </div>
                     </div>
                   </div>
+                  {diffStaged && (
+                    <div className="border-b border-border/70 bg-muted/35 px-3 py-2 text-[11px] text-muted-foreground">
+                      已暂存 diff 仅供审阅。当前回滚按钮只作用于未暂存改动。
+                    </div>
+                  )}
                   {diffQuery.isFetching || !previewHunks.length ? (
                     <pre className="max-h-44 overflow-auto whitespace-pre-wrap px-3 py-3 text-[11px] leading-5 text-muted-foreground">
                       {diffPreviewText}
