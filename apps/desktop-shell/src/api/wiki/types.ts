@@ -446,6 +446,16 @@ export interface VaultGitDiff {
   staged: boolean;
   diff: string;
   byte_size: number;
+  sections: VaultGitDiffSection[];
+  truncated: boolean;
+}
+
+export interface VaultGitDiffSection {
+  path: string;
+  kind: "tracked" | "staged" | "untracked" | string;
+  diff: string;
+  byte_size: number;
+  truncated: boolean;
 }
 
 export interface VaultGitCommitResult {

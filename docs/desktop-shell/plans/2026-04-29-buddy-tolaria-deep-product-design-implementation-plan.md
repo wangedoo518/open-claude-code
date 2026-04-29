@@ -60,17 +60,27 @@ Tolaria-inspired Buddy design.
 - Added browser smoke coverage for Home/Pulse, Rules Studio folded Advanced
   state, Connections, and Knowledge.
 
+## Implemented Slice 3
+
+- Expanded `GET /api/wiki/git/diff` so unstaged previews include untracked
+  files as diff-like sections and tracked/staged changes are split into
+  file-level sections.
+- Connections now lets users switch between unstaged and staged Vault diff
+  previews, with a compact section list for changed paths.
+- The Buddy Tolaria browser smoke now seeds a real wiki page fixture and
+  verifies the CodeMirror edit/save path through `/wiki/{slug}`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
 - `cd apps/desktop-shell/src-tauri && cargo check`
 - `cd rust && cargo check --workspace`
 - `cd rust && cargo test -p wiki_store`
-- `cd apps/desktop-shell && npm run test:buddy:smoke`
+- `cd apps/desktop-shell && BUDDY_API_BASE=http://127.0.0.1:4358 BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm run test:buddy:smoke`
 
 ## Future Hardening
 
 - Add remote pull/push/conflict handling once Buddy exposes remote connection
   setup in Connections.
-- Add a dedicated Wiki edit browser flow with a seeded page fixture.
-- Add richer diff rendering for untracked files and staged changes.
+- Add line-level diff selection and apply/discard actions after the Vault
+  checkpoint model has reviewer-approved interaction rules.

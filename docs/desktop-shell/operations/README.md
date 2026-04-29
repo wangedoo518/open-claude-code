@@ -77,7 +77,7 @@ reference material.
 ## Verification Commands
 
 - `cd apps/desktop-shell && npm run build`
-- `cd apps/desktop-shell && npm run test:buddy:smoke`
+- `cd apps/desktop-shell && BUDDY_API_BASE=http://127.0.0.1:4358 BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm run test:buddy:smoke`
 - `cd apps/desktop-shell/src-tauri && cargo check`
 - `cd rust && cargo check --workspace`
 - `cd rust && cargo test -p wiki_store`
@@ -109,12 +109,14 @@ Run the Tolaria-inspired shell smoke with a real desktop-server and Vite app:
 
 ```bash
 cd apps/desktop-shell
-BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm run test:buddy:smoke
+BUDDY_API_BASE=http://127.0.0.1:4358 BUDDY_SMOKE_URL=http://127.0.0.1:5174/ npm run test:buddy:smoke
 ```
 
-The smoke expects the app to be reachable at `BUDDY_SMOKE_URL` and verifies
-Home/Pulse, Rules Studio folded Advanced state, Connections, Knowledge, the
-global status bar, and absence of runtime error boundaries.
+The smoke expects the desktop-server to be reachable at `BUDDY_API_BASE` and
+the app to be reachable at `BUDDY_SMOKE_URL`. It verifies Home/Pulse, Rules
+Studio folded Advanced state, Connections, Knowledge, the global status bar,
+and absence of runtime error boundaries, then seeds a wiki page fixture and
+drives the `/wiki/{slug}` CodeMirror edit/save flow.
 
 ## State Verification
 

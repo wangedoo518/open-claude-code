@@ -643,6 +643,17 @@ pub struct VaultGitDiff {
     pub staged: bool,
     pub diff: String,
     pub byte_size: usize,
+    pub sections: Vec<VaultGitDiffSection>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGitDiffSection {
+    pub path: String,
+    pub kind: String,
+    pub diff: String,
+    pub byte_size: usize,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -736,6 +747,141 @@ fn parse_ahead_behind(root: &Path, upstream: Option<&str>) -> (u32, u32) {
     (ahead, behind)
 }
 
+fn list_untracked_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--others", "--exclude-standard", "-z"])
+        .output()
+        .map_err(|e| WikiStoreError::io(root.to_path_buf(), e))?;
+    if !output.status.success() {
+        return Err(WikiStoreError::Invalid(format!(
+            "git ls-files failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| PathBuf::from(String::from_utf8_lossy(part).to_string()))
+        .collect())
+}
+
+fn normalized_git_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn untracked_file_diff(root: &Path, relative_path: &Path) -> Result<VaultGitDiffSection> {
+    const MAX_UNTRACKED_DIFF_BYTES: u64 = 32 * 1024;
+
+    let path = root.join(relative_path);
+    let display_path = normalized_git_path(relative_path);
+    let metadata = fs::metadata(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    if !metadata.is_file() {
+        let diff = format!(
+            "diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n@@\n+<directory omitted>\n",
+            display_path
+        );
+        return Ok(VaultGitDiffSection {
+            path: display_path.clone(),
+            kind: "untracked".to_string(),
+            byte_size: diff.len(),
+            diff,
+            truncated: true,
+        });
+    }
+
+    let mut truncated = metadata.len() > MAX_UNTRACKED_DIFF_BYTES;
+    let mut diff = format!(
+        "diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n",
+        display_path
+    );
+
+    if truncated {
+        diff.push_str(&format!(
+            "@@\n+<file omitted: {} bytes exceeds preview limit>\n",
+            metadata.len()
+        ));
+    } else {
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                let line_count = content.lines().count();
+                diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
+                for line in content.lines() {
+                    diff.push('+');
+                    diff.push_str(line);
+                    diff.push('\n');
+                }
+                if content.is_empty() {
+                    diff.push_str("@@\n");
+                }
+            }
+            Err(_) => {
+                diff.push_str("@@\n+<binary or non-utf8 file omitted>\n");
+                truncated = true;
+            }
+        }
+    }
+
+    Ok(VaultGitDiffSection {
+        path: display_path,
+        kind: "untracked".to_string(),
+        byte_size: diff.len(),
+        diff,
+        truncated,
+    })
+}
+
+fn parse_git_diff_path(header: &str) -> String {
+    header
+        .rsplit_once(" b/")
+        .map(|(_, path)| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| header.trim_start_matches("diff --git ").trim().to_string())
+}
+
+fn tracked_diff_sections(diff: &str, kind: &str) -> Vec<VaultGitDiffSection> {
+    if diff.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let mut sections = Vec::new();
+    let mut current = String::new();
+    let mut current_path: Option<String> = None;
+
+    for line in diff.split_inclusive('\n') {
+        if line.starts_with("diff --git ") && !current.is_empty() {
+            let section_diff = std::mem::take(&mut current);
+            sections.push(VaultGitDiffSection {
+                path: current_path
+                    .take()
+                    .unwrap_or_else(|| "(tracked changes)".to_string()),
+                kind: kind.to_string(),
+                byte_size: section_diff.len(),
+                diff: section_diff,
+                truncated: false,
+            });
+        }
+        if line.starts_with("diff --git ") {
+            current_path = Some(parse_git_diff_path(line.trim_end()));
+        }
+        current.push_str(line);
+    }
+
+    if !current.is_empty() {
+        sections.push(VaultGitDiffSection {
+            path: current_path.unwrap_or_else(|| "(tracked changes)".to_string()),
+            kind: kind.to_string(),
+            byte_size: current.len(),
+            diff: current,
+            truncated: false,
+        });
+    }
+
+    sections
+}
+
 pub fn vault_git_status(paths: &WikiPaths) -> Result<VaultGitStatus> {
     let git_available = git_binary_available();
     let initialized = paths.root.join(".git").exists()
@@ -819,12 +965,30 @@ pub fn vault_git_diff(paths: &WikiPaths, staged: bool) -> Result<VaultGitDiff> {
     } else {
         &["diff"]
     };
-    let diff = run_git(&paths.root, args)?;
+    let tracked_diff = run_git(&paths.root, args)?;
+    let mut sections =
+        tracked_diff_sections(&tracked_diff, if staged { "staged" } else { "tracked" });
+
+    if !staged {
+        for relative_path in list_untracked_files(&paths.root)? {
+            let section = untracked_file_diff(&paths.root, &relative_path)?;
+            sections.push(section);
+        }
+    }
+
+    let diff = sections
+        .iter()
+        .map(|section| section.diff.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let truncated = sections.iter().any(|section| section.truncated);
     Ok(VaultGitDiff {
         vault_path: paths.root.display().to_string(),
         staged,
         byte_size: diff.len(),
         diff,
+        sections,
+        truncated,
     })
 }
 
@@ -8238,6 +8402,49 @@ mod tests {
         assert!(!diff.staged);
         assert!(diff.diff.contains("Test change"));
         assert!(diff.byte_size > 0);
+    }
+
+    #[test]
+    fn vault_git_diff_includes_untracked_file_preview() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+
+        let diff = vault_git_diff(&paths, false).unwrap();
+        assert!(!diff.staged);
+        assert!(diff.diff.contains("new file mode"));
+        assert!(
+            diff.diff.contains("schema/CLAUDE.md")
+                || diff.diff.contains(".gitignore")
+                || diff.diff.contains("AGENTS.md")
+        );
+        assert!(diff
+            .sections
+            .iter()
+            .any(|section| section.kind == "untracked"));
+    }
+
+    #[test]
+    fn vault_git_diff_reports_staged_changes_separately() {
+        let Some((_tmp, paths)) = git_test_paths() else {
+            return;
+        };
+        vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
+
+        let next_schema = format!("{}\n\n## Staged change\n", CLAUDE_MD_TEMPLATE);
+        overwrite_schema_claude_md(&paths, &next_schema).unwrap();
+        run_git(&paths.root, &["add", "schema/CLAUDE.md"]).unwrap();
+
+        let unstaged = vault_git_diff(&paths, false).unwrap();
+        assert!(!unstaged.diff.contains("Staged change"));
+
+        let staged = vault_git_diff(&paths, true).unwrap();
+        assert!(staged.staged);
+        assert!(staged.diff.contains("Staged change"));
+        assert!(staged
+            .sections
+            .iter()
+            .any(|section| section.kind == "staged" && section.path == "schema/CLAUDE.md"));
     }
 
     #[test]

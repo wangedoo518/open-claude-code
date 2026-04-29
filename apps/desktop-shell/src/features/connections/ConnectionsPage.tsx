@@ -12,7 +12,7 @@ import {
   ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -65,6 +65,7 @@ const WRITE_SCOPES = [
 export function ConnectionsPage() {
   const queryClient = useQueryClient();
   const [commitMessage, setCommitMessage] = useState("");
+  const [diffStaged, setDiffStaged] = useState(false);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
   const [permanentNote, setPermanentNote] = useState("");
   const gitQuery = useQuery({
@@ -74,10 +75,32 @@ export function ConnectionsPage() {
     refetchInterval: 20_000,
   });
   const git = gitQuery.data;
+  useEffect(() => {
+    if (
+      git?.git_available &&
+      git.initialized &&
+      git.staged_count > 0 &&
+      git.unstaged_count === 0 &&
+      git.untracked_count === 0
+    ) {
+      setDiffStaged(true);
+    }
+  }, [
+    git?.git_available,
+    git?.initialized,
+    git?.staged_count,
+    git?.unstaged_count,
+    git?.untracked_count,
+  ]);
+
   const diffQuery = useQuery({
-    queryKey: ["wiki", "git", "diff", "connections"],
-    queryFn: () => getVaultGitDiff(false),
-    enabled: Boolean(git?.git_available && git?.initialized && git?.dirty),
+    queryKey: ["wiki", "git", "diff", "connections", diffStaged],
+    queryFn: () => getVaultGitDiff(diffStaged),
+    enabled: Boolean(
+      git?.git_available &&
+        git?.initialized &&
+        (diffStaged ? git.staged_count > 0 : git.dirty),
+    ),
     staleTime: 5_000,
   });
   const commitMutation = useMutation({
@@ -302,17 +325,67 @@ export function ConnectionsPage() {
 
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
                 <div className="rounded-md border border-border/70 bg-background">
-                  <div className="border-b border-border/70 px-3 py-2 text-[12px] font-medium">
-                    Diff preview
+                  <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3 py-2">
+                    <div className="text-[12px] font-medium">
+                      Diff preview
+                    </div>
+                    <div className="flex rounded-md border border-border/70 bg-card p-0.5">
+                      {[
+                        ["unstaged", "未暂存"],
+                        ["staged", "已暂存"],
+                      ].map(([id, label]) => {
+                        const active = diffStaged === (id === "staged");
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => setDiffStaged(id === "staged")}
+                            className={`h-6 rounded px-2 text-[11px] ${
+                              active
+                                ? "bg-primary text-primary-foreground"
+                                : "text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   <pre className="max-h-44 overflow-auto whitespace-pre-wrap px-3 py-3 text-[11px] leading-5 text-muted-foreground">
                     {diffQuery.isFetching
                       ? "Loading diff..."
                       : diffQuery.data?.diff ||
-                        (git?.dirty
-                          ? "未跟踪文件会在 checkpoint 时被纳入；当前没有可显示的 tracked diff。"
-                          : "No diff.")}
+                        (diffStaged
+                          ? "No staged diff."
+                          : git?.dirty
+                            ? "No unstaged diff."
+                            : "No diff.")}
                   </pre>
+                  {diffQuery.data?.sections.length ? (
+                    <div className="space-y-1 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
+                      <div>
+                        {diffQuery.data.sections.length} sections
+                        {diffQuery.data.truncated ? " · preview truncated" : ""}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {diffQuery.data.sections.slice(0, 6).map((section) => (
+                          <span
+                            key={`${section.kind}:${section.path}`}
+                            className="max-w-full truncate rounded border border-border/60 bg-card px-1.5 py-0.5 font-mono"
+                            title={section.path}
+                          >
+                            {section.kind}:{section.path}
+                          </span>
+                        ))}
+                        {diffQuery.data.sections.length > 6 ? (
+                          <span className="rounded border border-border/60 bg-card px-1.5 py-0.5">
+                            +{diffQuery.data.sections.length - 6}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="rounded-md border border-border/70 bg-background px-3 py-3">
