@@ -115,6 +115,11 @@ This document answers: how `desktop-shell` is currently organized.
   every Ask runtime path without changing the persisted user message.
 - Wiki and Rules advanced editors use CodeMirror 6 through
   `apps/desktop-shell/src/components/CodeMirrorEditor.tsx`.
+- Knowledge `/wiki` pages tab is wrapped in a `.ds-kb-stage` flex
+  container that puts a 250px `KnowledgeFilterSidebar` (类型/目的/来源)
+  on the left of the existing shell. The sidebar shares state with the
+  toolbar selects and consumes the Slice 41 semantic token aliases
+  (`--surface-sidebar`, `--state-selected`, `--accent-blue`).
 - A Tolaria-style semantic token layer in `globals.css` exposes
   `--surface-*`, `--text-*`, `--border-*`, `--accent-blue/red`, and
   `--state-selected/hover` as aliases of the shadcn layer. Components

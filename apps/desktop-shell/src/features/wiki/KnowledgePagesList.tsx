@@ -16,6 +16,7 @@ import type { WikiPageSummary, WikiSearchHit } from "@/api/wiki/types";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ConfidenceBadge } from "./components/ConfidenceBadge";
 import { SearchHighlight } from "./components/SearchHighlight";
+import { KnowledgeFilterSidebar } from "./components/KnowledgeFilterSidebar";
 import {
   PURPOSE_LENSES,
   purposeLensLabel,
@@ -411,7 +412,18 @@ export function KnowledgePagesList() {
   }
 
   return (
-    <div className="ds-kb-shell">
+    <div className="ds-kb-stage">
+      <KnowledgeFilterSidebar
+        filterMode={filterMode}
+        onFilterMode={setFilterMode}
+        purposeMode={purposeMode}
+        onPurposeMode={updatePurposeMode}
+        sourceMode={sourceMode}
+        onSourceMode={updateSourceMode}
+        visibleCount={visibleCount}
+        total={total}
+      />
+      <div className="ds-kb-shell">
       <div className="ds-kb-header">
         <div className="ds-kb-header-main">
           <h2 className="ds-kb-h">已整理的知识页面</h2>
@@ -716,6 +728,7 @@ export function KnowledgePagesList() {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }

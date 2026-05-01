@@ -4323,6 +4323,102 @@ a.ds-status-item:hover {
   width: min(380px, calc(100vw - 120px));
 }
 
+/* Slice 42 — three-column workbench: filter sidebar + shell. */
+.ds-kb-stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.ds-kb-stage > .ds-kb-shell {
+  flex: 1;
+  min-width: 0;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.ds-kb-filter-sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  align-self: stretch;
+  max-height: 100vh;
+  overflow-y: auto;
+  border-right: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  background: var(--surface-sidebar);
+  padding: 18px 14px;
+}
+
+.ds-kb-filter-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.ds-kb-filter-sidebar-count {
+  margin-left: auto;
+  color: color-mix(in srgb, var(--text-secondary) 65%, transparent);
+}
+
+.ds-kb-filter-section {
+  margin-bottom: 14px;
+}
+
+.ds-kb-filter-section-label {
+  font-size: 10px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.ds-kb-filter-section-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ds-kb-filter-chip {
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
+  background: transparent;
+  padding: 3px 9px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+
+.ds-kb-filter-chip:hover {
+  background: var(--state-hover);
+  color: var(--text-primary);
+}
+
+.ds-kb-filter-chip[data-active="true"] {
+  background: var(--state-selected);
+  border-color: color-mix(in srgb, var(--accent-blue) 50%, transparent);
+  color: var(--accent-blue);
+}
+
+@media (max-width: 1100px) {
+  .ds-kb-filter-sidebar {
+    display: none;
+  }
+}
+
 .ds-kb-shell {
   max-width: 1180px;
   margin: 0 auto;

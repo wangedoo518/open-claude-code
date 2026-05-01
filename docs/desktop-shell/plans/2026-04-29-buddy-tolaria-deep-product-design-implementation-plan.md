@@ -556,6 +556,22 @@ Tolaria-inspired Buddy design.
 - Both `:root` (light) and `.dark` blocks define the same set, mirroring
   LR-4's coverage rule for color tokens.
 
+## Implemented Slice 42
+
+- Knowledge `/wiki` pages tab now ships a Tolaria-style 250px left
+  filter sidebar (`KnowledgeFilterSidebar`) with three sections — 类型
+  (Type) / 目的 (Purpose) / 来源 (Source) — backed by the same state
+  hooks the toolbar selects already used. The two surfaces stay in sync
+  because they share the setter callbacks.
+- New `.ds-kb-stage` flex wrapper centers the existing 1180px shell next
+  to the sidebar; sidebar adopts `--surface-sidebar`, `--state-hover`,
+  `--state-selected`, `--accent-blue`, and `--text-secondary` from the
+  Slice 41 semantic token layer (first opt-in consumer).
+- Sidebar hides under 1100px viewport; toolbar selects continue to work
+  so narrow screens lose nothing.
+- Browser smoke now requires the three section labels (类型/目的/来源)
+  to render on `/wiki`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

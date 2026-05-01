@@ -98,7 +98,7 @@ const routes = [
   {
     name: "Knowledge",
     hash: "/wiki",
-    mustContain: ["知识", "raw:00042"],
+    mustContain: ["知识", "raw:00042", "类型 (Type)", "目的 (Purpose)", "来源 (Source)"],
     check: runKnowledgeSourceRefsSearchCheck,
   },
   {
