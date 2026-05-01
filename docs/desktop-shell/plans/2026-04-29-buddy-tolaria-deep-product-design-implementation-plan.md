@@ -598,6 +598,23 @@ Tolaria-inspired Buddy design.
 - Existing Recent / Pages / Wiki / Raw / Inbox groups continue to work
   unchanged when the query does not start with `?`.
 
+## Implemented Slice 45
+
+- New shell-level `ShellInspector` aside lands the spec §9.3 Inspector /
+  Agent / Activity tri-mode panel as a 320px right column in
+  `ClawWikiShell` (default visible above 1199px viewport).
+- Activity mode reads `/api/wiki/git/audit` via the existing
+  `getVaultGitAudit` helper and renders the latest 8 Vault operations
+  as `op · path · age` rows, so users see "what just happened" without
+  leaving the current route.
+- Inspector and Agent modes ship with intentional placeholders that
+  point users at the page-level Inspectors (Slice 40 / 42) and signal
+  the upcoming agent surface. Subsequent slices can populate either
+  without touching `ClawWikiShell`.
+- Hidden on `/graph` to preserve the immersive graph layout. Adopts
+  the Slice 41 semantic tokens (`--surface-panel`, `--state-selected`,
+  `--accent-blue`).
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

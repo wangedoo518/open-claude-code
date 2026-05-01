@@ -11,6 +11,7 @@ import { ChannelStatusModal } from "@/features/wechat-kefu/ChannelStatusModal";
 import { ConnectWeChatModal } from "@/features/wechat-kefu/ConnectWeChatModal";
 import { AppSidebar } from "./Sidebar";
 import { BuddyStatusBar } from "./BuddyStatusBar";
+import { ShellInspector } from "./ShellInspector";
 import {
   CLAWWIKI_DEFAULT_ROUTE,
   CLAWWIKI_ROUTER_ROUTES,
@@ -39,6 +40,15 @@ export function ClawWikiShell() {
   const isInboxRoute = location.pathname === "/inbox";
   const isWechatRoute = location.pathname === "/wechat";
   const isSettingsRoute = location.pathname.startsWith("/settings");
+  // Slice 45 — hide ShellInspector on routes that already render their
+  // own right column (Knowledge article view, Inbox) or that need the
+  // full canvas (graph immersive layout). Saves the user from a 320px
+  // shell aside fighting another 250-360px page-level aside on
+  // narrower screens.
+  const isWikiArticleRoute =
+    location.pathname.startsWith("/wiki/") && location.pathname.length > "/wiki/".length;
+  const showShellInspector =
+    !isGraphRoute && !isWikiArticleRoute && !isInboxRoute;
 
   return (
     <ErrorBoundary>
@@ -81,6 +91,7 @@ export function ClawWikiShell() {
               !isWechatRoute &&
               !isSettingsRoute && <FloatingAskCTA />}
           </div>
+          {showShellInspector && <ShellInspector />}
           <BrowserDrawer />
         </div>
       </AskSessionProvider>

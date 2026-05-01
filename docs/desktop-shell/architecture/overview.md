@@ -43,6 +43,13 @@ This document answers: how `desktop-shell` is currently organized.
   bar for health, Inbox, Git/Vault, permission mode, and external-AI write
   posture. Status items link to Home/Pulse, Inbox, Connections Git, Settings
   permissions, Connections external-AI authorization, and Knowledge.
+- `apps/desktop-shell/src/shell/ShellInspector.tsx` is the global
+  right-side context panel mounted in `ClawWikiShell`. It exposes three
+  modes via tabs — Inspector / Agent / Activity — with Activity wired
+  to `getVaultGitAudit` for a live "recent Vault operations" feed and
+  the other two as placeholders that subsequent slices populate. The
+  panel hides under 1200px viewport and on `/graph` to preserve those
+  layouts.
 - `apps/desktop-shell/src/features/connections/ConnectionsPage.tsx` owns the
   Buddy Vault Git operator surface, including structured hunk/line diff review,
   checkpointing, remote sync, discard controls, and local Git audit display.
