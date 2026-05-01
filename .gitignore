@@ -13,6 +13,11 @@ rust/.claw-runtime/
 apps/*/dist/
 apps/*/node_modules/
 apps/*/src-tauri/target/
+# Tauri sidecar binaries — produced per-platform by
+# .github/workflows/release.yml (cargo build --bin desktop-server →
+# copied here with target-triple suffix). Per-build artifacts, never
+# source. Local dev does not need them; tauri:dev still works without.
+apps/*/src-tauri/binaries/
 *.tsbuildinfo
 # Claude Code local artifacts
 .claude/settings.local.json
