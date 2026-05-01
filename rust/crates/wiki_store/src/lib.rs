@@ -11046,7 +11046,11 @@ mod tests {
         assert_eq!(discarded.mode, "hunk");
         assert!(discarded.status.dirty);
 
-        let content = fs::read_to_string(&page).unwrap();
+        // Normalize CRLF -> LF so contains("…\n") asserts work on Windows
+        // checkouts where core.autocrlf=true rewrites the working-tree
+        // newline. The assertion intent is logical-line boundary, not
+        // byte-exact line-terminator.
+        let content = fs::read_to_string(&page).unwrap().replace("\r\n", "\n");
         assert!(!content.contains("line 02 changed"));
         assert!(content.contains("line 02\n"));
         assert!(content.contains("line 70 changed"));
@@ -11118,7 +11122,11 @@ mod tests {
             .to_string()
             .contains("hunk discard only supports tracked unstaged changes"));
 
-        let content = fs::read_to_string(&page).unwrap();
+        // Normalize CRLF -> LF so contains("…\n") asserts work on Windows
+        // checkouts where core.autocrlf=true rewrites the working-tree
+        // newline. The assertion intent is logical-line boundary, not
+        // byte-exact line-terminator.
+        let content = fs::read_to_string(&page).unwrap().replace("\r\n", "\n");
         assert!(content.contains("line 02 staged"));
     }
 
@@ -11170,7 +11178,11 @@ mod tests {
         assert_eq!(discarded.mode, "line");
         assert!(discarded.status.dirty);
 
-        let content = fs::read_to_string(&page).unwrap();
+        // Normalize CRLF -> LF so contains("…\n") asserts work on Windows
+        // checkouts where core.autocrlf=true rewrites the working-tree
+        // newline. The assertion intent is logical-line boundary, not
+        // byte-exact line-terminator.
+        let content = fs::read_to_string(&page).unwrap().replace("\r\n", "\n");
         assert!(!content.contains("line 02 inserted"));
         assert!(content.contains("line 70 inserted"));
 
@@ -11266,7 +11278,11 @@ mod tests {
         assert_eq!(discarded.mode, "change-block");
         assert!(discarded.status.dirty);
 
-        let content = fs::read_to_string(&page).unwrap();
+        // Normalize CRLF -> LF so contains("…\n") asserts work on Windows
+        // checkouts where core.autocrlf=true rewrites the working-tree
+        // newline. The assertion intent is logical-line boundary, not
+        // byte-exact line-terminator.
+        let content = fs::read_to_string(&page).unwrap().replace("\r\n", "\n");
         assert!(content.contains("line 02\n"));
         assert!(!content.contains("line 02 changed"));
         assert!(content.contains("line 70 changed"));
