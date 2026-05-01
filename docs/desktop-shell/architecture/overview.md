@@ -3,7 +3,7 @@ title: Desktop Shell Architecture Overview
 doc_type: architecture
 status: active
 owner: desktop-shell
-last_verified: 2026-04-30
+last_verified: 2026-05-01
 source_of_truth: true
 related:
   - docs/desktop-shell/README.md
@@ -45,7 +45,13 @@ This document answers: how `desktop-shell` is currently organized.
   are shown as read-only review material.
 - `apps/desktop-shell/src/features/inbox/InboxPage.tsx` surfaces Git/Vault
   checkpoint pressure inside the review metrics row and invalidates Git state
-  after Inbox mutations that can change the Vault.
+  after Inbox mutations that can change the Vault. The page is wrapped in an
+  `inbox-redesign-stage` flex container that places the existing 980px shell
+  next to a 300px sticky right-side `InboxInspector` aside (hidden under
+  1100px viewports). The Inspector reads the focused entry's recommended
+  action, source raw, target slug, queue status, lineage events, and schema
+  validation hint; it has no backend dependency beyond the existing inbox
+  list and lineage queries.
 - Knowledge and Rules receive a Tolaria-style 250px secondary sidebar from
   `apps/desktop-shell/src/shell/Sidebar.tsx`.
 - `apps/desktop-shell/src/features/schema/SchemaEditorPage.tsx` owns Rules

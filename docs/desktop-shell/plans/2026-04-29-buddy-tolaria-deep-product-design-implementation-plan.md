@@ -3,7 +3,7 @@ title: Buddy Tolaria Deep Product Design Implementation Plan
 doc_type: plan
 status: implemented
 owner: desktop-shell
-last_verified: 2026-04-30
+last_verified: 2026-05-01
 source_of_truth: false
 related:
   - docs/desktop-shell/specs/2026-04-29-buddy-tolaria-deep-product-design.md
@@ -525,6 +525,22 @@ Tolaria-inspired Buddy design.
 - Rust coverage verifies source-ref graph edges and source-ref related scoring;
   browser smoke checks the real page graph endpoint returns a related peer via
   shared `source_refs`.
+
+## Implemented Slice 40
+
+- Inbox now ships a dedicated right-side Inspector column per spec §7.2,
+  giving the focused entry its own context surface alongside the existing
+  hero / metric cards / grouped queue list.
+- The Inspector reads from the already-fetched `IntelligentEntry` (no
+  new backend endpoint) and reuses `RecommendedActionBadge` and
+  `InboxLineageSummary`. Sections cover 推荐动作, 来源, 目标, 状态, Lineage,
+  and Schema 校验.
+- Layout: a new `.inbox-redesign-stage` flex wrapper centers the existing
+  980px shell and reserves a 300px sticky inspector beside it. Hidden via
+  `@media (max-width: 1100px)` to preserve narrow-viewport behavior, and
+  toggleable through a hero-action button (`aria-pressed` reflects state).
+- Browser smoke now asserts the Inbox Inspector aside renders and reflects
+  the focused entry's recommended action / lineage section after selection.
 
 ## Verification
 

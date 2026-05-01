@@ -88,6 +88,7 @@ import { TargetCandidatePicker } from "@/features/inbox/components/TargetCandida
 import { DuplicateGuardBanner } from "@/features/inbox/components/DuplicateGuardBanner";
 import { DuplicateGuardDialog } from "@/features/inbox/components/DuplicateGuardDialog";
 import { InboxLineageSummary } from "@/features/inbox/components/InboxLineageSummary";
+import { InboxInspector } from "@/features/inbox/components/InboxInspector";
 import {
   computeQueueIntelligence,
   groupAndSortByAction,
@@ -429,6 +430,11 @@ export function InboxPage() {
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [purposeByEntryId, setPurposeByEntryId] = useState<Record<number, PurposeLensId[]>>({});
+
+  // Slice 40 — right-side Inspector column visibility (additive; default
+  // visible per spec §7.2). Local state only; not URL-synced because the
+  // pane is purely contextual to the current selection.
+  const [inspectorVisible, setInspectorVisible] = useState(true);
 
   // W3 sprint — CombinedPreviewDialog open state. The dialog receives
   // the derived `mergeTargetSlug` + selected ids so it can fan out to
@@ -812,6 +818,7 @@ export function InboxPage() {
 
   return (
     <div className="inbox-redesign-page">
+      <div className="inbox-redesign-stage">
       <div className="inbox-redesign-shell">
         <header className="inbox-redesign-hero">
           <div className="inbox-redesign-hero-copy">
@@ -835,6 +842,15 @@ export function InboxPage() {
                 <Square className="size-3.5" aria-hidden />
               )}
               批量编辑
+            </button>
+            <button
+              type="button"
+              onClick={() => setInspectorVisible((v) => !v)}
+              className="inbox-redesign-secondary-button"
+              aria-pressed={inspectorVisible}
+              title={inspectorVisible ? "隐藏 Inspector" : "显示 Inspector"}
+            >
+              Inspector
             </button>
             <button
               type="button"
@@ -927,6 +943,15 @@ export function InboxPage() {
           purposeByEntryId={purposeByEntryId}
           onTogglePurpose={toggleEntryPurpose}
         />
+      </div>
+      {inspectorVisible && (
+        <aside
+          className="inbox-redesign-inspector"
+          aria-label="Inbox Inspector"
+        >
+          <InboxInspector entry={selectedEntry} />
+        </aside>
+      )}
       </div>
 
       {mergeTargetSlug && combinedOpen && selectedIds.size >= 2 && (

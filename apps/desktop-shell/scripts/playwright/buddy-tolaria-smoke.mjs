@@ -86,7 +86,7 @@ const routes = [
   {
     name: "Inbox",
     hash: "/inbox",
-    mustContain: ["INBOX", "Vault", "checkpoint"],
+    mustContain: ["INBOX", "Vault", "checkpoint", "Inspector"],
     check: runInboxPurposeLensUiCheck,
   },
   {
@@ -591,6 +591,26 @@ async function runInboxPurposeLensUiCheck(page) {
     null,
     { timeout: 10_000 },
   );
+
+  // Slice 40 — verify the right-side Inspector aside renders with the
+  // focused entry's recommendation, source, and lineage sections.
+  const inspector = page.locator('aside[aria-label="Inbox Inspector"]');
+  await inspector.waitFor({ state: "visible", timeout: 10_000 });
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('aside[aria-label="Inbox Inspector"]');
+      if (!el) return false;
+      const text = el.textContent ?? "";
+      return (
+        text.includes("Inspector") &&
+        text.includes("推荐动作") &&
+        text.includes("来源") &&
+        text.includes("Lineage")
+      );
+    },
+    null,
+    { timeout: 10_000 },
+  );
 }
 
 async function runWikiEditCheck(page) {
@@ -653,6 +673,12 @@ async function run() {
       errors.drain();
       await page.goto(routeUrl(route.hash), { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".ds-status-bar", { timeout: 15_000 });
+      // Wait for the React-Query fetch wave to settle so cold-load
+      // sections (like Connections' git audit) populate before we read
+      // body.innerText. Cap at 5s and fall through if the page keeps
+      // streaming SSE — a bounded extra tick keeps the assertion stable
+      // without freezing the whole route loop.
+      await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
       await page.waitForTimeout(500);
       const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
       for (const expected of route.mustContain) {
