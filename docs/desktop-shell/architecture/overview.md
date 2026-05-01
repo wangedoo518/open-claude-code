@@ -43,7 +43,10 @@ This document answers: how `desktop-shell` is currently organized.
 - `apps/desktop-shell/src/features/dashboard/DashboardPage.tsx` owns
   Home/Pulse as the external-brain health check: Inbox pressure, knowledge
   quality, Git/Vault state, external-AI write posture, and the latest local
-  Git audit entry are summarized in the first viewport.
+  Git audit entry are summarized in the first viewport. The first-screen
+  headline maps Vault state to one of five fixed phrases via the
+  exported `derivePulseHeadline(state)` helper (empty / clean+dirty /
+  calm / small queue / large queue), keeping copy stable across runs.
 - `apps/desktop-shell/src/shell/BuddyStatusBar.tsx` is the global shell status
   bar for health, Inbox, Git/Vault, permission mode, and external-AI write
   posture. Status items link to Home/Pulse, Inbox, Connections Git, Settings

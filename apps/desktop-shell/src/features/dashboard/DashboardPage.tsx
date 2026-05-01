@@ -35,6 +35,41 @@ import {
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const EXPRESSIBLE_CATEGORIES = new Set(["concept", "people", "topic", "compare"]);
 
+/**
+ * Slice 47 — Pulse headline lock (spec §6.4.3).
+ *
+ * Five exclusive states map to five fixed copies. Order matters; the
+ * first matching branch wins. Pure helper so other surfaces (status
+ * bar tooltip, command palette empty state) can mirror the same
+ * vocabulary without re-implementing the conditional.
+ */
+export interface PulseStateInputs {
+  totalRisks: number;
+  totalPages: number;
+  totalRaw: number;
+  vaultDirty: boolean;
+}
+
+export function derivePulseHeadline(input: PulseStateInputs): string {
+  const { totalRisks, totalPages, totalRaw, vaultDirty } = input;
+  if (totalPages === 0 && totalRaw === 0 && totalRisks === 0) {
+    return "外脑还在等第一条素材，先粘贴或捕获一条试试";
+  }
+  if (totalRisks === 0 && vaultDirty) {
+    return "外脑很干净，但 Vault 有未提交改动，建议 checkpoint";
+  }
+  if (totalRisks === 0) {
+    return "外脑今天很干净，可以继续 capture / express";
+  }
+  if (totalRisks > 20) {
+    return `外脑队列已经较长（${totalRisks} 项），优先看 Top 3 行动`;
+  }
+  if (totalRisks <= 5) {
+    return `有 ${totalRisks} 项小事可以审一下`;
+  }
+  return `外脑体检发现 ${totalRisks} 项需要处理`;
+}
+
 type PurposeDigestItem = {
   id: PurposeLensId;
   label: string;
@@ -189,10 +224,18 @@ export function DashboardPage() {
     patrolQuery.isLoading ||
     gitQuery.isLoading ||
     pagesQuery.isLoading;
-  const headline =
-    totalRisks > 0
-      ? `外脑体检发现 ${totalRisks} 项需要处理`
-      : "外脑今天很干净";
+  // Slice 47 — Pulse 5-phrase headline lock (spec §6.4.3). Maps Vault
+  // state to one of five fixed copies so the home screen never drifts
+  // into ad-hoc strings. Order is exclusive top-down: empty vault →
+  // dirty-only → calm → small queue → big queue.
+  const totalPages = pagesQuery.data?.pages?.length ?? 0;
+  const totalRaw = statsQuery.data?.raw_count ?? 0;
+  const headline = derivePulseHeadline({
+    totalRisks,
+    totalPages,
+    totalRaw,
+    vaultDirty: git?.dirty === true,
+  });
   const primaryAction = topActions[0] ?? {
     label: "粘贴一条素材",
     href: "/raw",

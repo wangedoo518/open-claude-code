@@ -628,6 +628,20 @@ Tolaria-inspired Buddy design.
 - Subsequent slices can extend this same handler + manifest with
   J/K list navigation, Inbox A/R/M/N, Cmd+Shift+I/A toggles, etc.
 
+## Implemented Slice 47
+
+- Pulse first-screen headline now locks to one of five fixed phrases
+  per spec §6.4.3, picked from `derivePulseHeadline(state)` based on
+  Vault state — empty vault, clean+dirty Vault, calm, small queue
+  (≤5 risks), large queue (>20). The helper is exported so other
+  surfaces (status bar, palette empty state) can mirror the same
+  vocabulary later.
+- Single-CTA hard-constraint check (spec §6.4.2): the existing
+  Home/Pulse layout already promotes exactly one primary CTA
+  (`primaryAction`) above the metric cards; secondary actions live
+  inside the Top 3 list as link rows, not competing buttons. No JSX
+  changes needed for that half of the gap.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
