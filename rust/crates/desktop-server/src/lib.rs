@@ -391,7 +391,14 @@ pub fn app(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_headers(Any)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS]);
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ]);
 
     let router = routes::desktop::install(Router::new());
     let router = install_private_cloud_routes(router);
