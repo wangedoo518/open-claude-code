@@ -20,12 +20,15 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   Bot,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   History,
   Info,
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { getVaultGitAudit } from "@/api/wiki/repository";
+import { useShellInspectorStore } from "@/state/shell-inspector-store";
 
 type InspectorMode = "inspector" | "agent" | "activity";
 
@@ -41,6 +44,26 @@ const MODE_TABS: ReadonlyArray<{
 
 export function ShellInspector() {
   const [mode, setMode] = useState<InspectorMode>("activity");
+  const open = useShellInspectorStore((s) => s.open);
+  const toggle = useShellInspectorStore((s) => s.toggle);
+
+  // Slice 48 — when collapsed, render only a slim edge handle so the
+  // 320px aside doesn't claim space on every route. The handle stays
+  // on the right edge of the viewport via fixed positioning so it
+  // works on any layout the open panel would have hidden.
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="shell-inspector-handle"
+        onClick={toggle}
+        aria-label="展开 Shell Inspector"
+        title="展开 Shell Inspector"
+      >
+        <ChevronLeft className="size-3" strokeWidth={1.5} aria-hidden />
+      </button>
+    );
+  }
 
   return (
     <aside className="shell-inspector" aria-label="Shell context inspector">
@@ -64,6 +87,15 @@ export function ShellInspector() {
             </button>
           );
         })}
+        <button
+          type="button"
+          className="shell-inspector-tab shell-inspector-collapse"
+          onClick={toggle}
+          aria-label="折叠 Shell Inspector"
+          title="折叠 Shell Inspector"
+        >
+          <ChevronRight className="size-3" strokeWidth={1.5} aria-hidden />
+        </button>
       </div>
       <div className="shell-inspector-body" role="tabpanel">
         {mode === "inspector" && <InspectorMode />}

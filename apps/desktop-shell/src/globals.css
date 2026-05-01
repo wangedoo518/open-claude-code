@@ -7012,8 +7012,43 @@ a.ds-status-item:hover {
   color: color-mix(in srgb, var(--text-secondary) 60%, transparent);
 }
 
+.shell-inspector-collapse {
+  flex: 0 0 auto !important;
+  width: 28px;
+  padding: 5px 4px !important;
+}
+
+/* Slice 48 — collapsed handle. Sits on the right edge of the viewport
+   when the shell inspector is hidden; clicking it toggles the store
+   open. Fixed positioning so any route's content keeps its full width. */
+.shell-inspector-handle {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 30;
+  transition: background 120ms, color 120ms;
+}
+
+.shell-inspector-handle:hover {
+  background: var(--state-hover);
+  color: var(--text-primary);
+}
+
 @media (max-width: 1199px) {
-  .shell-inspector {
+  .shell-inspector,
+  .shell-inspector-handle {
     display: none;
   }
 }

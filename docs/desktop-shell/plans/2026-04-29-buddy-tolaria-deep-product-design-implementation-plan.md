@@ -642,6 +642,21 @@ Tolaria-inspired Buddy design.
   inside the Top 3 list as link rows, not competing buttons. No JSX
   changes needed for that half of the gap.
 
+## Implemented Slice 48
+
+- ShellInspector now defaults to collapsed and exposes a slim 18×56px
+  chevron handle on the right edge of the viewport. Clicking the
+  handle expands the 320px aside (Inspector / Agent / Activity tabs)
+  and adds an in-tab collapse arrow that returns to the handle.
+- Visibility is owned by a new Zustand store
+  `useShellInspectorStore`, persisted under
+  `open-claude-code:shell-inspector:state`, so the user choice
+  survives reloads.
+- Route gating from Slice 45 still applies (`/graph`, Inbox, wiki
+  article are excluded before the store is consulted), and
+  `@media (max-width: 1199px)` continues to hide both the aside and
+  the handle on narrow viewports.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

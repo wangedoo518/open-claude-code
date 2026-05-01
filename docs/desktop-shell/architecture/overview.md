@@ -57,7 +57,9 @@ This document answers: how `desktop-shell` is currently organized.
   to `getVaultGitAudit` for a live "recent Vault operations" feed and
   the other two as placeholders that subsequent slices populate. The
   panel hides under 1200px viewport and on `/graph` to preserve those
-  layouts.
+  layouts. Default state is collapsed (a slim chevron handle stays on
+  the right edge); the open/closed flag is persisted in
+  `useShellInspectorStore`.
 - `apps/desktop-shell/src/features/connections/ConnectionsPage.tsx` owns the
   Buddy Vault Git operator surface, including structured hunk/line diff review,
   checkpointing, remote sync, discard controls, and local Git audit display.
@@ -169,7 +171,7 @@ This document answers: how `desktop-shell` is currently organized.
 - Router owns navigational identity.
 - TanStack Query owns remote state.
 - Zustand owns local application state under `apps/desktop-shell/src/state/`.
-- Persisted Zustand domains currently include `settings`, `command-palette`, and `wiki-tabs`.
+- Persisted Zustand domains currently include `settings`, `command-palette`, `wiki-tabs`, and `shell-inspector` (open/closed state of the global right-side panel).
 - `ask-ui`, `permissions`, `skill-store`, and `streaming-store` are in-memory UI/runtime stores and are not persisted.
 - Wiki maintenance progress is delivered through `/api/wiki/absorb/events`, a session-agnostic SSE stream backed by desktop-core SKILL events.
 
