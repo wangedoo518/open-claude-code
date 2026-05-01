@@ -673,19 +673,24 @@ async function run() {
       errors.drain();
       await page.goto(routeUrl(route.hash), { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".ds-status-bar", { timeout: 15_000 });
-      // Wait for the React-Query fetch wave to settle so cold-load
-      // sections (like Connections' git audit) populate before we read
-      // body.innerText. Cap at 5s and fall through if the page keeps
-      // streaming SSE — a bounded extra tick keeps the assertion stable
-      // without freezing the whole route loop.
-      await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
-      await page.waitForTimeout(500);
-      const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      // Each mustContain token gets its own bounded waitForFunction so
+      // async sections (like /api/wiki/git/audit on the Connections
+      // page) can settle on cold load without blocking the whole route
+      // loop on a single fixed timeout. Once the first token resolves,
+      // subsequent tokens are usually in the DOM already, so this is
+      // typically faster overall than the previous networkidle wait.
       for (const expected of route.mustContain) {
-        if (!text.toLowerCase().includes(expected.toLowerCase())) {
+        try {
+          await page.waitForFunction(
+            (needle) => document.body.innerText.toLowerCase().includes(needle),
+            expected.toLowerCase(),
+            { timeout: 8_000 },
+          );
+        } catch {
           throw new Error(`${route.name} missing text: ${expected}`);
         }
       }
+      const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
       if (hasErrorBoundary(text)) {
         throw new Error(`${route.name} rendered an error boundary`);
       }
