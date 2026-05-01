@@ -572,6 +572,19 @@ Tolaria-inspired Buddy design.
 - Browser smoke now requires the three section labels (类型/目的/来源)
   to render on `/wiki`.
 
+## Implemented Slice 43
+
+- Ask `UsedSourcesBar` citation chip is now a clickable react-router
+  link (spec §7.4 Citation first / Open in Knowledge): wiki sources
+  jump to `/wiki/<slug>`, raw to `/raw?focus=<id>`, inbox to
+  `/inbox?task=<id>`. Both the auto-bound (blue) and manual (secondary)
+  variants wrap the existing `<Badge>` in a `RouterLink` carrying a
+  `data-source-citation` hook for tests.
+- The Knowledge `/wiki/<slug>` route already keeps the right-side
+  Inspector mounted via `KnowledgeArticleView`'s 64-rem aside, so
+  "Open in Knowledge" naturally preserves the Inspector context per
+  spec.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

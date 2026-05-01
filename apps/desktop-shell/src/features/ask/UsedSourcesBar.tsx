@@ -31,9 +31,29 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
+import { Link as RouterLink } from "react-router-dom";
 import type { ContextBasis, SourceRef } from "@/lib/tauri";
 import { formatSourceRefLabel, sourceRefKey } from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
+
+/**
+ * Slice 43 — Citation first / Open in Knowledge.
+ *
+ * Spec §7.4 calls for clickable source citations: a wiki ref jumps to
+ * the Knowledge workbench (Inspector preserved automatically by the
+ * KnowledgeArticleView aside), a raw ref jumps into the raw library,
+ * and an inbox ref jumps into the inbox queue with the deep-link query.
+ */
+function sourceRefHref(source: SourceRef): string {
+  switch (source.kind) {
+    case "wiki":
+      return `/wiki/${encodeURIComponent(source.slug)}`;
+    case "raw":
+      return `/raw?focus=${source.id}`;
+    case "inbox":
+      return `/inbox?task=${source.id}`;
+  }
+}
 import {
   Tooltip,
   TooltipContent,
@@ -199,17 +219,23 @@ export function UsedSourcesBar({
         <span className="mr-1 shrink-0 text-[color:var(--claude-blue)]/80">
           本轮自动锁定：
         </span>
-        <Badge
+        <RouterLink
           key={sourceRefKey(boundSource)}
-          variant="outline"
-          className="max-w-[260px] gap-1 border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/10 text-[color:var(--claude-blue)] text-[11px] font-normal"
-          title={label}
+          to={sourceRefHref(boundSource)}
+          className="inline-flex"
+          data-source-citation
+          title={`${label} · 跳转到来源`}
         >
-          <Icon className="size-3 shrink-0" />
-          <span className="truncate" dir="ltr">
-            {label}
-          </span>
-        </Badge>
+          <Badge
+            variant="outline"
+            className="max-w-[260px] gap-1 border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/10 text-[color:var(--claude-blue)] text-[11px] font-normal hover:bg-[color:var(--claude-blue)]/20"
+          >
+            <Icon className="size-3 shrink-0" />
+            <span className="truncate" dir="ltr">
+              {label}
+            </span>
+          </Badge>
+        </RouterLink>
         {isArchivedLinkOnly && <ArchivedLinkWarningBadge />}
         {!isArchivedLinkOnly && basis.grounding_applied === true && (
           <GroundedBadge toneClassName="border-[color:var(--claude-blue)]/30 bg-[color:var(--claude-blue)]/5 text-[color:var(--claude-blue)]" />
@@ -240,18 +266,25 @@ export function UsedSourcesBar({
       <span className="mr-1 shrink-0 text-muted-foreground/70">引用：</span>
       {boundSource && (() => {
         const Icon = iconFor(boundSource);
+        const label = formatSourceRefLabel(boundSource);
         return (
-          <Badge
+          <RouterLink
             key={sourceRefKey(boundSource)}
-            variant="secondary"
-            className="max-w-[260px] gap-1 text-[11px] font-normal"
-            title={formatSourceRefLabel(boundSource)}
+            to={sourceRefHref(boundSource)}
+            className="inline-flex"
+            data-source-citation
+            title={`${label} · 跳转到来源`}
           >
-            <Icon className="size-3 shrink-0" />
-            <span className="truncate" dir="ltr">
-              {formatSourceRefLabel(boundSource)}
-            </span>
-          </Badge>
+            <Badge
+              variant="secondary"
+              className="max-w-[260px] gap-1 text-[11px] font-normal hover:bg-secondary/70"
+            >
+              <Icon className="size-3 shrink-0" />
+              <span className="truncate" dir="ltr">
+                {label}
+              </span>
+            </Badge>
+          </RouterLink>
         );
       })()}
       {showGenericLinkBadge && (

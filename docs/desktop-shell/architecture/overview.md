@@ -100,6 +100,11 @@ This document answers: how `desktop-shell` is currently organized.
   save panel and `PUT /api/wiki/pages/{slug}` validate schema-sensitive
   frontmatter fields (`type`, `status`, `schema`, `source_raw_id`, `purpose`,
   `expressed_in`, `source_refs`) before writing.
+- The Ask `UsedSourcesBar` renders the `bound_source` citation chip as
+  a react-router link (`/wiki/<slug>`, `/raw?focus=<id>`,
+  `/inbox?task=<id>`), so a one-click jump from any answer lands the
+  user on the cited page (Knowledge keeps its right Inspector mounted
+  automatically).
 - Ask turns with an explicit `wiki:<slug>` source binding append
   `ask:<session-id>` to that page's `expressed_in` frontmatter once per
   session. This write is local-first and intentionally leaves Buddy Vault dirty
