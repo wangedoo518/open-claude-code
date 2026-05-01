@@ -278,6 +278,30 @@ export function Composer({
   const setPlanMode = useStreamingStore((s) => s.setPlanMode);
 
   const [value, setValue] = useState("");
+
+  // Slice 44 — Command Palette `?` AI mode handoff. When the palette
+  // routes here with `?q=<question>` (encoded), seed the textarea once
+  // and then strip the param so a refresh does not resurrect the prompt.
+  useEffect(() => {
+    try {
+      const hash = window.location.hash;
+      const qIdx = hash.indexOf("?");
+      if (qIdx < 0) return;
+      const params = new URLSearchParams(hash.slice(qIdx + 1));
+      const seed = params.get("q");
+      if (!seed) return;
+      setValue((prev) => (prev.length === 0 ? seed : prev));
+      params.delete("q");
+      const url = new URL(window.location.href);
+      const path = hash.slice(0, qIdx);
+      const rebuilt = params.toString();
+      url.hash = rebuilt ? `${path}?${rebuilt}` : path;
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      /* non-fatal */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showPermissionMenu, setShowPermissionMenu] = useState(false);

@@ -115,7 +115,13 @@ export type PaletteItem =
   | InboxPaletteItem;
 
 /** Stable group ids (order preserved in the UI). */
-export type PaletteGroupId = "recent" | "pages" | "wiki" | "raw" | "inbox";
+export type PaletteGroupId =
+  | "recent"
+  | "pages"
+  | "wiki"
+  | "raw"
+  | "inbox"
+  | "ask-mode";
 
 export interface PaletteGroup {
   id: PaletteGroupId;

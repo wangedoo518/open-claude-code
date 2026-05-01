@@ -25,6 +25,11 @@ This document answers: how `desktop-shell` is currently organized.
   builds the testable command manifest from the same route config, including
   stable command ids, menu/palette flags, shortcut metadata, route coverage,
   and drift diagnostics. Route palette rows carry the matching `commandId`.
+- Command Palette also accepts a `?<question>` AI-mode prefix
+  (`useGroupedPaletteItems`): the rest of the query becomes a synthetic
+  Ask item under the `AI 问答` group, which navigates to
+  `/ask?q=<encoded>`. The Ask `Composer` reads that param on first
+  mount, seeds the textarea once, and strips the param from the hash.
 - Main rail surfaces are now `/` Home/Pulse, `/ask`, `/inbox`, `/wiki`,
   `/rules`, `/connections`, and `/settings`. Legacy surfaces such as
   `/dashboard`, `/schema`, `/wechat`, `/raw`, `/graph`, `/cleanup`,

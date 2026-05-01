@@ -585,6 +585,19 @@ Tolaria-inspired Buddy design.
   "Open in Knowledge" naturally preserves the Inspector context per
   spec.
 
+## Implemented Slice 44
+
+- Command Palette gains spec §9.1 AI mode: typing `?<question>` surfaces
+  a synthetic `→ Ask: <question>` item under a new `AI 问答` group.
+- Selecting the item navigates to `/ask?q=<encoded>`; the existing
+  route dispatcher handles the navigation through `kind: "route"`, so
+  no new action handler was added.
+- `Composer` reads the `?q=` param on first mount, seeds the textarea
+  (only when empty), then strips the param from the hash so a refresh
+  does not resurrect the prompt.
+- Existing Recent / Pages / Wiki / Raw / Inbox groups continue to work
+  unchanged when the query does not start with `?`.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

@@ -732,6 +732,31 @@ export function useGroupedPaletteItems(query: string): PaletteGroup[] {
 
     const result: PaletteGroup[] = [];
 
+    // Slice 44 — Ask AI mode (spec §9.1): `?` prefix routes the rest of
+    // the query as an Ask question. The synthetic palette item rides on
+    // the existing route dispatcher, so no new action handler is needed.
+    if (trimmed.startsWith("?") && trimmed.length > 1) {
+      const question = trimmed.slice(1).trim();
+      if (question.length > 0) {
+        const previewLabel = `→ Ask: ${question.slice(0, 60)}${question.length > 60 ? "…" : ""}`;
+        result.push({
+          id: "ask-mode",
+          heading: "AI 问答",
+          items: [
+            {
+              kind: "route",
+              value: "route:ask.prompt",
+              routeKey: "ask.prompt",
+              label: previewLabel,
+              hint: "在 Ask 中以这条提问开始一段对话",
+              path: `/ask?q=${encodeURIComponent(question)}`,
+              score: 100,
+            },
+          ],
+        });
+      }
+    }
+
     // Recent — only when the query is empty so it doesn't compete
     // with live filter results. Recent items come pre-scored at 80.
     if (trimmed === "") {
