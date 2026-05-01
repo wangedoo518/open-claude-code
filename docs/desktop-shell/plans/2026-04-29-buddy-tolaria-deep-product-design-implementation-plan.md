@@ -542,6 +542,20 @@ Tolaria-inspired Buddy design.
 - Browser smoke now asserts the Inbox Inspector aside renders and reflects
   the focused entry's recommended action / lineage section after selection.
 
+## Implemented Slice 41
+
+- Added a Tolaria-style semantic token layer in `globals.css` per spec §8:
+  `--surface-{app,sidebar,panel,card,popover,editor}`,
+  `--text-{primary,secondary,tertiary}`,
+  `--border-{default,strong}`, `--accent-{blue,red}`, and
+  `--state-{selected,hover}`.
+- All new tokens are pure aliases of the existing shadcn layer
+  (`--background`, `--foreground`, `--card`, `--ring`, etc.), so visuals
+  remain identical and adoption can be opt-in: future slices write
+  `var(--surface-panel)` instead of `var(--card)` with no migration risk.
+- Both `:root` (light) and `.dark` blocks define the same set, mirroring
+  LR-4's coverage rule for color tokens.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`

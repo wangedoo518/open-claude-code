@@ -115,6 +115,11 @@ This document answers: how `desktop-shell` is currently organized.
   every Ask runtime path without changing the persisted user message.
 - Wiki and Rules advanced editors use CodeMirror 6 through
   `apps/desktop-shell/src/components/CodeMirrorEditor.tsx`.
+- A Tolaria-style semantic token layer in `globals.css` exposes
+  `--surface-*`, `--text-*`, `--border-*`, `--accent-blue/red`, and
+  `--state-selected/hover` as aliases of the shadcn layer. Components
+  are migrated opt-in; adoption does not require a token-rename sweep
+  because the shadcn names continue to work in parallel.
 - Shared UI and utility layer
 - Desktop integration layer
 

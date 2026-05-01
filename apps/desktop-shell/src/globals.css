@@ -189,6 +189,28 @@
     --state-tone-working: var(--color-primary, #D85A30);
     --state-tone-warn: var(--color-warning, #BA7517);
     --state-tone-error: var(--color-error, #C44545);
+
+    /* ── Slice 41 — Tolaria semantic token layer (light) ──────────
+       Pure aliases of existing shadcn tokens so adoption is opt-in:
+       new slices can write `var(--surface-panel)` instead of
+       `var(--card)`, and visuals remain unchanged until a component
+       actively switches. Mirror in `.dark` keeps light/dark coverage
+       (LR-4 rule) without touching the shadcn layer. */
+    --surface-app: var(--background);
+    --surface-sidebar: var(--sidebar);
+    --surface-panel: var(--card);
+    --surface-card: var(--card);
+    --surface-popover: var(--popover);
+    --surface-editor: var(--background);
+    --text-primary: var(--foreground);
+    --text-secondary: var(--muted-foreground);
+    --text-tertiary: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+    --border-default: var(--border);
+    --border-strong: color-mix(in srgb, var(--border) 70%, oklch(0 0 0));
+    --accent-blue: var(--ring);
+    --accent-red: var(--destructive);
+    --state-selected: color-mix(in srgb, var(--ring) 12%, transparent);
+    --state-hover: color-mix(in srgb, var(--foreground) 4%, transparent);
   }
 
   .dark {
@@ -305,6 +327,25 @@
     --deeptutor-ok: oklch(0.65 0.11 150);                      /* = dark --color-success */
     --deeptutor-ok-soft: color-mix(in srgb, oklch(0.65 0.11 150) 8%, transparent);
     --deeptutor-warn: oklch(0.75 0.115 79);                    /* = dark --color-warning */
+
+    /* ── Slice 41 — Tolaria semantic token layer (dark mirror) ────
+       Same alias contract as light :root; values follow dark shadcn
+       tokens automatically. */
+    --surface-app: var(--background);
+    --surface-sidebar: var(--sidebar);
+    --surface-panel: var(--card);
+    --surface-card: var(--card);
+    --surface-popover: var(--popover);
+    --surface-editor: var(--background);
+    --text-primary: var(--foreground);
+    --text-secondary: var(--muted-foreground);
+    --text-tertiary: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+    --border-default: var(--border);
+    --border-strong: color-mix(in srgb, var(--border) 70%, oklch(1 0 0));
+    --accent-blue: var(--ring);
+    --accent-red: var(--destructive);
+    --state-selected: color-mix(in srgb, var(--ring) 18%, transparent);
+    --state-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
   }
 }
 
