@@ -11,6 +11,7 @@
     "prebuild": "npm run check:mojibake",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
