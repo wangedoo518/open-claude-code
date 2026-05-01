@@ -30,6 +30,30 @@ const GLOBAL_COMMANDS: readonly CommandManifestEntry[] = [
     shortcut: ["Mod+K"],
     testId: "command.global.openPalette",
   },
+  // Slice 46 — Keyboard-first protocol entries 1/27. Browser-style
+  // history navigation lives at shell level so every route benefits.
+  // The handler is in `ClawWikiShell.tsx`; the manifest entry exists so
+  // tests + future menu/palette wiring can reference the same id.
+  {
+    id: "global.navigateBack",
+    kind: "global",
+    title: "返回上一个页面",
+    section: "global",
+    palette: false,
+    menu: true,
+    shortcut: ["Mod+["],
+    testId: "command.global.navigateBack",
+  },
+  {
+    id: "global.navigateForward",
+    kind: "global",
+    title: "前进到下一个页面",
+    section: "global",
+    palette: false,
+    menu: true,
+    shortcut: ["Mod+]"],
+    testId: "command.global.navigateForward",
+  },
 ];
 
 function routeToCommand(route: ClawWikiRoute): CommandManifestEntry {

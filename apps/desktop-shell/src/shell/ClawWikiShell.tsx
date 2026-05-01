@@ -1,5 +1,5 @@
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
 import { MessageCircle } from "lucide-react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { BrowserDrawer } from "@/components/BrowserDrawer";
@@ -28,6 +28,38 @@ function PageTransition({ children }: { children: ReactNode }) {
 
 export function ClawWikiShell() {
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // Slice 46 — global keyboard-first shortcuts: Mod+[ and Mod+] map
+  // to browser-style back/forward, so power users can pivot without
+  // reaching for the mouse. Capture phase + IME guard mirror the
+  // existing CommandPalette listener. Skip when focus is in an
+  // editable surface so users can still type "[" and "]" inside an
+  // article body or CodeMirror buffer.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key !== "[" && e.key !== "]") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "[") navigate(-1);
+      else navigate(1);
+    };
+    document.addEventListener("keydown", handler, /* capture */ true);
+    return () =>
+      document.removeEventListener("keydown", handler, /* capture */ true);
+  }, [navigate]);
+
   const isAskRoute =
     location.pathname.startsWith("/ask") || location.pathname.startsWith("/chat");
   const isDashboardRoute =

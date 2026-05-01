@@ -25,6 +25,11 @@ This document answers: how `desktop-shell` is currently organized.
   builds the testable command manifest from the same route config, including
   stable command ids, menu/palette flags, shortcut metadata, route coverage,
   and drift diagnostics. Route palette rows carry the matching `commandId`.
+- Global keyboard shortcuts: `Mod+K` opens the Command Palette,
+  `Mod+[` / `Mod+]` map to router back/forward (handled by a capture-
+  phase listener in `ClawWikiShell` with an editable-surface bypass).
+  All shortcuts are mirrored as entries in `command-manifest.ts` so
+  menus, palette, and tests share one registry.
 - Command Palette also accepts a `?<question>` AI-mode prefix
   (`useGroupedPaletteItems`): the rest of the query becomes a synthetic
   Ask item under the `AI 问答` group, which navigates to

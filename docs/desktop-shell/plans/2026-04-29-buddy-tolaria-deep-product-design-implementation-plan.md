@@ -615,6 +615,19 @@ Tolaria-inspired Buddy design.
   the Slice 41 semantic tokens (`--surface-panel`, `--state-selected`,
   `--accent-blue`).
 
+## Implemented Slice 46
+
+- Adds the first global keyboard-first shortcuts from spec §9.4:
+  `Mod+[` / `Mod+]` map to browser-style history back/forward via the
+  router, with capture-phase listening, IME guard, and an editable-
+  surface bypass so typing `[` / `]` inside a textarea, input, or
+  contentEditable continues to work.
+- Both shortcuts are declared in `command-manifest.ts`
+  (`global.navigateBack` / `global.navigateForward`) so menus,
+  palette, and tests share one source of truth.
+- Subsequent slices can extend this same handler + manifest with
+  J/K list navigation, Inbox A/R/M/N, Cmd+Shift+I/A toggles, etc.
+
 ## Verification
 
 - `cd apps/desktop-shell && npm run build`
