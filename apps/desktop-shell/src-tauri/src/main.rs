@@ -1090,6 +1090,19 @@ fn spawn_desktop_server_process(address: &str, shutdown_token: &str) -> Result<C
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
 
+    // Windows: suppress the console window that pops up alongside Buddy
+    // when the GUI shell spawns a console-subsystem child .exe. Without
+    // CREATE_NO_WINDOW (= 0x08000000) the user sees a transient black
+    // terminal labelled `D:\…\Buddy\desktop-server` next to the app
+    // window. Only applied in release; debug keeps the console so
+    // `cargo tauri dev` developers still see server logs in real time.
+    #[cfg(windows)]
+    if !cfg!(debug_assertions) {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
     command
         .spawn()
         .map_err(|error| format!("Failed to launch desktop-server: {error}"))
