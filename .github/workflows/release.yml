@@ -4,24 +4,18 @@ name: Build installers
 #   - workflow_dispatch: any-time manual run from the Actions tab.
 #       Builds installers and attaches them to the workflow run as
 #       artifacts (downloadable as .zip). No GitHub Release is created.
-#   - push to a tag like v1.0.0 / v0.2.3-beta1: creates (or reuses) a
-#       Draft Release with the matching tag, and attaches each
-#       per-platform installer DIRECTLY as a release asset (no .zip
-#       wrapping — users click the .msi / .dmg and the OS opens the
-#       installer immediately).
+#   - push to a tag like v1.0.0 / v0.2.3-beta1: in addition to the
+#       artifact upload, attaches each per-platform installer DIRECTLY
+#       as a release asset on a Draft Release named after the tag, via
+#       softprops/action-gh-release. The Draft is created on the first
+#       matrix job that finishes and reused by the others, so each
+#       .msi / .dmg shows up as a single click-to-download link on
+#       https://github.com/<owner>/<repo>/releases/tag/<tag> with no
+#       .zip wrapping.
 #
 # Output per platform:
-#   - Windows: .msi + .exe   (Warwolf_X.Y.Z_x64_en-US.msi, Warwolf_X.Y.Z_x64-setup.exe)
+#   - Windows: .msi + .exe   (Buddy_X.Y.Z_x64_en-US.msi, Buddy_X.Y.Z_x64-setup.exe)
 #   - macOS:   .dmg + .app.tar.gz (aarch64-apple-darwin / Apple Silicon)
-#
-# Architecture (why two stages on tag-push):
-#   tauri-action's "create release in matrix" path races between matrix
-#   jobs and frequently silently fails to create the release. The
-#   robust pattern is: a single create-release job builds the release
-#   shell first, then the matrix build jobs upload assets to the
-#   already-existing release via releaseId. That's what this workflow
-#   does. For workflow_dispatch (no tag), create-release is skipped
-#   and matrix jobs behave as before.
 #
 # Sidecar: Tauri shell is a thin wrapper that spawns desktop-server
 # (the HTTP backend) at runtime. desktop-server lives in the rust/
@@ -44,57 +38,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Only on tag push: create the Draft Release shell first, so the
-  # matrix build jobs can upload to a known release id.
-  create-release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.create.outputs.release_id }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create (or reuse) Draft Release
-        id: create
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = context.ref.replace('refs/tags/', '');
-            const isPre = tag.includes('-');
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-
-            // Try to find an existing release for this tag (handles re-runs).
-            let release;
-            try {
-              const found = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              release = found.data;
-              core.info(`Reusing existing release ${release.id} for tag ${tag}`);
-            } catch (err) {
-              if (err.status !== 404) throw err;
-              const created = await github.rest.repos.createRelease({
-                owner,
-                repo,
-                tag_name: tag,
-                name: `Buddy ${tag}`,
-                body: 'Installers are attached below. Pick the one for your OS:\n\n' +
-                      '- **Windows**: download the `.msi` (or `.exe` NSIS installer) and double-click.\n' +
-                      '- **macOS Apple Silicon**: download the `.dmg`, drag Warwolf to Applications. ' +
-                      'On first launch, run `xattr -d com.apple.quarantine /Applications/Warwolf.app` ' +
-                      'to bypass Gatekeeper for this unsigned build.',
-                draft: true,
-                prerelease: isPre,
-              });
-              release = created.data;
-              core.info(`Created draft release ${release.id} for tag ${tag}`);
-            }
-            core.setOutput('release_id', release.id);
-
   build:
     name: Build (${{ matrix.label }})
-    needs: [create-release]
-    # Run even when create-release is skipped (workflow_dispatch path).
-    if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -160,24 +105,38 @@ jobs:
         working-directory: apps/desktop-shell
         run: npm ci
 
-      - name: Build Tauri installer (uploads to existing release if releaseId is set)
+      - name: Build Tauri installer
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop-shell
           args: ${{ matrix.tauri-args }}
-          # Empty when workflow_dispatch (no tag) → tauri-action just
-          # builds and skips upload. Set when tag push → tauri-action
-          # uploads .msi/.dmg/.exe directly as release assets.
-          releaseId: ${{ needs.create-release.outputs.release_id }}
 
       - name: Upload installer artifacts (workflow run)
-        # Always upload the per-run artifact too — useful for
-        # workflow_dispatch testing without creating a release.
+        # Always upload the per-run artifact for download from the
+        # Actions run page (workflow_dispatch path uses this).
         uses: actions/upload-artifact@v4
         with:
           name: buddy-installer-${{ matrix.label }}
           path: ${{ matrix.artifact-glob }}
           if-no-files-found: error
           retention-days: 14
+
+      - name: Attach installers to GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Buddy ${{ github.ref_name }}
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          body: |
+            Installers are attached below. Pick the one for your OS:
+
+            - **Windows**: download the `.msi` (or the NSIS `.exe`) and double-click.
+            - **macOS Apple Silicon**: download the `.dmg`, drag Buddy to Applications.
+              On first launch, run `xattr -d com.apple.quarantine /Applications/Buddy.app`
+              to bypass Gatekeeper for this unsigned build.
+          files: ${{ matrix.artifact-glob }}

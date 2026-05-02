@@ -1,6 +1,6 @@
 [package]
 name = "open-claude-code-desktop-shell"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 
 [build-dependencies]
