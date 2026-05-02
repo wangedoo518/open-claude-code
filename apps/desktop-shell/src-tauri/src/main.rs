@@ -1054,8 +1054,19 @@ fn spawn_desktop_server_process(address: &str, shutdown_token: &str) -> Result<C
         .find(|candidate| candidate.exists())
     {
         eprintln!("using desktop-server binary {}", binary.display());
-        let mut command = Command::new(binary);
-        command.current_dir(&workspace_dir);
+        let mut command = Command::new(&binary);
+        // workspace_dir is baked at compile time and points at the GH
+        // Actions runner's checkout (e.g. /home/runner/work/buddy/.../rust)
+        // which does NOT exist on a real user's machine. Setting cwd to
+        // it makes spawn() fail with "system cannot find the path
+        // specified" — the desktop-server child never starts and the
+        // UI hangs on "Failed to fetch". Use the binary's own parent
+        // dir (the install dir on Windows / Resources on macOS) as cwd:
+        // it always exists post-install and gives the server a sensible
+        // working directory to write logs and resolve relative paths.
+        if let Some(parent) = binary.parent() {
+            command.current_dir(parent);
+        }
         command
     } else {
         return Err(
