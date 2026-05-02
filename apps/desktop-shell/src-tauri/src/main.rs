@@ -1008,22 +1008,28 @@ fn wait_for_desktop_server(address: &str, timeout: Duration) -> bool {
 }
 
 fn desktop_server_binary_candidates(workspace_dir: &Path) -> Vec<PathBuf> {
+    // Windows binaries always have the .exe suffix on disk; Tauri's sidecar
+    // bundler renames desktop-server-<triple>.exe to desktop-server.exe in
+    // the install dir. Candidate paths must include the suffix or
+    // candidate.exists() returns false and the shell falls through to
+    // "Unable to locate desktop-server binary" — even when the file is
+    // sitting next to the Tauri shell .exe.
+    let bin = if cfg!(windows) {
+        "desktop-server.exe"
+    } else {
+        "desktop-server"
+    };
+
     let mut candidates = vec![
-        workspace_dir
-            .join("target")
-            .join("debug")
-            .join("desktop-server"),
-        workspace_dir
-            .join("target")
-            .join("release")
-            .join("desktop-server"),
+        workspace_dir.join("target").join("debug").join(bin),
+        workspace_dir.join("target").join("release").join(bin),
     ];
 
     if let Ok(current_exe) = env::current_exe() {
         if let Some(exe_dir) = current_exe.parent() {
-            candidates.push(exe_dir.join("desktop-server"));
-            candidates.push(exe_dir.join("../Resources/desktop-server"));
-            candidates.push(exe_dir.join("../Resources/bin/desktop-server"));
+            candidates.push(exe_dir.join(bin));
+            candidates.push(exe_dir.join("../Resources").join(bin));
+            candidates.push(exe_dir.join("../Resources/bin").join(bin));
         }
     }
 
