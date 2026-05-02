@@ -18,6 +18,10 @@ apps/*/src-tauri/target/
 # copied here with target-triple suffix). Per-build artifacts, never
 # source. Local dev does not need them; tauri:dev still works without.
 apps/*/src-tauri/binaries/
+# Tauri ingest-pipeline resources (wechat_fetcher.py, defuddle_worker.js,
+# markitdown_worker.py, package.json) staged from rust/crates/wiki_ingest/src/
+# during the release workflow. Same rule: build artifact, not source.
+apps/*/src-tauri/scripts/
 *.tsbuildinfo
 # Claude Code local artifacts
 .claude/settings.local.json

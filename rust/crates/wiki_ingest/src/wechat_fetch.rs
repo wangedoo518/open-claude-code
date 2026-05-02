@@ -18,8 +18,19 @@ fn worker_script_path() -> std::path::PathBuf {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
+    // Candidate paths in order of preference:
+    //   1. <exe_dir>/scripts/wechat_fetcher.py — Tauri installer (Windows)
+    //      via bundle.resources: ["scripts/*"].
+    //   2. <exe_dir>/wechat_fetcher.py — flat install layout fallback.
+    //   3. <exe_dir>/../Resources/scripts/wechat_fetcher.py — macOS .app
+    //      bundle (Tauri puts resources in Contents/Resources/).
+    //   4. <CARGO_MANIFEST_DIR>/src/wechat_fetcher.py — dev mode.
     let candidates = [
+        exe_dir.as_ref().map(|d| d.join("scripts").join("wechat_fetcher.py")),
         exe_dir.as_ref().map(|d| d.join("wechat_fetcher.py")),
+        exe_dir
+            .as_ref()
+            .map(|d| d.join("../Resources/scripts/wechat_fetcher.py")),
         Some(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("src")

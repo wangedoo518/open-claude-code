@@ -417,10 +417,25 @@ async fn auto_install_python_deps() {
         );
     }
 
-    // defuddle (Node.js content extraction)
-    let defuddle_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../wiki_ingest/src");
+    // defuddle (Node.js content extraction). The fetcher .py looks for
+    // `node_modules/` next to itself, so we install into the same dir
+    // where wechat_fetcher.py / package.json were staged. At runtime
+    // there are two layouts:
+    //   - bundled installer: <exe_dir>/scripts/ (Tauri resources)
+    //   - dev mode (cargo run): <CARGO_MANIFEST_DIR>/../wiki_ingest/src/
+    // Prefer the runtime/install layout; fall back to the dev layout.
+    let defuddle_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("scripts")))
+        .filter(|p| p.join("package.json").exists())
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../wiki_ingest/src")
+        });
     if !defuddle_dir.join("node_modules/defuddle").exists() {
-        eprintln!("[auto-install] installing defuddle (npm)...");
+        eprintln!(
+            "[auto-install] installing defuddle (npm) into {} ...",
+            defuddle_dir.display()
+        );
         let _ = tokio::process::Command::new("npm")
             .args(["install", "--prefix", &defuddle_dir.to_string_lossy()])
             .output()

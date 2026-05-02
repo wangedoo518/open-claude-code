@@ -101,6 +101,21 @@ jobs:
           cp "$src" "$dst"
           ls -lh apps/desktop-shell/src-tauri/binaries/
 
+      - name: Stage ingest scripts as Tauri resources
+        # wechat_fetcher.py + defuddle_worker.js + markitdown_worker.py
+        # + package.json must ride alongside the desktop-server binary so
+        # the Python ingest pipeline (wechat fetch / markitdown convert)
+        # works after install. Tauri's bundle.resources ["scripts/*"]
+        # picks them up from this dir and lays them next to the .exe on
+        # Windows (or in .app/Contents/Resources on macOS).
+        shell: bash
+        run: |
+          mkdir -p apps/desktop-shell/src-tauri/scripts
+          for f in wechat_fetcher.py defuddle_worker.js markitdown_worker.py package.json; do
+            cp "rust/crates/wiki_ingest/src/$f" "apps/desktop-shell/src-tauri/scripts/$f"
+          done
+          ls -lh apps/desktop-shell/src-tauri/scripts/
+
       - name: Install npm dependencies
         working-directory: apps/desktop-shell
         run: npm ci
