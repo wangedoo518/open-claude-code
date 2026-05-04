@@ -3,7 +3,7 @@ title: Desktop Shell Operations
 doc_type: operation
 status: active
 owner: desktop-shell
-last_verified: 2026-04-29
+last_verified: 2026-05-03
 source_of_truth: true
 related:
   - docs/desktop-shell/README.md
@@ -100,6 +100,34 @@ reference material.
 - `cd rust && cargo check --workspace`
 - `cd rust && cargo test -p wiki_store`
 - `git diff --check`
+
+## macOS Release Packaging
+
+Buddy macOS release builds use the root workflow
+`.github/workflows/release.yml`. The macOS job imports a Developer ID
+Application `.p12` into a temporary keychain, stores notarytool credentials,
+builds the `desktop-server` sidecar, stages ingest resources, signs the `.app`,
+creates an HFS+ DMG, notarizes the DMG, staples the notarization tickets, and
+uploads the signed `.dmg` plus `.app.zip`.
+
+Required GitHub Actions secrets:
+
+- `APPLE_CERTIFICATE_P12_BASE64`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_DEV_ID_APP`
+- `APPLE_KEYCHAIN_PASSWORD`
+- `APPLE_NOTARY_APPLE_ID`
+- `APPLE_NOTARY_APP_PASSWORD`
+- `APPLE_NOTARY_TEAM_ID`
+
+Local macOS verification can reuse an installed Developer ID identity and an
+existing notarytool keychain profile. The script auto-detects
+`APPLE_DEV_ID_APP` from Keychain and defaults `APPLE_NOTARY_PROFILE` to
+`clawhub-notary` for compatibility with the existing local release setup:
+
+```bash
+bash scripts/macos-sign-notarize.sh --target aarch64-apple-darwin
+```
 
 ## Known Issues
 

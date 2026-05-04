@@ -15,7 +15,8 @@ name: Build installers
 #
 # Output per platform:
 #   - Windows: .msi + .exe   (Buddy_X.Y.Z_x64_en-US.msi, Buddy_X.Y.Z_x64-setup.exe)
-#   - macOS:   .dmg + .app.tar.gz (aarch64-apple-darwin / Apple Silicon)
+#   - macOS:   signed + notarized .dmg and .app.zip
+#              (aarch64-apple-darwin / Apple Silicon)
 #
 # Sidecar: Tauri shell is a thin wrapper that spawns desktop-server
 # (the HTTP backend) at runtime. desktop-server lives in the rust/
@@ -53,14 +54,14 @@ jobs:
             artifact-glob: |
               apps/desktop-shell/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
               apps/desktop-shell/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-          - os: macos-latest
+          - os: macos-15
             label: macos-arm64
             target: aarch64-apple-darwin
             bin-ext: ""
             tauri-args: "--target aarch64-apple-darwin"
             artifact-glob: |
               apps/desktop-shell/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-              apps/desktop-shell/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              apps/desktop-shell/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.zip
 
     steps:
       - name: Checkout
@@ -89,10 +90,12 @@ jobs:
           shared-key: tauri-${{ matrix.label }}
 
       - name: Build desktop-server backend (${{ matrix.target }})
+        if: runner.os != 'macOS'
         working-directory: rust
         run: cargo build --release --bin desktop-server --target ${{ matrix.target }}
 
       - name: Stage desktop-server as Tauri sidecar
+        if: runner.os != 'macOS'
         shell: bash
         run: |
           mkdir -p apps/desktop-shell/src-tauri/binaries
@@ -102,6 +105,7 @@ jobs:
           ls -lh apps/desktop-shell/src-tauri/binaries/
 
       - name: Stage ingest scripts as Tauri resources
+        if: runner.os != 'macOS'
         # wechat_fetcher.py + defuddle_worker.js + markitdown_worker.py
         # + package.json must ride alongside the desktop-server binary so
         # the Python ingest pipeline (wechat fetch / markitdown convert)
@@ -120,13 +124,37 @@ jobs:
         working-directory: apps/desktop-shell
         run: npm ci
 
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: bash ./scripts/import-apple-certificate.sh --skip-notary-credentials
+
+      - name: Store Apple notary credentials
+        if: runner.os == 'macOS'
+        env:
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_PASSWORD }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+        run: bash ./scripts/store-apple-notary-credentials.sh
+
       - name: Build Tauri installer
+        if: runner.os != 'macOS'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop-shell
           args: ${{ matrix.tauri-args }}
+
+      - name: Build signed notarized macOS bundle
+        if: runner.os == 'macOS'
+        env:
+          APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
+        run: bash ./scripts/macos-sign-notarize.sh --target "${{ matrix.target }}"
 
       - name: Upload installer artifacts (workflow run)
         # Always upload the per-run artifact for download from the
@@ -151,7 +179,13 @@ jobs:
             Installers are attached below. Pick the one for your OS:
 
             - **Windows**: download the `.msi` (or the NSIS `.exe`) and double-click.
-            - **macOS Apple Silicon**: download the `.dmg`, drag Buddy to Applications.
-              On first launch, run `xattr -d com.apple.quarantine /Applications/Buddy.app`
-              to bypass Gatekeeper for this unsigned build.
+            - **macOS Apple Silicon**: download the signed and notarized `.dmg`,
+              open it, and drag Buddy to Applications.
           files: ${{ matrix.artifact-glob }}
+
+      - name: Cleanup temporary Apple keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [[ -n "${APPLE_KEYCHAIN_PATH:-}" && -f "${APPLE_KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${APPLE_KEYCHAIN_PATH}" || true
+          fi
