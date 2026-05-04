@@ -433,7 +433,18 @@ export function KnowledgePagesList() {
           </p>
         </div>
 
-        <div className="ds-kb-toolbar" aria-label="知识页面筛选排序">
+        <div className="ds-kb-toolbar" aria-label="知识页面搜索排序">
+          {/*
+            Slice 49 — toolbar deduplication. Type / purpose / source
+            filters were previously rendered both here as inline chips
+            + selects AND in the left KnowledgeFilterSidebar (Slice 42),
+            so the two surfaces fought for the same state. The sidebar
+            is the spec §7.3 home for filters; this toolbar keeps only
+            the search box and sort selector. Filter state hooks
+            (filterMode / purposeMode / sourceMode) and their setters
+            stay in this component because the sidebar reads them via
+            props — no removal of state, only of duplicated UI.
+          */}
           <label className="ds-kb-search">
             <Search className="size-3.5" strokeWidth={1.5} />
             <input
@@ -452,49 +463,6 @@ export function KnowledgePagesList() {
             <option value="oldest">最早创建</option>
             <option value="words">字数最多</option>
             <option value="refs">引用最多</option>
-          </select>
-          <div className="ds-kb-filter" role="group" aria-label="筛选">
-            {[
-              ["all", "全部"],
-              ["concept", "概念"],
-              ["derived", "素材衍生"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                data-active={filterMode === value}
-                onClick={() => setFilterMode(value as FilterMode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <select
-            className="ds-kb-sort"
-            value={purposeMode}
-            onChange={(event) =>
-              updatePurposeMode(event.target.value as PurposeFilterMode)
-            }
-            aria-label="Purpose Lens"
-          >
-            <option value="all">全部目的</option>
-            {PURPOSE_LENSES.map((lens) => (
-              <option key={lens.id} value={lens.id}>
-                {lens.zhLabel}
-              </option>
-            ))}
-          </select>
-          <select
-            className="ds-kb-sort"
-            value={sourceMode}
-            onChange={(event) =>
-              updateSourceMode(event.target.value as SourceFilterMode)
-            }
-            aria-label="来源筛选"
-          >
-            <option value="all">全部来源</option>
-            <option value="sourced">有来源</option>
-            <option value="missing">缺来源</option>
           </select>
         </div>
       </div>
