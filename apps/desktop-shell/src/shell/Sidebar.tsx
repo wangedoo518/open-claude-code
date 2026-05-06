@@ -124,14 +124,21 @@ export function AppSidebar() {
           able to switch conversations without re-introducing a 256px
           sidebar on every other route. */}
       {onAsk && <AskSecondaryColumn />}
-      {!onAsk && location.pathname.startsWith("/wiki") && (
-        <WorkspaceSecondaryColumn kind="knowledge" />
-      )}
-      {!onAsk &&
-        (location.pathname.startsWith("/rules") ||
-          location.pathname.startsWith("/schema")) && (
-          <WorkspaceSecondaryColumn kind="rules" />
-        )}
+      {/*
+        Slice 49 — knowledge secondary column removed. Its 6 links
+        duplicated the existing /wiki PillTabs (页面/关系图/原始素材
+        switch via ?view=, identical to the top tabs) and the Slice 42
+        KnowledgeFilterSidebar 目的 chips (Writing/Research/Personal
+        are a subset of the 6 purpose lenses already filterable in the
+        sidebar). Keeping it produced two stacked sidebars + a third
+        nav surface fighting for the same state.
+      */}
+      {/*
+        Slice 50 — rules secondary column also removed for the same
+        reason as knowledge: 5 left-rail entries were a duplicate of
+        the page's own 5 top cards. Rules Studio now relies on the
+        in-page card row + scroll for navigation.
+      */}
     </>
   );
 }

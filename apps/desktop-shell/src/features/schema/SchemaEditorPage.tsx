@@ -251,13 +251,12 @@ export function SchemaEditorPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Hero */}
+      {/* Hero — Slice 50 user-language rewrite */}
       <div className="shrink-0 border-b border-border/50 px-6 py-4">
-        <h1 className="text-lg text-foreground">
-          Rules Studio
-        </h1>
-        <p className="mt-1 text-muted-foreground/60" style={{ fontSize: 11 }}>
-          用户教外脑如何整理：Types、Templates、Policies、Guidance 与 Validation 收束在一个工作区。
+        <h1 className="text-lg text-foreground">整理规则</h1>
+        <p className="mt-1 max-w-2xl text-muted-foreground/80" style={{ fontSize: 12, lineHeight: 1.6 }}>
+          Buddy 不会直接帮你整理 — 它先学你的整理风格。在这里告诉它：
+          <span className="text-foreground"> 新页该长什么样、合并冲突怎么办、外部 AI 可以碰哪些文件</span>。
         </p>
       </div>
 
@@ -406,27 +405,68 @@ function SchemaBody({
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <div className="grid gap-2 md:grid-cols-5">
+      {/* Slice 50 — 4 task-driven cards (was 5 with raw schema names).
+          "Types" was an internal sub-concept of templates, dropped here
+          and exposed inside each template card's field count. */}
+      <div className="grid gap-3 md:grid-cols-4">
         {[
-          ["Types", "字段与类型"],
-          ["Templates", `${templateCount} 个模板`],
-          ["Policies", "维护策略"],
-          ["Guidance", "AGENTS / CLAUDE"],
-          ["Validation", "巡检结果"],
-        ].map(([title, desc]) => (
-          <div key={title} className="rounded-md border border-border/50 bg-card px-3 py-3">
-            <div className="text-[12px] font-medium text-foreground">{title}</div>
-            <div className="mt-1 text-[11px] text-muted-foreground">{desc}</div>
+          {
+            title: "页面模板",
+            sub: "新页该长什么样",
+            count: `${templateCount} 个模板`,
+          },
+          {
+            title: "整理策略",
+            sub: "合并 / 冲突 / 命名时怎么办",
+            count: `${policyFiles.length} 项策略`,
+          },
+          {
+            title: "AI 行为契约",
+            sub: "外部 AI 能碰哪些文件",
+            count: `${guidanceFiles.filter((f) => f.exists).length}/${guidanceFiles.length || 4} 已就绪`,
+          },
+          {
+            title: "健康巡检",
+            sub: "检查整理出来的结果有没有出问题",
+            count: patrolReport
+              ? `${patrolReport.issues.length} 个问题`
+              : "未巡检",
+          },
+        ].map((card) => (
+          <div
+            key={card.title}
+            className="rounded-md border border-border/50 bg-card px-3 py-3"
+          >
+            <div className="text-[13px] font-medium text-foreground">
+              {card.title}
+            </div>
+            <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              {card.sub}
+            </div>
+            <div className="mt-2 text-[10px] uppercase tracking-widest text-muted-foreground/60">
+              {card.count}
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Slice 50 — Validation snapshot moved up to be the first
+          "actionable" surface; previously it was buried at the bottom. */}
+      <ValidationSnapshotCard
+        report={patrolReport}
+        isLoading={patrolLoading}
+        error={patrolError}
+        onRunPatrol={onRunPatrol}
+      />
 
       <div className="rounded-md border border-border/50 bg-card px-4 py-3">
         <div className="flex items-start gap-2">
           <Bot className="mt-0.5 size-4 text-primary" />
           <div className="text-[12px] leading-5 text-muted-foreground">
-            外部 AI 首期允许受控写入 <code>wiki/</code>、
-            <code>schema/templates</code> 与 root guidance；自动写入分为本次会话有效和永久规则。
+            <span className="text-foreground">外部 AI 默认只读</span>
+            。开启受控写入后，AI 可以改 <code>wiki/</code>（知识页正文）、
+            <code>schema/templates</code>（模板）和 root guidance（行为契约）。
+            授权可分两档：仅本次会话生效，或写成永久规则。
           </div>
         </div>
       </div>
@@ -434,13 +474,13 @@ function SchemaBody({
       <div className="rounded-md border border-border/50 bg-card px-4 py-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-[14px] font-medium text-foreground">Templates</h2>
+            <h2 className="text-[14px] font-medium text-foreground">页面模板 (Templates)</h2>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              schema/templates 是外脑写入 Wiki 时会参考的页面骨架。
+              新建知识页时按这些骨架来。每种类型决定该页面有哪些字段、应该填什么。
             </p>
           </div>
           <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-            {templateCount} files
+            {templateCount} 个模板
           </span>
         </div>
         <div className="mt-4 grid gap-2 md:grid-cols-2">
@@ -455,32 +495,22 @@ function SchemaBody({
         </div>
       </div>
 
-      <div className="rounded-md border border-border/50 bg-card px-4 py-3">
-        <div className="flex items-start gap-2">
-          <GitBranch className="mt-0.5 size-4 text-primary" />
-          <div className="text-[12px] leading-5 text-muted-foreground">
-            <div className="font-medium text-foreground">Git checkpoint</div>
-            <div>
-              Rules 保存会产生普通 Buddy Vault diff；当前状态：
-              <span className="ml-1 text-foreground">{gitStatus}</span>
-            </div>
-          </div>
-        </div>
+      {/* Slice 50 — Git checkpoint reduced to a single inline status row.
+          Was a full bordered card competing with the actionable cards
+          above; now it's an unobtrusive footer-style line. */}
+      <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+        <GitBranch className="size-3" />
+        <span>编辑后保存会产生 Buddy Vault diff · 当前状态：</span>
+        <span className="text-foreground">{gitStatus}</span>
       </div>
-
-      <ValidationSnapshotCard
-        report={patrolReport}
-        isLoading={patrolLoading}
-        error={patrolError}
-        onRunPatrol={onRunPatrol}
-      />
 
       <div className="rounded-md border border-border/50 bg-card px-4 py-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-[14px] font-medium text-foreground">Guidance</h2>
+            <h2 className="text-[14px] font-medium text-foreground">AI 行为契约 (Guidance)</h2>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              root shims 让外部 AI 和 CLI agent 先读正确的 Buddy Vault 写入边界。
+              这些文件告诉外部 AI 和 CLI 助手：哪些文件夹能改、哪些不能。
+              文件不存在时 AI 默认走最严格只读模式。
             </p>
           </div>
           <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
@@ -502,13 +532,13 @@ function SchemaBody({
       <div className="rounded-md border border-border/50 bg-card px-4 py-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-[14px] font-medium text-foreground">Policies</h2>
+            <h2 className="text-[14px] font-medium text-foreground">整理策略 (Policies)</h2>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              schema/policies 约束维护流程如何命名、冲突、废弃和复盘。
+              告诉外脑遇到这些情况时怎么办：合并冲突、命名重复、内容过时、页面废弃。
             </p>
           </div>
           <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-            {policyFiles.length} files
+            {policyFiles.length} 项策略
           </span>
         </div>
         <div className="mt-4 grid gap-2 md:grid-cols-2">
@@ -526,9 +556,9 @@ function SchemaBody({
       <div className="rounded-md border border-border/50 bg-card px-4 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-[14px] font-medium text-foreground">Rule file editor</h2>
+            <h2 className="text-[14px] font-medium text-foreground">规则文件编辑器</h2>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              只允许编辑 root guidance、schema guidance、templates 与 policies 白名单文件。
+              选一个规则文件直接改它的源码（YAML 或 Markdown）。出于安全，只有 root guidance、schema guidance、模板和策略白名单文件可以从这里修改。
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -777,14 +807,16 @@ function ValidationSnapshotCard({
   error: string | null;
   onRunPatrol: () => void;
 }) {
-  const summaryItems = report
+  // Slice 50 — Chinese labels for the 6 patrol metrics. Keep the
+  // English schema name as a tooltip so power users can still map back.
+  const summaryItems: Array<[label: string, value: number, hint: string]> = report
     ? [
-        ["Schema", report.summary.schema_violations],
-        ["Orphans", report.summary.orphans],
-        ["Stale", report.summary.stale],
-        ["Stubs", report.summary.stubs],
-        ["Oversized", report.summary.oversized],
-        ["Confidence", report.summary.confidence_decay],
+        ["Schema 不符", report.summary.schema_violations, "schema_violations"],
+        ["孤儿页", report.summary.orphans, "orphans"],
+        ["过期", report.summary.stale, "stale"],
+        ["占位页", report.summary.stubs, "stubs"],
+        ["超大页", report.summary.oversized, "oversized"],
+        ["置信下滑", report.summary.confidence_decay, "confidence_decay"],
       ]
     : [];
   const checkedAt = report?.checked_at
@@ -795,14 +827,14 @@ function ValidationSnapshotCard({
     <div className="rounded-md border border-border/50 bg-card px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-[14px] font-medium text-foreground">Validation snapshot</h2>
+          <h2 className="text-[14px] font-medium text-foreground">健康巡检 (Validation)</h2>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            巡检结果把 Rules 与 Wiki 的健康信号放在同一个默认工作区。
+            扫一遍当前知识库，看看有没有 schema 错位、孤儿页、过期内容、待破解的大页等问题。
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={onRunPatrol} disabled={isLoading}>
           <RefreshCw className={`size-3 ${isLoading ? "animate-spin" : ""}`} />
-          运行巡检
+          {isLoading ? "巡检中" : "运行巡检"}
         </Button>
       </div>
 
@@ -815,101 +847,118 @@ function ValidationSnapshotCard({
       {report ? (
         <>
           <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {summaryItems.map(([label, value]) => (
-              <div key={label} className="rounded-md border border-border/50 bg-background px-3 py-2">
+            {summaryItems.map(([label, value, hint]) => (
+              <div
+                key={label}
+                className="rounded-md border border-border/50 bg-background px-3 py-2"
+                title={hint}
+              >
                 <div className="text-[11px] text-muted-foreground">{label}</div>
                 <div className="mt-1 text-[16px] font-medium text-foreground">{value}</div>
               </div>
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span>{report.issues.length} issues</span>
-            {checkedAt ? <span>checked {checkedAt}</span> : null}
+            <span>共 {report.issues.length} 个问题</span>
+            {checkedAt ? <span>· 上次巡检 {checkedAt}</span> : null}
           </div>
         </>
       ) : (
         <div className="mt-4 rounded-md border border-dashed border-border/70 bg-background px-3 py-3 text-[12px] text-muted-foreground">
-          {isLoading ? "正在读取巡检报告..." : "暂无巡检报告，运行一次巡检即可生成当前规则健康快照。"}
+          {isLoading ? "正在巡检…" : "还没跑过巡检。点右上角「运行巡检」生成一份当前知识库健康快照。"}
         </div>
       )}
     </div>
   );
 }
 
+/**
+ * Slice 50 — user-facing purpose hints for the 6 built-in templates.
+ * Replaces the file-path + `# {title}` placeholder that confused users
+ * with a one-line answer to "when do I use this template?". Falls back
+ * to the LLM's body_hint for any custom template not in this map.
+ */
+const TEMPLATE_PURPOSE_HINTS: Record<string, string> = {
+  concept: "记一个想法 / 方法论 / 框架。最常用的页面类型。",
+  people: "记一个人：研究者、作者、合作者、行业关键人物。",
+  topic: "记一个领域 / 主题：覆盖一组相关概念的索引页。",
+  research: "记一项调研 / 假设 / 实验：带研究地图和分析 memo。",
+  personal: "记个人反思 / 日记 / 习惯笔记：私人维度的内容。",
+  compare: "对比两个东西的异同：A vs B 的结构化分析。",
+};
+
 function TemplateSummaryCard({ template }: { template: SchemaTemplate }) {
   const requiredCount = template.fields.filter((field) => field.required).length;
-  const bodyHint = template.body_hint.trim().split(/\r?\n/)[0] || "正文模板";
+  const purposeHint =
+    TEMPLATE_PURPOSE_HINTS[template.category] ||
+    template.body_hint.trim().split(/\r?\n/)[0] ||
+    "正文模板";
   return (
-    <div className="rounded-md border border-border/50 bg-background px-3 py-3">
+    <div
+      className="rounded-md border border-border/50 bg-background px-3 py-3"
+      title={`schema/templates/${template.category}.md`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-[13px] font-medium text-foreground">
             {template.display_name}
           </div>
-          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-            schema/templates/{template.category}.md
-          </div>
+          <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+            {purposeHint}
+          </p>
         </div>
-        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-          {requiredCount} fields
+        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+          {requiredCount} 字段
         </span>
       </div>
-      <p className="mt-3 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
-        {bodyHint}
-      </p>
     </div>
   );
 }
 
 function GuidanceFileCard({ file }: { file: GuidanceFileInfo }) {
   return (
-    <div className="rounded-md border border-border/50 bg-background px-3 py-3">
+    <div
+      className="rounded-md border border-border/50 bg-background px-3 py-3"
+      title={file.relative_path}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-[13px] font-medium text-foreground">
             {file.label}
           </div>
-          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-            {file.relative_path}
-          </div>
+          <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+            {file.first_heading ?? "（文件存在但未填首行标题）"}
+          </p>
         </div>
         <span
           className={
-            "shrink-0 rounded px-2 py-0.5 text-[11px] " +
+            "shrink-0 rounded px-2 py-0.5 text-[10px] " +
             (file.exists
               ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
               : "bg-[var(--color-warning)]/10 text-[var(--color-warning)]")
           }
         >
-          {file.exists ? `${file.byte_size} bytes` : "missing"}
+          {file.exists ? "已就绪" : "缺失"}
         </span>
       </div>
-      <p className="mt-3 truncate text-[12px] text-muted-foreground">
-        {file.first_heading ?? "未找到标题"}
-      </p>
     </div>
   );
 }
 
 function PolicyFileCard({ file }: { file: PolicyFileInfo }) {
   return (
-    <div className="rounded-md border border-border/50 bg-background px-3 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-[13px] font-medium text-foreground">
-            {file.label}
-          </div>
-          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-            {file.relative_path}
-          </div>
+    <div
+      className="rounded-md border border-border/50 bg-background px-3 py-3"
+      title={file.relative_path}
+    >
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-medium text-foreground">
+          {file.label}
         </div>
-        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-          {file.byte_size} bytes
-        </span>
+        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+          {file.first_heading ?? "（未填首行说明）"}
+        </p>
       </div>
-      <p className="mt-3 truncate text-[12px] text-muted-foreground">
-        {file.first_heading ?? "未找到标题"}
-      </p>
     </div>
   );
 }

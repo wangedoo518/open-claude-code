@@ -11,11 +11,12 @@
  * Pure presentational — all state lives in the parent. No data fetches.
  */
 
-import { Filter } from "lucide-react";
+import { Filter, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import {
   PURPOSE_LENSES,
   type PurposeLensId,
 } from "@/features/purpose/purpose-lenses";
+import { useKnowledgeFilterSidebarStore } from "@/state/knowledge-filter-sidebar-store";
 
 export type FilterMode = "all" | "concept" | "derived";
 export type PurposeFilterMode = "all" | PurposeLensId;
@@ -57,14 +58,40 @@ export function KnowledgeFilterSidebar({
   visibleCount,
   total,
 }: KnowledgeFilterSidebarProps) {
+  const open = useKnowledgeFilterSidebarStore((s) => s.open);
+  const toggle = useKnowledgeFilterSidebarStore((s) => s.toggle);
+
+  // Slice 49 — both content + restore are always mounted; the collapse
+  // animation is driven by the --collapsed class on the outer aside,
+  // which transitions width 250 → 40 over 260ms while content fades
+  // out and restore fades in. Mirrors the Ask /ask page pattern
+  // (.ds-rail-secondary--collapsed) for consistency across workbenches.
   return (
-    <aside className="ds-kb-filter-sidebar" aria-label="Knowledge filters">
+    <aside
+      className={`ds-kb-filter-sidebar ${open ? "ds-kb-filter-sidebar--expanded" : "ds-kb-filter-sidebar--collapsed"}`}
+      aria-label="Knowledge filters"
+      data-collapsed={!open || undefined}
+    >
+      <div
+        className="ds-kb-filter-sidebar-content"
+        aria-hidden={!open}
+        inert={!open || undefined}
+      >
       <div className="ds-kb-filter-sidebar-head">
         <Filter className="size-3" strokeWidth={1.5} aria-hidden />
         <span>筛选</span>
         <span className="ds-kb-filter-sidebar-count">
           {visibleCount}/{total}
         </span>
+        <button
+          type="button"
+          className="ask-history-icon-button"
+          onClick={toggle}
+          aria-label="收起筛选侧栏"
+          title="收起筛选"
+        >
+          <PanelLeftClose className="size-3.5" />
+        </button>
       </div>
 
       <Section label="类型 (Type)">
@@ -108,6 +135,22 @@ export function KnowledgeFilterSidebar({
           </ChipButton>
         ))}
       </Section>
+      </div>
+      <div
+        className="ds-kb-filter-sidebar-restore"
+        aria-hidden={open}
+      >
+        <button
+          type="button"
+          className="ds-rail-secondary-toggle"
+          onClick={toggle}
+          title="展开筛选"
+          aria-label="展开筛选侧栏"
+          tabIndex={open ? -1 : 0}
+        >
+          <PanelLeftOpen className="size-4" />
+        </button>
+      </div>
     </aside>
   );
 }
