@@ -306,7 +306,12 @@ function buildRouteItems(): (RoutePaletteItem & PaletteContextFields)[] {
       kind: "route" as const,
       value: paletteValueFor("route", route.key),
       label: route.label,
-      hint: route.key,
+      // Slice 51 — `route.key` (e.g. "ask.demo", "dashboard.legacy")
+      // is an internal id; surfacing it as the subtitle gives every
+      // palette row a confusing "developer label" line. The path is
+      // already encoded in the cmdk `value`, so search still works.
+      // Use the human-friendly path as the secondary line instead.
+      hint: route.path,
       icon: iconForRouteKey(route.key),
       routeKey: route.key,
       path: route.path,

@@ -125,6 +125,40 @@ interface DraftValidation {
   warnings: string[];
 }
 
+/**
+ * Slice 51 — split the persisted draft into two regions so the body
+ * can be edited in 新手模式 without exposing the YAML frontmatter.
+ *
+ * If the draft does not start with a YAML frontmatter block we return
+ * the original draft as `body` and leave `frontmatter` empty — that
+ * way the simple editor still works for legacy / hand-typed pages.
+ */
+function splitFrontmatter(content: string): { header: string; body: string } {
+  const lines = content.split(/\r?\n/);
+  if (lines[0] !== "---") {
+    return { header: "", body: content };
+  }
+  const closingIndex = lines.findIndex(
+    (line, index) => index > 0 && line === "---",
+  );
+  if (closingIndex < 0) {
+    return { header: "", body: content };
+  }
+  const header = lines.slice(0, closingIndex + 1).join("\n");
+  // Strip exactly one leading blank line after `---` so re-merging
+  // doesn't accumulate blank lines after every save.
+  const bodyStart = closingIndex + 1;
+  const trimmedBodyStart =
+    lines[bodyStart] === "" ? bodyStart + 1 : bodyStart;
+  const body = lines.slice(trimmedBodyStart).join("\n");
+  return { header, body };
+}
+
+function mergeFrontmatter(header: string, body: string): string {
+  if (!header) return body;
+  return `${header}\n\n${body}`;
+}
+
 function stripYamlScalar(value: string): string {
   return value.trim().replace(/^['"]|['"]$/g, "");
 }
@@ -307,6 +341,11 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // Slice 51 — default-hide the YAML frontmatter behind a "高级模式"
+  // toggle so non-tech users edit only the body without the risk of
+  // breaking schema-validated metadata. Pro mode preserves the full
+  // CodeMirror experience for power users.
+  const [showFrontmatter, setShowFrontmatter] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["wiki", "pages", "detail", slug],
     queryFn: () => getWikiPage(slug),
@@ -387,6 +426,10 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   };
 
   if (isEditing) {
+    const { header: draftHeader, body: draftBody } = splitFrontmatter(draft);
+    const handleSimpleBodyChange = (newBody: string) => {
+      setDraft(mergeFrontmatter(draftHeader, newBody));
+    };
     return (
       <div className="mx-auto max-w-[960px] px-8 py-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -399,6 +442,18 @@ export function WikiArticle({ slug }: WikiArticleProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowFrontmatter((v) => !v)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-[11px] text-muted-foreground transition-colors hover:bg-muted"
+              title={
+                showFrontmatter
+                  ? "返回新手模式：只编辑正文，不会动元数据"
+                  : "进入高级模式：可直接编辑 YAML 元数据"
+              }
+            >
+              {showFrontmatter ? "新手模式" : "高级模式"}
+            </button>
             <button
               type="button"
               onClick={handleCancelEdit}
@@ -424,14 +479,31 @@ export function WikiArticle({ slug }: WikiArticleProps) {
           </div>
         </div>
 
+        {!showFrontmatter && draftHeader && (
+          <div className="mb-3 rounded-md border border-border/50 bg-muted/40 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+            <span className="font-medium text-foreground">新手模式</span>
+            ：你只在编辑正文。页面属性 (类型 / 目的 / 来源…) 已隐藏并保持原值，需要修改请切到 <span className="font-medium">高级模式</span>。
+          </div>
+        )}
+
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-          <CodeMirrorEditor
-            value={draft}
-            onChange={setDraft}
-            language="markdown"
-            minHeight="620px"
-            ariaLabel="Wiki page Markdown and YAML CodeMirror editor"
-          />
+          {showFrontmatter ? (
+            <CodeMirrorEditor
+              value={draft}
+              onChange={setDraft}
+              language="markdown"
+              minHeight="620px"
+              ariaLabel="Wiki page Markdown and YAML CodeMirror editor"
+            />
+          ) : (
+            <textarea
+              value={draftBody}
+              onChange={(event) => handleSimpleBodyChange(event.target.value)}
+              className="min-h-[620px] w-full resize-none rounded-md border border-border bg-background px-4 py-3 font-mono text-[13px] leading-6 text-foreground outline-none focus:border-primary"
+              placeholder="在这里写正文 (支持 Markdown)…"
+              aria-label="Wiki page body editor (simple mode)"
+            />
+          )}
           <aside className="space-y-3">
             <div className="rounded-md border border-border bg-card px-3 py-3 text-[12px]">
               <div className="mb-2 font-medium text-foreground">保存前检查</div>

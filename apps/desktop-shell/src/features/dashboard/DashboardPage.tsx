@@ -156,9 +156,45 @@ export function DashboardPage() {
   const schemaViolations = patrol?.summary.schema_violations ?? 0;
   const stalePages = patrol?.summary.stale ?? 0;
   const orphanPages = patrol?.summary.orphans ?? 0;
+  // Slice 51 — fresh-vault onboarding override. When the user has
+  // basically nothing in the brain yet (≤ 1 page seed, 0 raw items),
+  // the maintenance-flavored Top 3 ("提交 5 个 Vault 改动" / "问外脑")
+  // is wrong: there's nothing to maintain and nothing to ask about.
+  // Replace with three concrete "how do I put my first thing in"
+  // affordances that map 1:1 to the three real ingest entry points.
+  // Do not apply this override when Vault is dirty; checkpoint safety
+  // remains the top action even for an otherwise empty brain.
+  const isFreshVault =
+    (pagesQuery.data?.pages?.length ?? 0) <= 1 &&
+    (statsQuery.data?.raw_count ?? 0) === 0 &&
+    pendingInbox === 0 &&
+    git?.dirty !== true;
   const topActions = useMemo(
-    () =>
-      [
+    () => {
+      if (isFreshVault) {
+        return [
+          {
+            label: "连接微信，让它自己流进来",
+            href: "/wechat",
+            tone: "neutral" as const,
+          },
+          {
+            label: "粘贴一条链接 / 文章",
+            href: "/raw?add=url",
+            tone: "neutral" as const,
+          },
+          {
+            label: "上传 PDF / Word / Markdown",
+            href: "/raw?add=file",
+            tone: "neutral" as const,
+          },
+        ] satisfies Array<{
+          label: string;
+          href: string;
+          tone: "warning" | "neutral";
+        }>;
+      }
+      return [
         pendingInbox > 0
           ? {
               label: `审阅 ${pendingInbox} 条待整理建议`,
@@ -203,10 +239,12 @@ export function DashboardPage() {
         label: string;
         href: string;
         tone: "warning" | "neutral";
-      }>,
+      }>;
+    },
     [
       git?.changed_count,
       git?.dirty,
+      isFreshVault,
       missingSourceCount,
       orphanPages,
       pendingInbox,

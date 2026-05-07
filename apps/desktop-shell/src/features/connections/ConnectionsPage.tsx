@@ -97,6 +97,11 @@ export function ConnectionsPage() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [permanentScope, setPermanentScope] = useState("schema/templates/research.md");
   const [permanentNote, setPermanentNote] = useState("");
+  // Slice 51 — diff preview is a power-user pane (raw `+`/`-` lines,
+  // hunks, sections, byte-level discard). Default-collapse so non-tech
+  // users see the friendly "5 files changed → click 创建 checkpoint"
+  // path first; expand only when they ask for surgical control.
+  const [showAdvancedDiff, setShowAdvancedDiff] = useState(false);
   const gitQuery = useQuery({
     queryKey: ["wiki", "git", "connections"],
     queryFn: () => getVaultGitStatus(),
@@ -123,10 +128,11 @@ export function ConnectionsPage() {
   ]);
 
   const diffQuery = useQuery({
-    queryKey: ["wiki", "git", "diff", "connections", diffStaged],
+    queryKey: ["wiki", "git", "diff", "connections", diffStaged, showAdvancedDiff],
     queryFn: () => getVaultGitDiff(diffStaged),
     enabled: Boolean(
-      git?.git_available &&
+      showAdvancedDiff &&
+        git?.git_available &&
         git?.initialized &&
         (diffStaged ? git.staged_count > 0 : git.dirty),
     ),
@@ -672,9 +678,37 @@ export function ConnectionsPage() {
 
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
                 <div className="rounded-md border border-border/70 bg-background">
+                  {!showAdvancedDiff ? (
+                    <div className="px-4 py-5 text-[12px] leading-6">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-medium text-foreground">
+                          {git?.dirty
+                            ? `${git?.changed_count ?? 0} 项改动等待保存`
+                            : "工作区干净"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvancedDiff(true)}
+                          className="text-[11px] text-primary hover:underline"
+                        >
+                          查看高级 diff →
+                        </button>
+                      </div>
+                      <p className="mt-2 text-muted-foreground">
+                        右边填一句简短说明，再点「保存这次进度」就把这次改动存进历史。需要精确丢弃某一行 / 某一块时，再展开高级视图。
+                      </p>
+                    </div>
+                  ) : (<>
                   <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3 py-2">
-                    <div className="text-[12px] font-medium">
+                    <div className="flex items-center gap-2 text-[12px] font-medium">
                       Diff preview
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvancedDiff(false)}
+                        className="text-[11px] font-normal text-muted-foreground hover:underline"
+                      >
+                        收起
+                      </button>
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
@@ -917,11 +951,13 @@ export function ConnectionsPage() {
                         : "Discard failed"}
                     </p>
                   )}
+                  </>)}
                 </div>
 
                 <div className="rounded-md border border-border/70 bg-background px-3 py-3">
                   <label className="text-[12px] font-medium" htmlFor="git-commit-message">
-                    Checkpoint message
+                    保存说明
+                    <span className="ml-1 text-[11px] font-normal text-muted-foreground">(一句话即可)</span>
                   </label>
                   <textarea
                     id="git-commit-message"
@@ -941,7 +977,7 @@ export function ConnectionsPage() {
                     ) : (
                       <Save className="size-3.5" />
                     )}
-                    创建 checkpoint
+                    保存这次进度
                   </button>
                   {commitMutation.error && (
                     <p className="mt-2 text-[11px] leading-5 text-[var(--color-warning)]">

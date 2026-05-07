@@ -74,8 +74,10 @@ This document answers: how `desktop-shell` is currently organized.
   action, source raw, target slug, queue status, lineage events, and schema
   validation hint; it has no backend dependency beyond the existing inbox
   list and lineage queries.
-- Knowledge and Rules receive a Tolaria-style 250px secondary sidebar from
-  `apps/desktop-shell/src/shell/Sidebar.tsx`.
+- `apps/desktop-shell/src/shell/Sidebar.tsx` now mounts a shell-level
+  secondary column only for Ask session history. Knowledge and Rules no longer
+  receive duplicated shell sidebars; Knowledge owns its in-page filter sidebar,
+  while Rules Studio owns its in-page cards/sections.
 - `apps/desktop-shell/src/features/schema/SchemaEditorPage.tsx` owns Rules
   Studio. It keeps Advanced YAML / CodeMirror folded by default, reads live
   Git/Vault status, renders the `schema/templates/*.md` template catalog by

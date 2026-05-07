@@ -20,9 +20,11 @@ The current desktop shell now includes a quiet Tolaria-style workbench layer:
 | Token / class | Role |
 |---|---|
 | `.ds-rail` | 56px primary rail for Home, Ask, Inbox, Knowledge, Rules, Connections, Settings |
-| `.ds-workspace-sidebar` | 250px secondary sidebar for Knowledge and Rules |
+| `.ds-rail-secondary` | Ask-only secondary column for session history |
+| `.ds-workspace-sidebar` | Legacy shell workspace sidebar class; no active Knowledge/Rules mount after their navigation moved in-page |
 | `.ds-status-bar` | 30px global status bar for Vault/Git, Inbox, permission, and external AI state |
 | `.ds-status-item[data-tone]` | `success`, `warning`, `muted` state language |
+| `.ds-kb-stage` | Knowledge workbench layout with an in-page filter sidebar |
 | `.ds-kb-purpose-chip` | Purpose Lens chip inside Knowledge rows |
 | `.buddy-codemirror` | CodeMirror 6 shell for Wiki Markdown/frontmatter and Rules Advanced editing |
 | `.inbox-redesign-metric-icon--vault*` | Inbox Git/Vault checkpoint metric state; normal uses quiet green, warning uses amber |

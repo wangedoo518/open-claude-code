@@ -4,8 +4,8 @@
     {
       "name": "desktop-shell",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "apps/desktop-shell"],
-      "port": 1420
+      "runtimeArgs": ["run", "dev", "--prefix", "apps/desktop-shell", "--", "--host", "127.0.0.1", "--port", "5174", "--strictPort"],
+      "port": 5174
     }
   ]
 }

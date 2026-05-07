@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
@@ -357,6 +357,22 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
     setShowAddPanel(true);
     setShowImportMenu(false);
   };
+
+  // Slice 51 — deep-link entry from Home / Inbox empty-states. Honors
+  // `?add=url|file|text` once on mount, then strips the param so the
+  // URL stays clean and reload doesn't re-open the panel.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const requested = searchParams.get("add");
+    if (requested === "url" || requested === "file" || requested === "text") {
+      openAddPanel(requested);
+      const next = new URLSearchParams(searchParams);
+      next.delete("add");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selectAllVisible = () => {
     setSelectedIds(new Set(filteredEntries.map((entry) => entry.id)));
     setBatchMode(true);
@@ -464,10 +480,18 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
                 type="button"
                 className="raw-library-import-trigger"
                 onClick={() => setShowImportMenu((current) => !current)}
+                aria-haspopup="menu"
+                aria-expanded={showImportMenu}
+                title="选择添加方式：链接 / 文件 / 文本 / 微信"
               >
                 <Plus className="size-3.5" />
-                导入
-                <ChevronDown className="size-3" />
+                添加
+                <ChevronDown
+                  className="size-3.5 transition-transform"
+                  style={{
+                    transform: showImportMenu ? "rotate(180deg)" : undefined,
+                  }}
+                />
               </button>
               {showImportMenu && (
                 <div className="raw-library-import-menu">
@@ -1009,7 +1033,7 @@ function CardList({
           <>
             素材库是所有入库内容的主列表。
             <br />
-            你可以通过微信转发、Ask 对话发链接、或点击「添加」手动入库。
+            你可以通过微信转发、Ask 对话发链接、或点右上角「添加」手动入库。
           </>
         }
       />

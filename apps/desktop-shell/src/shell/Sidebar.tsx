@@ -219,47 +219,7 @@ function AskSecondaryColumn() {
   );
 }
 
-function WorkspaceSecondaryColumn({
-  kind,
-}: {
-  kind: "knowledge" | "rules";
-}) {
-  const title = kind === "knowledge" ? "知识库" : "整理规则";
-  const subtitle = kind === "knowledge" ? "页面、目的、来源" : "Types / Templates / Policies";
-  const items =
-    kind === "knowledge"
-      ? [
-          { label: "页面", href: "/wiki" },
-          { label: "关系图", href: "/wiki?view=graph" },
-          { label: "原始素材", href: "/wiki?view=raw" },
-          { label: "Writing", href: "/wiki?purpose=writing" },
-          { label: "Research", href: "/wiki?purpose=research" },
-          { label: "Personal", href: "/wiki?purpose=personal" },
-        ]
-      : [
-          { label: "Types", href: "/rules#types" },
-          { label: "Templates", href: "/rules#templates" },
-          { label: "Policies", href: "/rules#policies" },
-          { label: "Guidance", href: "/rules#guidance" },
-          { label: "Validation", href: "/rules#validation" },
-        ];
-
-  return (
-    <aside className="ds-workspace-sidebar" aria-label={`${title}侧栏`}>
-      <div className="ds-workspace-sidebar-head">
-        <div className="ds-workspace-sidebar-title">{title}</div>
-        <div className="ds-workspace-sidebar-subtitle">{subtitle}</div>
-      </div>
-      <nav className="ds-workspace-sidebar-nav">
-        {items.map((item) => (
-          <Link key={item.href} to={item.href} className="ds-workspace-sidebar-link">
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-      <div className="ds-workspace-sidebar-note">
-        250px 默认展开；高级视图仍可通过 ⌘K 进入。
-      </div>
-    </aside>
-  );
-}
+// Slice 49/50 removed the WorkspaceSecondaryColumn for /wiki and
+// /rules — both surfaces now own their own filter sidebars in-page,
+// so the shell-level secondary column was a dead duplicate. Removed
+// in Slice 51 to clear an unused-symbol TS error.

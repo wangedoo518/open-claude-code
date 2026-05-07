@@ -1064,6 +1064,7 @@ export function Composer({
                 )}
                 onClick={() => setPlanMode(false)}
                 disabled={inputBlocked}
+                title="代码模式：直接执行操作（写文件、改 wiki、调工具）"
               >
                 <Code2 className="size-3" />
                 代码
@@ -1076,6 +1077,7 @@ export function Composer({
                 )}
                 onClick={() => setPlanMode(true)}
                 disabled={inputBlocked}
+                title="计划模式：只规划步骤，不会动你的文件 / wiki，确认后再执行"
               >
                 <FileSearch className="size-3" />
                 计划
@@ -1092,6 +1094,7 @@ export function Composer({
                 style={modeConfig.color ? { color: modeConfig.color } : undefined}
                 onClick={() => setShowPermissionMenu((prev) => !prev)}
                 disabled={inputBlocked}
+                title={`${modeConfig.label}：${modeConfig.desc}（点击切换其他权限模式）`}
               >
                 <ModeIcon className="size-3" />
                 <span>{modeConfig.label}</span>

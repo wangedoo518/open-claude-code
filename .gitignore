@@ -13,6 +13,10 @@ rust/.claw-runtime/
 apps/*/dist/
 apps/*/node_modules/
 apps/*/src-tauri/target/
+# Local Vite/app env overrides. Use explicit shell env in smoke scripts
+# instead of committing per-machine API base / port choices.
+.env.local
+apps/*/.env.local
 # Tauri sidecar binaries — produced per-platform by
 # .github/workflows/release.yml (cargo build --bin desktop-server →
 # copied here with target-triple suffix). Per-build artifacts, never

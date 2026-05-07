@@ -1221,8 +1221,14 @@ function InboxRedesignList({
           size="full"
           icon={InboxIcon}
           title="暂时没有待整理内容"
-          description="微信、网页链接或手动加入的素材，经过 Maintainer 审阅后会出现在这里。"
+          description="微信、网页链接或手动添加的素材，经过 Maintainer 审阅后会出现在这里。还没添加过？从右边按钮粘一条试试。"
           primaryAction={{
+            label: "粘贴一条链接",
+            onClick: () => {
+              window.location.hash = "#/raw?add=url";
+            },
+          }}
+          secondaryAction={{
             label: "打开素材库",
             onClick: () => {
               window.location.hash = "#/raw";
