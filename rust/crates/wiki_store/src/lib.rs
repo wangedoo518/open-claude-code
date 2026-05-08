@@ -6269,6 +6269,14 @@ pub enum InboxKind {
     Stale,
     /// Proposed deprecation of an existing page.
     Deprecate,
+    /// Slice E15: a cooling / archived page was matched by a fresh
+    /// raw entry (or repeatedly cited in Ask). The maintainer parks
+    /// it as a Resurface review task instead of silently mutating the
+    /// page; user accept flips `vitality` back to `growing`. The
+    /// target slug lives in `InboxEntry::target_page_slug` and the
+    /// reason in `InboxEntry::description`, so the enum stays unit-only
+    /// and `Copy`-able.
+    Resurface,
 }
 
 /// Resolution status of an inbox task.
@@ -13348,6 +13356,16 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
         let events = read_cross_domain_feedback(&paths).unwrap();
         assert!(events.is_empty());
+    }
+
+    // ── E15.1: InboxKind::Resurface variant ─────────────────────────
+    #[test]
+    fn inbox_kind_resurface_round_trips_through_serde_as_kebab_case() {
+        let kind = InboxKind::Resurface;
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, r#""resurface""#);
+        let parsed: InboxKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, InboxKind::Resurface);
     }
 
     #[test]

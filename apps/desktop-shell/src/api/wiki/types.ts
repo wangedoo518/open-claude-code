@@ -79,7 +79,15 @@ export interface RawDetailResponse {
 // on the frontend. Adding a variant here and forgetting to handle it
 // in the InboxPage switch triggers a TS error immediately.
 
-export type InboxKind = "new-raw" | "conflict" | "stale" | "deprecate";
+export type InboxKind =
+  | "new-raw"
+  | "conflict"
+  | "stale"
+  | "deprecate"
+  // Slice E15: cooling/archived page matched by a fresh raw or
+  // repeatedly cited in Ask. `target_page_slug` carries the cooling
+  // page; `description` carries the human-readable resurface reason.
+  | "resurface";
 export type InboxStatus = "pending" | "approved" | "rejected";
 
 /**
