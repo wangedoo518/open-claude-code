@@ -17,6 +17,7 @@ Approved implementation plans for `desktop-shell` should be referenced from here
 - [Phase 2 Closure](./2026-04-24-phase-2-closure.md)
 - [Phase 2-4 Long-Run Execution Checklist](./2026-04-24-phase-2-to-4-long-run-checklist.md)
 - [Buddy Entropy, Priority, And Lifecycle Implementation Plan](./2026-05-07-buddy-entropy-priority-lifecycle-implementation-plan.md)
+- [Buddy Entropy Tension Resolutions Implementation Plan](./2026-05-07-buddy-entropy-tension-resolutions-implementation-plan.md)
 - [Buddy Tolaria Deep Product Design Implementation Plan](./2026-04-29-buddy-tolaria-deep-product-design-implementation-plan.md)
 - [ClaudeWiki WeChat Customer-Service Ingress Plan](./2026-04-10-claudewiki-wechat-customer-service-ingress-plan.md)
 - [Desktop Shell Open Source Boundary And API Key Gateway Plan](./2026-04-12-desktop-shell-open-source-gateway-plan.md)
