@@ -316,6 +316,12 @@ export interface WikiPageSummary {
   source_domain?: string | null;
   inferred_use_domain?: string | null;
   cross_domain_reason?: string | null;
+  /** Slice E17 — post-hoc verdict on this page's payoff. */
+  verdict?: "should_continue" | "should_let_go" | "inconclusive" | null;
+  /** ISO-8601 timestamp the verdict was last set. */
+  verdict_at?: string | null;
+  /** ≤ 200 char free-form reason explaining the verdict. */
+  verdict_reason?: string | null;
   source_raw_id?: number | null;
   created_at: string;
   byte_size: number;
