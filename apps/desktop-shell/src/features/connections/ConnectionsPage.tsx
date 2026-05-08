@@ -41,6 +41,10 @@ import type {
   VaultGitDiffLine,
   VaultGitStatus,
 } from "@/api/wiki/types";
+import {
+  evaluateHighVolumeSourcePlans,
+  type SourceReadinessEvaluation,
+} from "./source-readiness";
 
 const CONNECTIONS = [
   {
@@ -378,6 +382,8 @@ export function ConnectionsPage() {
     }
     return item;
   });
+  const sourceReadiness = useMemo(() => evaluateHighVolumeSourcePlans(), []);
+  const readySourceCount = sourceReadiness.filter((source) => source.ready).length;
 
   function handleCommit() {
     const message = (commitMessage || suggestedCommitMessage).trim();
@@ -548,6 +554,11 @@ export function ConnectionsPage() {
             );
           })}
         </section>
+
+        <SourceReadinessGate
+          sources={sourceReadiness}
+          readyCount={readySourceCount}
+        />
 
         <section
           id="git"
@@ -1169,6 +1180,107 @@ export function ConnectionsPage() {
       </div>
     </main>
   );
+}
+
+function SourceReadinessGate({
+  sources,
+  readyCount,
+}: {
+  sources: SourceReadinessEvaluation[];
+  readyCount: number;
+}) {
+  return (
+    <section
+      id="source-readiness"
+      className="rounded-lg border border-border bg-card px-5 py-5"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="size-4 text-[var(--color-warning)]" />
+            <h2 className="text-[15px] font-medium">来源接入门槛</h2>
+            <StatusBadge tone={readyCount === sources.length ? "success" : "warning"}>
+              {`${readyCount}/${sources.length} ready`}
+            </StatusBadge>
+          </div>
+          <p className="mt-2 max-w-2xl text-[12px] leading-5 text-muted-foreground">
+            高容量来源必须先证明去重、降噪、跨界提取、优先级、归档和隐私边界；只导入不整理的连接器保持阻塞。
+          </p>
+        </div>
+        <Link
+          to="/rules"
+          className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-[12px] text-muted-foreground transition-colors hover:bg-muted"
+        >
+          调整规则
+          <LockKeyhole className="size-3.5" />
+        </Link>
+      </div>
+      <div className="mt-4 grid gap-3 xl:grid-cols-4">
+        {sources.map((source) => (
+          <SourceReadinessRow key={source.id} source={source} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceReadinessRow({ source }: { source: SourceReadinessEvaluation }) {
+  const blocked = !source.ready;
+  return (
+    <div className="rounded-md border border-border/70 bg-background px-3 py-3 text-[12px]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium">{source.label}</div>
+          <div className="mt-1 truncate text-[11px] text-muted-foreground">
+            {source.sourceKind}
+          </div>
+        </div>
+        <StatusBadge tone={source.ready ? "success" : "warning"}>
+          {source.ready ? "ready" : "blocked"}
+        </StatusBadge>
+      </div>
+      <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+        {blocked ? (
+          <AlertTriangle className="size-3.5 text-[var(--color-warning)]" />
+        ) : (
+          <CheckCircle2 className="size-3.5 text-[var(--color-success)]" />
+        )}
+        <span>
+          {source.completed}/{source.total} checks
+        </span>
+      </div>
+      {source.blockers.length ? (
+        <div className="mt-2 rounded bg-[var(--color-warning)]/10 px-2 py-1.5 text-[11px] text-[var(--color-warning)]">
+          {source.blockers.map(sourceReadinessBlockerLabel).join(" / ")}
+        </div>
+      ) : null}
+      <p className="mt-2 line-clamp-2 min-h-10 leading-5 text-muted-foreground">
+        {source.notes}
+      </p>
+      {source.missing.length ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {source.missing.slice(0, 3).map((requirement) => (
+            <span
+              key={requirement.id}
+              className="rounded border border-border/70 bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground"
+            >
+              {requirement.label}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded bg-[var(--color-success)]/10 px-2 py-1.5 text-[11px] text-[var(--color-success)]">
+          可进入具体 source spec
+        </div>
+      )}
+    </div>
+  );
+}
+
+function sourceReadinessBlockerLabel(blocker: string): string {
+  if (blocker === "capture-only import is blocked") return "阻塞：只导入不整理";
+  if (blocker.endsWith("readiness checks missing")) return `缺少 ${blocker.split(" ")[0]} 项`;
+  return blocker;
 }
 
 function gitConnectionStatus(

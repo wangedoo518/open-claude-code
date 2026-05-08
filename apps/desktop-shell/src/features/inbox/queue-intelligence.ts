@@ -349,6 +349,228 @@ export function groupAndSortByAction<
   return result;
 }
 
+export type EntropyInboxGroupKey =
+  | "review_today"
+  | "growing"
+  | "crystallize"
+  | "mergeable"
+  | "needs_decision"
+  | "cooling";
+
+export interface EntropyInboxGroupMeta {
+  label: string;
+  reason: string;
+  color: string;
+  priority?: string;
+  bulkAccept: boolean;
+}
+
+export type EntropyPriority = "low" | "medium" | "high";
+export type EntropyVitality =
+  | "seed"
+  | "growing"
+  | "stable"
+  | "cooling"
+  | "archived";
+
+export interface EntropyLifecycleDefault {
+  priority: EntropyPriority;
+  vitality: EntropyVitality;
+  reviewAfterDays: number;
+}
+
+export const ENTROPY_GROUP_ORDER: EntropyInboxGroupKey[] = [
+  "review_today",
+  "growing",
+  "crystallize",
+  "mergeable",
+  "needs_decision",
+  "cooling",
+];
+
+export const ENTROPY_GROUP_META: Record<
+  EntropyInboxGroupKey,
+  EntropyInboxGroupMeta
+> = {
+  review_today: {
+    label: "今天只审这些",
+    reason: "已有合并草稿或高确定性事项，先处理小批量，避免被完整队列拖住。",
+    color: "#C65D22",
+    priority: "高确定性",
+    bulkAccept: true,
+  },
+  growing: {
+    label: "长期反复出现的方向",
+    reason: "多个素材指向同一主题，说明它可能不只是一次性收藏。",
+    color: "#5B6FC7",
+    priority: "识别共性",
+    bulkAccept: true,
+  },
+  crystallize: {
+    label: "值得结晶成主题",
+    reason: "素材信号足够独立，可以沉淀成新的 wiki 页面。",
+    color: "#1D9E75",
+    priority: "结晶",
+    bulkAccept: true,
+  },
+  mergeable: {
+    label: "可合并到已有主题",
+    reason: "已有明确目标页，优先把碎片并入稳定知识结构。",
+    color: "#2A6BB8",
+    priority: "去重合并",
+    bulkAccept: true,
+  },
+  needs_decision: {
+    label: "需要先判断",
+    reason: "信号不足或历史判断有冲突，先进入 Ask 澄清再决定。",
+    color: "#9A6A18",
+    priority: "先问清楚",
+    bulkAccept: false,
+  },
+  cooling: {
+    label: "冷却 / 可归档",
+    reason: "疑似重复、已复用或低价值，不自动删除，只建议降噪暂缓。",
+    color: "#767A82",
+    priority: "降噪",
+    bulkAccept: false,
+  },
+};
+
+const ENTROPY_LIFECYCLE_DEFAULTS: Record<
+  EntropyInboxGroupKey,
+  EntropyLifecycleDefault
+> = {
+  review_today: { priority: "high", vitality: "growing", reviewAfterDays: 7 },
+  growing: { priority: "high", vitality: "growing", reviewAfterDays: 7 },
+  crystallize: { priority: "medium", vitality: "seed", reviewAfterDays: 30 },
+  mergeable: { priority: "medium", vitality: "stable", reviewAfterDays: 30 },
+  needs_decision: { priority: "medium", vitality: "seed", reviewAfterDays: 14 },
+  cooling: { priority: "low", vitality: "cooling", reviewAfterDays: 45 },
+};
+
+export function defaultLifecycleForEntropyGroup(
+  key: EntropyInboxGroupKey,
+): EntropyLifecycleDefault {
+  return ENTROPY_LIFECYCLE_DEFAULTS[key];
+}
+
+const DEFAULT_TODAY_LIMIT = 3;
+const REVIEW_TODAY_MIN_SCORE = 85;
+
+export interface EntropyInboxGroup<
+  T extends InboxEntry & { intelligence: QueueIntelligence },
+> {
+  key: EntropyInboxGroupKey;
+  meta: EntropyInboxGroupMeta;
+  entries: T[];
+}
+
+function compareQueueEntries<
+  T extends InboxEntry & { intelligence: QueueIntelligence },
+>(a: T, b: T): number {
+  const scoreDelta = b.intelligence.score - a.intelligence.score;
+  if (scoreDelta !== 0) return scoreDelta;
+  return b.id - a.id;
+}
+
+function directionKey(
+  entry: InboxEntry & { intelligence: QueueIntelligence },
+): string | null {
+  const slug =
+    entry.intelligence.target_candidate?.slug ??
+    entry.target_page_slug ??
+    entry.proposed_wiki_slug ??
+    null;
+  const normalized = slug?.trim();
+  return normalized ? normalized : null;
+}
+
+function isCoolingAction(action: RecommendedAction): boolean {
+  return action === "suggest_reject" || action === "defer";
+}
+
+function isReviewTodayCandidate(
+  entry: InboxEntry & { intelligence: QueueIntelligence },
+): boolean {
+  return (
+    entry.intelligence.recommended_action === "open_diff_preview" ||
+    entry.intelligence.score >= REVIEW_TODAY_MIN_SCORE
+  );
+}
+
+function entropyKeyForEntry(
+  entry: InboxEntry & { intelligence: QueueIntelligence },
+  reviewIds: Set<number>,
+  repeatedDirectionKeys: Set<string>,
+): EntropyInboxGroupKey {
+  const action = entry.intelligence.recommended_action;
+  if (reviewIds.has(entry.id)) return "review_today";
+  if (isCoolingAction(action)) return "cooling";
+
+  const key = directionKey(entry);
+  if (key && repeatedDirectionKeys.has(key)) return "growing";
+
+  if (action === "create_new") return "crystallize";
+  if (action === "update_existing" || action === "open_diff_preview") {
+    return "mergeable";
+  }
+  return "needs_decision";
+}
+
+export function groupByEntropyJudgment<
+  T extends InboxEntry & { intelligence: QueueIntelligence },
+>(
+  entries: T[],
+  options: { todayLimit?: number } = {},
+): EntropyInboxGroup<T>[] {
+  const pending = entries
+    .filter((entry) => entry.status === "pending")
+    .slice()
+    .sort(compareQueueEntries);
+
+  const todayLimit = Math.max(0, options.todayLimit ?? DEFAULT_TODAY_LIMIT);
+  const reviewIds = new Set(
+    pending
+      .filter(
+        (entry) =>
+          !isCoolingAction(entry.intelligence.recommended_action) &&
+          isReviewTodayCandidate(entry),
+      )
+      .slice(0, todayLimit)
+      .map((entry) => entry.id),
+  );
+
+  const directionCounts = new Map<string, number>();
+  for (const entry of pending) {
+    if (isCoolingAction(entry.intelligence.recommended_action)) continue;
+    const key = directionKey(entry);
+    if (!key) continue;
+    directionCounts.set(key, (directionCounts.get(key) ?? 0) + 1);
+  }
+  const repeatedDirectionKeys = new Set(
+    [...directionCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([key]) => key),
+  );
+
+  const buckets = new Map<EntropyInboxGroupKey, T[]>();
+  for (const entry of pending) {
+    const key = entropyKeyForEntry(entry, reviewIds, repeatedDirectionKeys);
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(entry);
+    buckets.set(key, bucket);
+  }
+
+  const result: EntropyInboxGroup<T>[] = [];
+  for (const key of ENTROPY_GROUP_ORDER) {
+    const bucket = buckets.get(key);
+    if (!bucket || bucket.length === 0) continue;
+    bucket.sort(compareQueueEntries);
+    result.push({ key, meta: ENTROPY_GROUP_META[key], entries: bucket });
+  }
+  return result;
+}
+
 /**
  * Mark cohorts — entries sharing the same `source_raw_id` have their
  * `intelligence.cohort_raw_id` set on the *same* object reference. The

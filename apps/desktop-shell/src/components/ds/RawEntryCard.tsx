@@ -13,6 +13,7 @@ import {
 import { getRawEntry } from "@/api/wiki/repository";
 import type { RawEntry } from "@/api/wiki/types";
 import { RawLineageBadge } from "@/features/raw/RawLineageBadge";
+import type { RawEntropyStatus } from "@/features/raw/raw-entropy";
 import {
   SourceIcon,
   sourceBadgeStyle,
@@ -27,6 +28,7 @@ export interface RawEntryCardProps {
   batchMode?: boolean;
   isOrganizing?: boolean;
   isRefetching?: boolean;
+  entropyStatus?: RawEntropyStatus;
   onToggleSelect: () => void;
   onToggleExpand: () => void;
   onClearExpand: () => void;
@@ -236,6 +238,7 @@ export function RawEntryCard({
   batchMode = false,
   isOrganizing = false,
   isRefetching = false,
+  entropyStatus,
   onToggleSelect,
   onToggleExpand,
   onClearExpand,
@@ -331,6 +334,14 @@ export function RawEntryCard({
               >
                 {presentation.sourceLabel}
               </span>
+              {entropyStatus && (
+                <span
+                  className={`raw-entry-card-v2-entropy raw-entry-card-v2-entropy--${entropyStatus.meta.tone}`}
+                  title={entropyStatus.meta.description}
+                >
+                  {entropyStatus.meta.label}
+                </span>
+              )}
             </span>
             <span className="raw-entry-card-v2-subtitle">
               {presentation.subtitle}

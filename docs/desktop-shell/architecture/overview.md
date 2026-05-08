@@ -65,6 +65,12 @@ This document answers: how `desktop-shell` is currently organized.
   checkpointing, remote sync, discard controls, and local Git audit display.
   Discard controls are intentionally scoped to unstaged changes; staged diffs
   are shown as read-only review material.
+- Connections also owns the high-volume source readiness gate through
+  `features/connections/source-readiness.ts`. Future Taobao, music, browser
+  bookmark, or similar connectors stay blocked until they satisfy source
+  evidence, dedupe, priority, cross-domain extraction, reversible archive,
+  reason-language, and privacy checks. Capture-only imports are explicitly not
+  considered ready.
 - `apps/desktop-shell/src/features/inbox/InboxPage.tsx` surfaces Git/Vault
   checkpoint pressure inside the review metrics row and invalidates Git state
   after Inbox mutations that can change the Vault. The page is wrapped in an
@@ -74,6 +80,13 @@ This document answers: how `desktop-shell` is currently organized.
   action, source raw, target slug, queue status, lineage events, and schema
   validation hint; it has no backend dependency beyond the existing inbox
   list and lineage queries.
+- Raw Library (`apps/desktop-shell/src/features/raw/RawLibraryPage.tsx` and
+  `components/ds/RawEntryCard.tsx`) remains a low-friction safe-capture
+  surface: users can add URL/text/file material without tags, purpose, or
+  lifecycle decisions. `features/raw/raw-entropy.ts` derives conservative,
+  reversible status chips (`已留存`, `观察中`, `疑似重复`, `可结晶`, `可冷却`) from
+  existing ingest decisions and pending Inbox links. These chips are hints for
+  later Inbox review; they do not delete or archive raw material automatically.
 - `apps/desktop-shell/src/shell/Sidebar.tsx` now mounts a shell-level
   secondary column only for Ask session history. Knowledge and Rules no longer
   receive duplicated shell sidebars; Knowledge owns its in-page filter sidebar,
@@ -86,6 +99,13 @@ This document answers: how `desktop-shell` is currently organized.
   latest patrol-backed Validation snapshot, and can edit allowlisted rule files
   through `GET/PUT /api/wiki/rules/file`. Rule file saves invalidate Git state
   after writing.
+- Rules Studio includes `schema/curation-preferences.yml` as the editable
+  entropy rules file. It carries cooling windows, archive thresholds, high/low
+  priority signals, enabled purpose lenses, and source-specific filters. The
+  file is seeded by `wiki_store::init_wiki`, included in the rules-file
+  allowlist and guidance list, and read into the maintainer absorb prompt only
+  when its required top-level keys validate. `wiki_patrol` reports a schema
+  violation if it is missing or malformed.
 - Feature modules own UI and feature-specific orchestration.
 - Neutral API clients under `apps/desktop-shell/src/api/` own cross-feature
   HTTP/SSE surfaces. Common Wiki repository access lives under
@@ -106,24 +126,52 @@ This document answers: how `desktop-shell` is currently organized.
   render a weekly Purpose Lens digest: each default lens shows new absorbed
   pages, reusable/expressible pages, and recent page titles, with a warning
   when wiki pages lack `purpose`.
-- Inbox Maintain decisions include a Purpose Lens picker. `create_new` writes
-  the selected lenses into the new wiki page frontmatter, while
-  `update_existing` merges reviewed lenses into the target page without
-  dropping existing `expressed_in` refs.
-- Wiki page summaries now carry optional `expressed_in` and `source_refs`
-  frontmatter refs. Home uses `expressed_in` for the `最近表达` pulse and counts
-  pages with source lineage in the health stats. Missing source lineage counts
-  as a Home/Pulse follow-up action that links to Knowledge's `source=missing`
-  filter, while the positive stat links to `source=sourced`. Purpose Lens
-  digest counts expressed pages separately from pages that are still ready to
-  express, Knowledge search/listing can scan and preview `source_refs`, and
-  Wiki Article surfaces them as compact lineage chips. Page relations and the
-  graph layer treat `source_refs` and `source_raw_id` as one normalized lineage
-  signal for related-page scoring and `derived-from` edges.
+- Home/Pulse also derives a local entropy pulse from wiki page
+  `priority`/`vitality` metadata: "today only review these", growing pages,
+  and cooling/archive candidates. These are attention recommendations only;
+  no Home action deletes or archives a page automatically. Dirty Vault
+  checkpoint safety is kept ahead of lifecycle recommendations in Top 3
+  actions.
+- Home/Pulse also ranks lifecycle suggestions from the latest Patrol report.
+  `stale-spark`, `cooling-page`, `unexpressed-high-priority`, and
+  `noise-candidate` issues are shown as "大浪淘沙" review prompts with links
+  back to the wiki page and Inbox. They mean archive/down-rank/merge candidates,
+  not deletion instructions.
+- Inbox Maintain decisions include visible Purpose Lens and lifecycle controls
+  on each redesigned row. The list is grouped by entropy judgment (`today only
+  review these`, growing, crystallize, mergeable, needs decision, cooling) via
+  `features/inbox/queue-intelligence.ts`; each group carries a visible reason.
+  `create_new`, deterministic `update_existing`, and proposal apply write the
+  reviewed `priority`, `vitality`, `priority_reason`, and `next_review_at`
+  values alongside purpose lenses. Cooling / needs-decision rows do not expose
+  group bulk accept; users can reject/archive or jump to Ask first.
+- Inbox rows also run conservative cross-domain extraction through
+  `features/cross-domain/cross-domain.ts`. The visible row keeps the native raw
+  source intact, then shows `source_domain -> inferred_use_domain` with a reason
+  plus accept/correct/ignore chips. Single accept, batch accept, and proposal
+  apply send `source_domain`, `inferred_use_domain`, and `cross_domain_reason`
+  to the maintainer only when the reviewer has not ignored the inference.
+- Wiki page summaries now carry optional `expressed_in`, `source_refs`,
+  `priority`, `vitality`, `priority_reason`, `last_revisited_at`, and
+  `next_review_at`, `source_domain`, `inferred_use_domain`, and
+  `cross_domain_reason` frontmatter refs. Home uses `expressed_in` for the
+  `最近表达` pulse and counts pages with source lineage in the health stats.
+  Missing source lineage counts as a Home/Pulse follow-up action that links to
+  Knowledge's `source=missing` filter, while the positive stat links to
+  `source=sourced`. Purpose Lens digest counts expressed pages separately from
+  pages that are still ready to express, Knowledge search/listing can scan and
+  preview `source_refs`, and Wiki Article surfaces them as compact lineage
+  chips. Page relations and the graph layer treat `source_refs` and
+  `source_raw_id` as one normalized lineage signal for related-page scoring and
+  `derived-from` edges. The lifecycle fields are optional for backward
+  compatibility; maintainer `update_existing` and proposal apply preserve
+  user-corrected priority/vitality metadata unless the user confirms a new
+  lifecycle or cross-domain choice during Inbox review.
 - Wiki direct edit accepts the full Markdown/YAML file, but both the editor
   save panel and `PUT /api/wiki/pages/{slug}` validate schema-sensitive
   frontmatter fields (`type`, `status`, `schema`, `source_raw_id`, `purpose`,
-  `expressed_in`, `source_refs`) before writing.
+  `expressed_in`, `source_refs`, `priority`, `vitality`, `source_domain`, and
+  `inferred_use_domain`) before writing.
 - The Ask `UsedSourcesBar` renders the `bound_source` citation chip as
   a react-router link (`/wiki/<slug>`, `/raw?focus=<id>`,
   `/inbox?task=<id>`), so a one-click jump from any answer lands the
@@ -137,6 +185,13 @@ This document answers: how `desktop-shell` is currently organized.
   `raw/query` and append a pending NewRaw Inbox task. The final SSE payload
   returns the created raw/inbox ids, and the Ask answer block links directly to
   Raw Library and Inbox review.
+- Ask reflection slash commands (`/continue`, `/safe-archive`, `/recurring`,
+  `/why-priority`, `/theme-brief`) are prompt templates in
+  `features/ask/ask-reflection-prompts.ts` and are exposed through the existing
+  Composer slash palette. Query-time wiki context now includes page lifecycle
+  and cross-domain metadata (`priority_reason`, `vitality`, `source_domain`,
+  `inferred_use_domain`, `cross_domain_reason`) so reflection answers can cite
+  reasons and say "observing" when evidence is weak.
 - Ask Purpose mode is carried on
   `POST /api/desktop/sessions/{id}/messages` as optional `purpose` values.
   The Rust layer normalizes the slugs, stores them on
@@ -148,7 +203,12 @@ This document answers: how `desktop-shell` is currently organized.
   container that puts a 250px `KnowledgeFilterSidebar` (类型/目的/来源)
   on the left of the existing shell. The sidebar shares state with the
   toolbar selects and consumes the Slice 41 semantic token aliases
-  (`--surface-sidebar`, `--state-selected`, `--accent-blue`).
+  (`--surface-sidebar`, `--state-selected`, `--accent-blue`). The sidebar now
+  includes inspiration, priority, and vitality filters, so Knowledge can isolate
+  `type: inspiration` pages and lifecycle states without adding another route.
+- Wiki page body reads resolve slugs across all wiki categories, not only
+  `wiki/concepts`. This keeps Ask retrieval and direct page editing compatible
+  with inspiration pages and any future category added through `WIKI_CATEGORIES`.
 - A Tolaria-style semantic token layer in `globals.css` exposes
   `--surface-*`, `--text-*`, `--border-*`, `--accent-blue/red`, and
   `--state-selected/hover` as aliases of the shadcn layer. Components
@@ -196,6 +256,12 @@ This document answers: how `desktop-shell` is currently organized.
   MarkItDown/WeChat fetch helpers, URL-ingest diagnostics, and environment
   doctor probes, plus `handlers/wiki_crud.rs` for raw/inbox/page CRUD,
   lineage, proposal, combined-merge, and inbox notification handlers.
+- `wiki_patrol::run_full_patrol` now reports both structural quality issues and
+  entropy lifecycle suggestions. Patrol summary includes `stale_sparks`,
+  `cooling_pages`, `unexpressed_high_priority`, and `noise_candidates`; applying
+  those issues to Inbox maps stale sparks/high-priority unused pages to stale
+  review and cooling/noise pages to deprecate review, preserving reversible Git
+  audit instead of deleting evidence.
 - `PUT /api/wiki/pages/{slug}` is the human wiki edit path. It accepts complete
   Markdown including YAML frontmatter, validates required fields, writes
   atomically through `wiki_store::overwrite_wiki_page_content`, and appends
@@ -244,8 +310,9 @@ This document answers: how `desktop-shell` is currently organized.
   revoke flows.
 - `wiki_store::init_wiki` seeds Buddy Vault defaults: `raw/`, `wiki/`,
   `schema/`, `.clawwiki/`, root `AGENTS.md` / `CLAUDE.md` shims,
-  `schema/purpose-lenses.yml`, personal/research templates, `.gitignore`, and
-  Git initialization when Git is available.
+  `schema/purpose-lenses.yml`, concept/people/topic/compare/inspiration plus
+  personal/research templates, `.gitignore`, and Git initialization when Git is
+  available.
 - `desktop-server/src/lib.rs` owns shared `AppState`, common response types,
   private-cloud-only broker routes, shutdown wiring, and top-level Router
   assembly. New handler-body work should add domain modules instead of growing

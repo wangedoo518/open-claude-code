@@ -13,15 +13,32 @@ import {
   Download,
   Minimize2,
   FileSearch,
+  Layers3,
+  Palette,
+  Music2,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
+import {
+  ASK_REFLECTION_PROMPTS,
+  type AskReflectionPromptId,
+} from "./ask-reflection-prompts";
 
 export interface SlashCommand {
   name: string;
   description: string;
   icon: LucideIcon;
   action: string;
+  prompt?: string;
 }
+
+const REFLECTION_PROMPT_ICONS: Record<AskReflectionPromptId, LucideIcon> = {
+  continue: FileSearch,
+  safe_archive: Minimize2,
+  recurring_themes: Layers3,
+  priority_reason: FileSearch,
+  brief: FileText,
+};
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/clear",   description: "清空对话历史",       icon: Trash2,     action: "clear" },
@@ -29,6 +46,43 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/export",  description: "导出为 Markdown",    icon: Download,   action: "export" },
   { name: "/compact", description: "总结并压缩历史",     icon: Minimize2,  action: "compact" },
   { name: "/plan",    description: "切换计划模式",       icon: FileSearch, action: "plan" },
+  {
+    name: "/cross-domain",
+    description: "找出来源 App 和真实用途不一致的素材",
+    icon: Layers3,
+    action: "prompt",
+    prompt: "哪些素材的真实用途和来源 App 不一致？请按 source -> likely use 分组，并引用原始来源。",
+  },
+  {
+    name: "/shopping-inspiration",
+    description: "从购物收藏里提炼设计灵感",
+    icon: Palette,
+    action: "prompt",
+    prompt: "这些购物收藏里哪些其实是设计灵感？请保留商品/来源引用，并说明审美共性、可用方向和不确定项。",
+  },
+  {
+    name: "/music-mood",
+    description: "从音乐收藏识别情绪和社交线索",
+    icon: Music2,
+    action: "prompt",
+    prompt: "这些音乐相关收藏里，哪些在表达治愈、社交或创作方向？请引用来源，并把证据弱的项标为观察中。",
+  },
+  {
+    name: "/brief",
+    description: "把跨界素材提炼成 brief",
+    icon: FileText,
+    action: "prompt",
+    prompt: "把这组跨界素材提炼成一个 brief：主题、审美共性、情绪线索、优先级、冷却/归档候选，以及下一步行动。",
+  },
+  ...ASK_REFLECTION_PROMPTS.map(
+    (prompt): SlashCommand => ({
+      name: prompt.slashName,
+      description: prompt.description,
+      icon: REFLECTION_PROMPT_ICONS[prompt.id],
+      action: "prompt",
+      prompt: prompt.prompt,
+    })
+  ),
 ];
 
 interface SlashCommandPaletteProps {
@@ -106,7 +160,7 @@ export const SlashCommandPalette = memo(function SlashCommandPalette({
         const isActive = idx === selectedIndex;
         return (
           <button
-            key={cmd.action}
+            key={cmd.name}
             className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left transition-colors ${
               isActive
                 ? "bg-[color:var(--deeptutor-primary-soft,var(--color-accent))] text-foreground"

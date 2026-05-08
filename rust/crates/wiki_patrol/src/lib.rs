@@ -230,6 +230,99 @@ pub fn detect_uncrystallized(paths: &WikiPaths, _lookback_days: u32) -> Vec<Patr
     Vec::new()
 }
 
+/// Detect missing or malformed human curation preferences.
+pub fn detect_curation_preferences(paths: &WikiPaths) -> Vec<PatrolIssue> {
+    match wiki_store::load_curation_preferences(paths) {
+        Ok(_) => Vec::new(),
+        Err(err) => vec![PatrolIssue {
+            kind: PatrolIssueKind::SchemaViolation,
+            page_slug: "schema/curation-preferences.yml".to_string(),
+            description: format!("Curation preferences are missing or malformed: {err}"),
+            suggested_action:
+                "Restore schema/curation-preferences.yml or repair the required top-level keys."
+                    .to_string(),
+        }],
+    }
+}
+
+/// Detect entropy lifecycle suggestions: these are not corruption warnings.
+/// They are reversible review prompts that help users keep the knowledge base
+/// from becoming another unbounded favorites folder.
+pub fn detect_lifecycle_suggestions(
+    paths: &WikiPaths,
+    stale_threshold_days: u32,
+) -> Vec<PatrolIssue> {
+    let all_pages = wiki_store::list_all_wiki_pages(paths).unwrap_or_default();
+    let now = wiki_store::now_iso8601();
+    let mut issues = Vec::new();
+
+    for page in &all_pages {
+        let priority = normalized_optional(&page.priority);
+        let vitality = normalized_optional(&page.vitality);
+        let expressed = !page.expressed_in.is_empty();
+
+        if vitality.as_deref() == Some("spark")
+            && !expressed
+            && lifecycle_age_days(page, &now) > i64::from(stale_threshold_days)
+        {
+            issues.push(PatrolIssue {
+                kind: PatrolIssueKind::StaleSpark,
+                page_slug: page.slug.clone(),
+                description: format!(
+                    "Spark has stayed unexpressed for more than {stale_threshold_days} days."
+                ),
+                suggested_action:
+                    "Review whether it should become a theme, merge into a stronger page, or cool down; do not delete evidence.".to_string(),
+            });
+        }
+
+        if vitality.as_deref() == Some("cooling") {
+            issues.push(PatrolIssue {
+                kind: PatrolIssueKind::CoolingPage,
+                page_slug: page.slug.clone(),
+                description:
+                    "Page is already marked cooling, so it is ready for a reversible lower-attention decision.".to_string(),
+                suggested_action:
+                    "Archive, merge, or keep as stable with a reason; preserve the page and Git trace.".to_string(),
+            });
+        }
+
+        if priority.as_deref() == Some("high") && !expressed {
+            issues.push(PatrolIssue {
+                kind: PatrolIssueKind::UnexpressedHighPriority,
+                page_slug: page.slug.clone(),
+                description:
+                    "High-priority knowledge has not yet appeared in expressed_in, so its value is still untested.".to_string(),
+                suggested_action:
+                    "Express it through Ask or a concrete output, or lower the priority with a reason.".to_string(),
+            });
+        }
+
+        if vitality.as_deref() == Some("noise")
+            || (priority.as_deref() == Some("low")
+                && page.source_raw_id.is_none()
+                && page.source_refs.is_empty()
+                && !expressed)
+        {
+            issues.push(PatrolIssue {
+                kind: PatrolIssueKind::NoiseCandidate,
+                page_slug: page.slug.clone(),
+                description:
+                    "Page has weak lifecycle/source signals and is a down-rank or merge candidate.".to_string(),
+                suggested_action:
+                    "Mark as archived/noise or merge into a stronger theme; keep raw evidence intact.".to_string(),
+            });
+        }
+    }
+
+    issues.sort_by(|a, b| {
+        lifecycle_issue_rank(&a.kind)
+            .cmp(&lifecycle_issue_rank(&b.kind))
+            .then_with(|| a.page_slug.cmp(&b.page_slug))
+    });
+    issues
+}
+
 /// Select maintainer-written pages for quality sampling.
 ///
 /// This is intentionally local and deterministic: it does not perform the
@@ -279,6 +372,33 @@ pub fn select_quality_samples(paths: &WikiPaths, limit: usize) -> Vec<PatrolQual
         .collect()
 }
 
+fn normalized_optional(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .filter(|value| !value.is_empty())
+}
+
+fn lifecycle_age_days(page: &wiki_store::WikiPageSummary, now: &str) -> i64 {
+    let anchor = page
+        .last_revisited_at
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&page.created_at);
+    days_between(anchor, now)
+}
+
+fn lifecycle_issue_rank(kind: &PatrolIssueKind) -> u8 {
+    match kind {
+        PatrolIssueKind::UnexpressedHighPriority => 0,
+        PatrolIssueKind::StaleSpark => 1,
+        PatrolIssueKind::CoolingPage => 2,
+        PatrolIssueKind::NoiseCandidate => 3,
+        _ => 9,
+    }
+}
+
 /// Compute days between two ISO-8601 date strings.
 fn days_between(earlier: &str, later: &str) -> i64 {
     let e_date = &earlier[..10.min(earlier.len())];
@@ -299,7 +419,7 @@ fn parse_date_to_jdn(date: &str) -> i64 {
     to_jdn(y, m, d) as i64
 }
 
-/// Run all seven detectors and aggregate into a PatrolReport.
+/// Run all structural and entropy-lifecycle detectors and aggregate into a PatrolReport.
 pub fn run_full_patrol(paths: &WikiPaths, config: &PatrolConfig) -> PatrolReport {
     let orphans = detect_orphans(paths);
     let stale = detect_stale(paths, config.stale_threshold_days);
@@ -308,16 +428,34 @@ pub fn run_full_patrol(paths: &WikiPaths, config: &PatrolConfig) -> PatrolReport
     let stubs = detect_stubs(paths, config.min_page_words);
     let confidence_decay = detect_confidence_decay(paths);
     let uncrystallized = detect_uncrystallized(paths, 30);
+    let curation_preferences = detect_curation_preferences(paths);
+    let lifecycle_suggestions = detect_lifecycle_suggestions(paths, config.stale_threshold_days);
     let quality_samples = select_quality_samples(paths, 5);
 
     let summary = PatrolSummary {
         orphans: orphans.len(),
         stale: stale.len(),
-        schema_violations: violations.len(),
+        schema_violations: violations.len() + curation_preferences.len(),
         oversized: oversized.len(),
         stubs: stubs.len(),
         confidence_decay: confidence_decay.len(),
         uncrystallized: uncrystallized.len(),
+        stale_sparks: lifecycle_suggestions
+            .iter()
+            .filter(|issue| issue.kind == PatrolIssueKind::StaleSpark)
+            .count(),
+        cooling_pages: lifecycle_suggestions
+            .iter()
+            .filter(|issue| issue.kind == PatrolIssueKind::CoolingPage)
+            .count(),
+        unexpressed_high_priority: lifecycle_suggestions
+            .iter()
+            .filter(|issue| issue.kind == PatrolIssueKind::UnexpressedHighPriority)
+            .count(),
+        noise_candidates: lifecycle_suggestions
+            .iter()
+            .filter(|issue| issue.kind == PatrolIssueKind::NoiseCandidate)
+            .count(),
     };
 
     let mut all_issues = Vec::new();
@@ -328,6 +466,8 @@ pub fn run_full_patrol(paths: &WikiPaths, config: &PatrolConfig) -> PatrolReport
     all_issues.extend(stubs);
     all_issues.extend(confidence_decay);
     all_issues.extend(uncrystallized);
+    all_issues.extend(curation_preferences);
+    all_issues.extend(lifecycle_suggestions);
 
     PatrolReport {
         issues: all_issues,
@@ -382,6 +522,7 @@ fn find_page_path(paths: &WikiPaths, slug: &str, category: &str) -> std::path::P
         "people" => "people",
         "topic" => "topics",
         "compare" => "compare",
+        "inspiration" => "inspiration",
         _ => "concepts",
     };
     paths.wiki.join(subdir).join(format!("{slug}.md"))
@@ -446,6 +587,28 @@ mod tests {
     fn create_page(paths: &WikiPaths, cat: &str, slug: &str, title: &str, body: &str) {
         wiki_store::write_wiki_page_in_category(paths, cat, slug, title, "summary", body, Some(1))
             .unwrap();
+    }
+
+    fn create_lifecycle_page(
+        paths: &WikiPaths,
+        slug: &str,
+        lifecycle: wiki_store::WikiPageLifecycleMetadata,
+        source_raw_id: Option<u32>,
+        expressed_in: &[String],
+    ) {
+        wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
+            paths,
+            "concept",
+            slug,
+            slug,
+            "summary",
+            "Body with enough words for a lifecycle patrol fixture.",
+            source_raw_id,
+            &[],
+            expressed_in,
+            &lifecycle,
+        )
+        .unwrap();
     }
 
     // ── detect_orphans ──────────────────────────────────────────
@@ -730,6 +893,74 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_suggestions_flag_stale_cooling_unexpressed_and_noise() {
+        let (_tmp, paths) = init_and_paths();
+        create_lifecycle_page(
+            &paths,
+            "stale-spark",
+            wiki_store::WikiPageLifecycleMetadata {
+                vitality: Some("spark".to_string()),
+                last_revisited_at: Some("2000-01-01T00:00:00Z".to_string()),
+                ..Default::default()
+            },
+            Some(1),
+            &[],
+        );
+        create_lifecycle_page(
+            &paths,
+            "cooling-topic",
+            wiki_store::WikiPageLifecycleMetadata {
+                vitality: Some("cooling".to_string()),
+                ..Default::default()
+            },
+            Some(2),
+            &["ask:used".to_string()],
+        );
+        create_lifecycle_page(
+            &paths,
+            "high-unused",
+            wiki_store::WikiPageLifecycleMetadata {
+                priority: Some("high".to_string()),
+                vitality: Some("growing".to_string()),
+                ..Default::default()
+            },
+            Some(3),
+            &[],
+        );
+        create_lifecycle_page(
+            &paths,
+            "noise-link",
+            wiki_store::WikiPageLifecycleMetadata {
+                priority: Some("low".to_string()),
+                vitality: Some("noise".to_string()),
+                ..Default::default()
+            },
+            None,
+            &[],
+        );
+
+        let issues = detect_lifecycle_suggestions(&paths, 30);
+
+        assert!(issues.iter().any(|issue| {
+            issue.kind == PatrolIssueKind::StaleSpark && issue.page_slug == "stale-spark"
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.kind == PatrolIssueKind::CoolingPage && issue.page_slug == "cooling-topic"
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.kind == PatrolIssueKind::UnexpressedHighPriority
+                && issue.page_slug == "high-unused"
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.kind == PatrolIssueKind::NoiseCandidate && issue.page_slug == "noise-link"
+        }));
+        assert!(issues.iter().all(|issue| {
+            issue.suggested_action.contains("delete") == false
+                || issue.suggested_action.contains("do not delete")
+        }));
+    }
+
+    #[test]
     fn quality_samples_prioritize_maintainer_pages_needing_review() {
         let (_tmp, paths) = init_and_paths();
         create_page(
@@ -786,10 +1017,24 @@ mod tests {
     // ── run_full_patrol includes new detectors ──────────────────
 
     #[test]
-    fn full_patrol_has_seven_detector_fields() {
+    fn full_patrol_flags_missing_curation_preferences() {
+        let (_tmp, paths) = init_and_paths();
+        std::fs::remove_file(paths.schema.join("curation-preferences.yml")).unwrap();
+
+        let report = run_full_patrol(&paths, &PatrolConfig::default());
+
+        assert_eq!(report.summary.schema_violations, 1);
+        assert!(report.issues.iter().any(|issue| {
+            issue.kind == PatrolIssueKind::SchemaViolation
+                && issue.page_slug == "schema/curation-preferences.yml"
+        }));
+    }
+
+    #[test]
+    fn full_patrol_has_structural_and_lifecycle_detector_fields() {
         let (_tmp, paths) = init_and_paths();
         let report = run_full_patrol(&paths, &PatrolConfig::default());
-        // Verify summary has all 7 fields (they should all be 0 for empty wiki).
+        // Empty wiki should keep every summary field present and zero.
         assert_eq!(report.summary.orphans, 0);
         assert_eq!(report.summary.stale, 0);
         assert_eq!(report.summary.schema_violations, 0);
@@ -797,6 +1042,48 @@ mod tests {
         assert_eq!(report.summary.stubs, 0);
         assert_eq!(report.summary.confidence_decay, 0);
         assert_eq!(report.summary.uncrystallized, 0);
+        assert_eq!(report.summary.stale_sparks, 0);
+        assert_eq!(report.summary.cooling_pages, 0);
+        assert_eq!(report.summary.unexpressed_high_priority, 0);
+        assert_eq!(report.summary.noise_candidates, 0);
+    }
+
+    #[test]
+    fn full_patrol_counts_lifecycle_suggestions() {
+        let (_tmp, paths) = init_and_paths();
+        create_lifecycle_page(
+            &paths,
+            "high-unused",
+            wiki_store::WikiPageLifecycleMetadata {
+                priority: Some("high".to_string()),
+                ..Default::default()
+            },
+            Some(1),
+            &[],
+        );
+        create_lifecycle_page(
+            &paths,
+            "cooling-topic",
+            wiki_store::WikiPageLifecycleMetadata {
+                vitality: Some("cooling".to_string()),
+                ..Default::default()
+            },
+            Some(2),
+            &[],
+        );
+
+        let report = run_full_patrol(&paths, &PatrolConfig::default());
+
+        assert_eq!(report.summary.unexpressed_high_priority, 1);
+        assert_eq!(report.summary.cooling_pages, 1);
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.kind == PatrolIssueKind::UnexpressedHighPriority));
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.kind == PatrolIssueKind::CoolingPage));
     }
 
     /// Regression test for the orphan_count consistency bug:

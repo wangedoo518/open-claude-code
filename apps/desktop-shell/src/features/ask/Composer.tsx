@@ -469,9 +469,15 @@ export function Composer({
         case "plan":
           void onSend("/plan");
           break;
+        case "prompt":
+          if (cmd.prompt) {
+            setValue(cmd.prompt);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+          }
+          break;
       }
     },
-    [onClear, onNewSession, onExportMarkdown, onCompact, onSend]
+    [onClear, onNewSession, onExportMarkdown, onCompact, onSend, textareaRef]
   );
 
   const handleSlashClose = useCallback(() => {

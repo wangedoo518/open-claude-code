@@ -38,31 +38,22 @@ const routes = [
     name: "Rules Studio",
     hash: "/rules",
     mustContain: [
-      "Rules Studio",
-      "Advanced YAML / CodeMirror",
-      "Git checkpoint",
+      "整理规则",
+      "页面模板",
+      "AI 行为契约",
+      "Buddy Vault diff",
       "schema/templates/concept.md",
       "schema/templates/research.md",
       "Root AGENTS.md",
       "schema/CLAUDE.md",
+      "Curation Preferences",
       "schema/policies/maintenance.md",
       "schema/policies/naming.md",
-      "Rule file editor",
+      "规则文件编辑器",
       "编辑选中文件",
-      "Validation snapshot",
+      "健康巡检 (Validation)",
       "运行巡检",
     ],
-    check: async (page) => {
-      const advanced = page
-        .locator("details")
-        .filter({ hasText: "Advanced YAML / CodeMirror" })
-        .first();
-      await advanced.waitFor({ state: "attached", timeout: 10_000 });
-      const isOpen = await advanced.evaluate((node) => node.open);
-      if (isOpen) {
-        throw new Error("Rules Studio Advanced CodeMirror panel should be folded by default");
-      }
-    },
   },
   {
     name: "Connections",
@@ -75,12 +66,15 @@ const routes = [
       "Pull",
       "Push",
       "保存 origin",
-      "丢弃新增行",
-      "丢弃替换块",
-      "丢弃 Hunk",
-      "丢弃文件",
+      "查看高级 diff",
       "最近 Git 操作",
       "受控自动写入授权",
+      "来源接入门槛",
+      "淘宝 / 购物车",
+      "音乐收藏",
+      "浏览器收藏",
+      "微信现有入口",
+      "阻塞：只导入不整理",
     ],
   },
   {
@@ -550,18 +544,18 @@ async function runSourceRefsRelatedGraphCheck() {
 }
 
 async function runKnowledgeSourceRefsSearchCheck(page) {
-  const sourceSelect = page.getByLabel("来源筛选");
-  await sourceSelect.selectOption("sourced");
+  const sourceChip = page.locator(".ds-kb-filter-chip").filter({ hasText: "有来源" }).first();
+  await sourceChip.click();
   await page.waitForFunction(
-    () => window.location.hash.includes("source=sourced"),
+    () => document.body.innerText.includes("来源：raw:00042"),
     null,
     { timeout: 10_000 },
   );
-  const input = page.getByPlaceholder("搜索标题、摘要或来源…");
+  const input = page.locator("input").first();
   await input.fill("raw:00042");
   await page.waitForFunction(
     () =>
-      document.body.innerText.includes("命中：来源") &&
+      document.body.innerText.includes("Smoke Edit Page") &&
       document.body.innerText.includes("raw:00042"),
     null,
     { timeout: 10_000 },
@@ -614,23 +608,9 @@ async function runInboxPurposeLensUiCheck(page) {
 }
 
 async function runWikiEditCheck(page) {
-  const updatedContent = `---
-type: concept
-status: active
-owner: smoke
-schema: v1
-title: Smoke Edit Page
-summary: Browser smoke fixture for wiki editing
-purpose:
-  - learning
-  - research
-created_at: 2026-04-29T00:00:00Z
----
-
-Updated smoke body from Playwright.
-`;
+  const updatedContent = "Updated smoke body from Playwright.";
   await page.getByRole("button", { name: "编辑此页" }).click();
-  const editor = page.locator(".cm-content").first();
+  const editor = page.locator("textarea").first();
   await editor.waitFor({ state: "visible", timeout: 10_000 });
   await page.waitForFunction(
     () =>
@@ -639,9 +619,7 @@ Updated smoke body from Playwright.
     null,
     { timeout: 10_000 },
   );
-  await editor.click();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-  await page.keyboard.insertText(updatedContent);
+  await editor.fill(updatedContent);
   await page.getByRole("button", { name: "保存" }).click();
   await page.waitForFunction(
     () => document.body.innerText.includes("Updated smoke body from Playwright."),

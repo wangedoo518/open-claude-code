@@ -98,8 +98,18 @@ export async function createProposal(
 
 export async function applyProposal(
   inboxId: number,
+  lifecycle?: Pick<
+    MaintainRequest,
+    | "priority"
+    | "vitality"
+    | "priority_reason"
+    | "next_review_at"
+    | "source_domain"
+    | "inferred_use_domain"
+    | "cross_domain_reason"
+  >,
 ): Promise<{ outcome: string; target_page_slug: string }> {
-  return applySingleProposal(inboxId);
+  return applySingleProposal(inboxId, lifecycle);
 }
 
 export async function cancelProposal(inboxId: number): Promise<void> {

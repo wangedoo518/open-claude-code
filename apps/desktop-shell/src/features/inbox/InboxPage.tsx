@@ -49,6 +49,7 @@ import type {
   InboxEntry,
   InboxResolveAction,
   MaintainAction,
+  MaintainRequest,
   MaintainOutcome,
   MaintainResponse,
   UpdateProposal,
@@ -91,8 +92,11 @@ import { InboxLineageSummary } from "@/features/inbox/components/InboxLineageSum
 import { InboxInspector } from "@/features/inbox/components/InboxInspector";
 import {
   computeQueueIntelligence,
+  defaultLifecycleForEntropyGroup,
+  groupByEntropyJudgment,
   groupAndSortByAction,
   markCohorts,
+  type EntropyInboxGroupKey,
   type QueueIntelligence,
 } from "@/features/inbox/queue-intelligence";
 import type { TargetCandidate } from "@/lib/tauri";
@@ -116,11 +120,23 @@ import {
   PURPOSE_LENSES,
   type PurposeLensId,
 } from "@/features/purpose/purpose-lenses";
+import {
+  applyCrossDomainCorrection,
+  ignoreCrossDomainInference,
+  inferCrossDomainUse,
+  INFERRED_USE_DOMAIN_LABELS,
+  INFERRED_USE_DOMAIN_OPTIONS,
+  SOURCE_DOMAIN_LABELS,
+  toCrossDomainMaintainFields,
+  type CrossDomainInference,
+  type InferredUseDomain,
+} from "@/features/cross-domain/cross-domain";
 
 /** InboxEntry enriched with the queue-intelligence envelope + decision. */
 export type IntelligentEntry = InboxEntry & {
   intelligence: QueueIntelligence;
   decision: IngestDecision | null;
+  crossDomain: CrossDomainInference;
 };
 
 const inboxKeys = {
@@ -156,6 +172,27 @@ const INBOX_MERGE_COLOR = "#2A6BB8";
 const INBOX_CREATE_COLOR = "#1D9E75";
 
 type InboxVisualAction = "merge" | "create";
+type InboxPriorityValue = NonNullable<MaintainRequest["priority"]>;
+type InboxVitalityValue = NonNullable<MaintainRequest["vitality"]>;
+type InboxLifecycleChoice = {
+  priority: InboxPriorityValue;
+  vitality: InboxVitalityValue;
+  priority_reason?: string;
+  next_review_at?: string;
+};
+
+const PRIORITY_OPTIONS: Array<{ value: InboxPriorityValue; label: string }> = [
+  { value: "high", label: "高" },
+  { value: "medium", label: "中" },
+  { value: "low", label: "低" },
+];
+
+const VITALITY_OPTIONS: Array<{ value: InboxVitalityValue; label: string }> = [
+  { value: "growing", label: "增长" },
+  { value: "seed", label: "种子" },
+  { value: "stable", label: "稳定" },
+  { value: "cooling", label: "冷却" },
+];
 
 function getVisualAction(entry: IntelligentEntry): InboxVisualAction {
   const action = entry.intelligence.recommended_action;
@@ -163,6 +200,51 @@ function getVisualAction(entry: IntelligentEntry): InboxVisualAction {
     return "merge";
   }
   return "create";
+}
+
+function canQuickAcceptEntry(entry: IntelligentEntry): boolean {
+  const action = entry.intelligence.recommended_action;
+  return (
+    action === "open_diff_preview" ||
+    action === "update_existing" ||
+    action === "create_new"
+  );
+}
+
+function getEntropyActionText(entry: IntelligentEntry): string {
+  switch (entry.intelligence.recommended_action) {
+    case "open_diff_preview":
+    case "update_existing":
+      return "合并到";
+    case "create_new":
+      return "结晶为";
+    case "suggest_reject":
+      return "降噪";
+    case "defer":
+      return "暂缓";
+    case "ask_first":
+    default:
+      return "先判断";
+  }
+}
+
+function nextReviewIso(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
+function defaultLifecycleChoice(
+  groupKey: EntropyInboxGroupKey,
+  entry: IntelligentEntry,
+): InboxLifecycleChoice {
+  const defaults = defaultLifecycleForEntropyGroup(groupKey);
+  return {
+    priority: defaults.priority,
+    vitality: defaults.vitality,
+    priority_reason: `${entry.intelligence.why}`,
+    next_review_at: nextReviewIso(defaults.reviewAfterDays),
+  };
 }
 
 function getTargetLabel(entry: IntelligentEntry): string {
@@ -206,7 +288,7 @@ function getTargetLabel(entry: IntelligentEntry): string {
               disabled={pendingEntries.length === 0}
             >
               <Sparkles className="size-3.5" aria-hidden />
-              一键接受全部
+              接受可落地项
               <ArrowRight className="inbox-redesign-button-arrow size-3.5" aria-hidden />
             </button>
           </div>
@@ -389,7 +471,7 @@ function inboxGitMetric(
   };
 }
 
-function getSourceLabel(entry: IntelligentEntry): string {
+function getSourceLabel(entry: InboxEntry): string {
   const text = `${entry.title} ${entry.description}`.toLowerCase();
   if (text.includes("http") || text.includes("url") || text.includes("链接")) {
     return "微信链接";
@@ -430,6 +512,12 @@ export function InboxPage() {
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [purposeByEntryId, setPurposeByEntryId] = useState<Record<number, PurposeLensId[]>>({});
+  const [lifecycleByEntryId, setLifecycleByEntryId] = useState<
+    Record<number, InboxLifecycleChoice>
+  >({});
+  const [crossDomainByEntryId, setCrossDomainByEntryId] = useState<
+    Record<number, CrossDomainInference>
+  >({});
 
   // Slice 40 — right-side Inspector column visibility (additive; default
   // visible per spec §7.2). Local state only; not URL-synced because the
@@ -498,6 +586,15 @@ export function InboxPage() {
     return map;
   }, [rawQueries, rawIds]);
 
+  const rawDetailByRawId = useMemo(() => {
+    const map = new Map<number, NonNullable<(typeof rawQueries)[number]["data"]>>();
+    rawQueries.forEach((query, idx) => {
+      const rawId = rawIds[idx];
+      if (rawId != null && query.data) map.set(rawId, query.data);
+    });
+    return map;
+  }, [rawQueries, rawIds]);
+
   // Enrich entries with intelligence — always recompute when entries
   // or decisions change; the function is cheap (~7 if-branches per
   // entry) and the result feeds grouping / selection pre-seeding.
@@ -507,15 +604,41 @@ export function InboxPage() {
         entry.source_raw_id != null
           ? decisionByRawId.get(entry.source_raw_id) ?? null
           : null;
+      const rawDetail =
+        entry.source_raw_id != null
+          ? rawDetailByRawId.get(entry.source_raw_id)
+          : undefined;
+      const rawEntry = rawDetail?.entry;
+      const persistedCrossDomain =
+        rawEntry?.source_domain || rawEntry?.inferred_use_domain
+          ? ({
+              native_source: rawEntry.source,
+              source_domain: (rawEntry.source_domain ?? "unknown") as CrossDomainInference["source_domain"],
+              inferred_use_domain: (rawEntry.inferred_use_domain ?? "unknown") as CrossDomainInference["inferred_use_domain"],
+              reason: rawEntry.cross_domain_reason ?? "source preserved from raw metadata",
+              confidence: rawEntry.inferred_use_domain ? "medium" : "low",
+            } satisfies CrossDomainInference)
+          : null;
+      const crossDomain =
+        persistedCrossDomain ??
+        inferCrossDomainUse({
+          source: rawEntry?.source ?? getSourceLabel(entry),
+          sourceUrl: rawEntry?.source_url ?? rawEntry?.canonical_url ?? rawEntry?.original_url,
+          title: entry.title,
+          body: [entry.description, entry.proposed_summary, rawDetail?.body]
+            .filter(Boolean)
+            .join("\n"),
+        });
       return {
         ...entry,
         intelligence: computeQueueIntelligence(entry, decision),
         decision,
+        crossDomain,
       };
     });
     markCohorts(enriched);
     return enriched;
-  }, [entries, decisionByRawId]);
+  }, [entries, decisionByRawId, rawDetailByRawId]);
 
   const selectedEntry = useMemo(
     () =>
@@ -638,6 +761,52 @@ export function InboxPage() {
     });
   }, []);
 
+  const setEntryPriority = useCallback(
+    (entry: IntelligentEntry, groupKey: EntropyInboxGroupKey, priority: InboxPriorityValue) => {
+      setLifecycleByEntryId((prev) => {
+        const current = prev[entry.id] ?? defaultLifecycleChoice(groupKey, entry);
+        return { ...prev, [entry.id]: { ...current, priority } };
+      });
+    },
+    [],
+  );
+
+  const setEntryVitality = useCallback(
+    (entry: IntelligentEntry, groupKey: EntropyInboxGroupKey, vitality: InboxVitalityValue) => {
+      setLifecycleByEntryId((prev) => {
+        const current = prev[entry.id] ?? defaultLifecycleChoice(groupKey, entry);
+        return { ...prev, [entry.id]: { ...current, vitality } };
+      });
+    },
+    [],
+  );
+
+  const crossDomainForEntry = useCallback(
+    (entry: IntelligentEntry): CrossDomainInference =>
+      crossDomainByEntryId[entry.id] ?? entry.crossDomain,
+    [crossDomainByEntryId],
+  );
+
+  const setEntryCrossDomainUse = useCallback(
+    (entry: IntelligentEntry, inferredUse: InferredUseDomain) => {
+      setCrossDomainByEntryId((prev) => ({
+        ...prev,
+        [entry.id]: applyCrossDomainCorrection(
+          prev[entry.id] ?? entry.crossDomain,
+          inferredUse,
+        ),
+      }));
+    },
+    [],
+  );
+
+  const ignoreEntryCrossDomain = useCallback((entry: IntelligentEntry) => {
+    setCrossDomainByEntryId((prev) => ({
+      ...prev,
+      [entry.id]: ignoreCrossDomainInference(prev[entry.id] ?? entry.crossDomain),
+    }));
+  }, []);
+
   const selectedIdList = useMemo(
     () => Array.from(selectedIds),
     [selectedIds],
@@ -718,6 +887,29 @@ export function InboxPage() {
     [intelligentEntries],
   );
 
+  const entropyGroups = useMemo(
+    () => groupByEntropyJudgment(pendingEntries),
+    [pendingEntries],
+  );
+
+  const entropyKeyByEntryId = useMemo(() => {
+    const map = new Map<number, EntropyInboxGroupKey>();
+    for (const group of entropyGroups) {
+      for (const entry of group.entries) {
+        map.set(entry.id, group.key);
+      }
+    }
+    return map;
+  }, [entropyGroups]);
+
+  const lifecycleForEntry = useCallback(
+    (entry: IntelligentEntry): InboxLifecycleChoice => {
+      const groupKey = entropyKeyByEntryId.get(entry.id) ?? "needs_decision";
+      return lifecycleByEntryId[entry.id] ?? defaultLifecycleChoice(groupKey, entry);
+    },
+    [entropyKeyByEntryId, lifecycleByEntryId],
+  );
+
   const mergeEntries = useMemo(
     () => pendingEntries.filter((entry) => getVisualAction(entry) === "merge"),
     [pendingEntries],
@@ -742,13 +934,19 @@ export function InboxPage() {
   const quickAcceptEntry = useCallback(async (
     entry: IntelligentEntry,
     purposeLenses: PurposeLensId[] = ["learning"],
+    lifecycle: InboxLifecycleChoice = defaultLifecycleChoice("needs_decision", entry),
   ) => {
     const action = entry.intelligence.recommended_action;
     const targetSlug =
       entry.intelligence.target_candidate?.slug ?? entry.target_page_slug ?? null;
+    const crossDomain = toCrossDomainMaintainFields(crossDomainForEntry(entry));
+    const reviewedMetadata = {
+      ...lifecycle,
+      ...crossDomain,
+    };
 
     if (action === "open_diff_preview" && entry.proposal_status === "pending") {
-      await applyProposal(entry.id);
+      await applyProposal(entry.id, reviewedMetadata);
       return;
     }
 
@@ -757,6 +955,7 @@ export function InboxPage() {
         action: "update_existing",
         target_page_slug: targetSlug,
         purpose_lenses: purposeLenses,
+        ...reviewedMetadata,
       });
       return;
     }
@@ -764,19 +963,20 @@ export function InboxPage() {
     await maintainInboxEntry(entry.id, {
       action: "create_new",
       purpose_lenses: purposeLenses,
+      ...reviewedMetadata,
     });
-  }, []);
+  }, [crossDomainForEntry]);
 
   const handleQuickAccept = useCallback(
     async (entry: IntelligentEntry) => {
       try {
-        await quickAcceptEntry(entry, purposeForEntry(entry));
+        await quickAcceptEntry(entry, purposeForEntry(entry), lifecycleForEntry(entry));
       } finally {
         void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
         void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
       }
     },
-    [purposeForEntry, queryClient, quickAcceptEntry],
+    [lifecycleForEntry, purposeForEntry, queryClient, quickAcceptEntry],
   );
 
   const handleQuickReject = useCallback(
@@ -793,7 +993,8 @@ export function InboxPage() {
       if (items.length === 0) return;
       for (const entry of items) {
         try {
-          await quickAcceptEntry(entry, purposeForEntry(entry));
+          if (!canQuickAcceptEntry(entry)) continue;
+          await quickAcceptEntry(entry, purposeForEntry(entry), lifecycleForEntry(entry));
         } catch (error) {
           console.warn("Failed to accept inbox entry", entry.id, error);
         }
@@ -801,7 +1002,7 @@ export function InboxPage() {
       void queryClient.invalidateQueries({ queryKey: inboxKeys.list() });
       void queryClient.invalidateQueries({ queryKey: ["wiki", "git"] });
     },
-    [purposeForEntry, queryClient, quickAcceptEntry],
+    [lifecycleForEntry, purposeForEntry, queryClient, quickAcceptEntry],
   );
 
   const handleOpenEntryInAsk = useCallback(
@@ -859,7 +1060,7 @@ export function InboxPage() {
               disabled={pendingEntries.length === 0}
             >
               <Sparkles className="size-3.5" aria-hidden />
-              一键接受全部
+              接受可落地项
               <ArrowRight className="inbox-redesign-button-arrow size-3.5" aria-hidden />
             </button>
           </div>
@@ -942,6 +1143,12 @@ export function InboxPage() {
           sharedTargetCounts={sharedTargetCounts}
           purposeByEntryId={purposeByEntryId}
           onTogglePurpose={toggleEntryPurpose}
+          lifecycleByEntryId={lifecycleByEntryId}
+          onSetPriority={setEntryPriority}
+          onSetVitality={setEntryVitality}
+          crossDomainByEntryId={crossDomainByEntryId}
+          onSetCrossDomainUse={setEntryCrossDomainUse}
+          onIgnoreCrossDomain={ignoreEntryCrossDomain}
         />
       </div>
       {inspectorVisible && (
@@ -1169,6 +1376,12 @@ function InboxRedesignList({
   onBulkSelect,
   purposeByEntryId,
   onTogglePurpose,
+  lifecycleByEntryId,
+  onSetPriority,
+  onSetVitality,
+  crossDomainByEntryId,
+  onSetCrossDomainUse,
+  onIgnoreCrossDomain,
 }: {
   entries: IntelligentEntry[];
   isLoading: boolean;
@@ -1186,17 +1399,29 @@ function InboxRedesignList({
   sharedTargetCounts: Map<string, number>;
   purposeByEntryId: Record<number, PurposeLensId[]>;
   onTogglePurpose: (entryId: number, lens: PurposeLensId) => void;
+  lifecycleByEntryId: Record<number, InboxLifecycleChoice>;
+  crossDomainByEntryId: Record<number, CrossDomainInference>;
+  onSetPriority: (
+    entry: IntelligentEntry,
+    groupKey: EntropyInboxGroupKey,
+    priority: InboxPriorityValue,
+  ) => void;
+  onSetVitality: (
+    entry: IntelligentEntry,
+    groupKey: EntropyInboxGroupKey,
+    vitality: InboxVitalityValue,
+  ) => void;
+  onSetCrossDomainUse: (
+    entry: IntelligentEntry,
+    inferredUse: InferredUseDomain,
+  ) => void;
+  onIgnoreCrossDomain: (entry: IntelligentEntry) => void;
 }) {
   const pendingEntries = useMemo(() => pendingByScore(entries), [entries]);
-  const mergeEntries = useMemo(
-    () => pendingEntries.filter((entry) => getVisualAction(entry) === "merge"),
+  const entropyGroups = useMemo(
+    () => groupByEntropyJudgment(pendingEntries),
     [pendingEntries],
   );
-  const createEntries = useMemo(
-    () => pendingEntries.filter((entry) => getVisualAction(entry) === "create"),
-    [pendingEntries],
-  );
-
   if (isLoading) {
     return (
       <div className="inbox-redesign-state">
@@ -1220,8 +1445,8 @@ function InboxRedesignList({
         <EmptyState
           size="full"
           icon={InboxIcon}
-          title="暂时没有待整理内容"
-          description="微信、网页链接或手动添加的素材，经过 Maintainer 审阅后会出现在这里。还没添加过？从右边按钮粘一条试试。"
+          title="已减熵，没有必须审阅的内容"
+          description="需要判断的素材会被分到去重、结晶、冷却和先 Ask 的队列里；这里清空代表当前没有新的注意力债。"
           primaryAction={{
             label: "粘贴一条链接",
             onClick: () => {
@@ -1241,52 +1466,49 @@ function InboxRedesignList({
 
   return (
     <div className="inbox-redesign-list">
-      <InboxRedesignGroup
-        title="建议合并到已有页"
-        count={mergeEntries.length}
-        priority="优先处理"
-        color={INBOX_MERGE_COLOR}
-        entries={mergeEntries}
-        selectedId={selectedId}
-        onSelect={onSelect}
-        onAccept={onAccept}
-        onReject={onReject}
-        onEdit={onEdit}
-        onAcceptEntries={onAcceptEntries}
-        batchMode={batchMode}
-        selectedIds={selectedIds}
-        onToggleSelect={onToggleSelect}
-        onBulkSelect={onBulkSelect}
-        purposeByEntryId={purposeByEntryId}
-        onTogglePurpose={onTogglePurpose}
-      />
-      <InboxRedesignGroup
-        title="建议新建页"
-        count={createEntries.length}
-        color={INBOX_CREATE_COLOR}
-        entries={createEntries}
-        selectedId={selectedId}
-        onSelect={onSelect}
-        onAccept={onAccept}
-        onReject={onReject}
-        onEdit={onEdit}
-        onAcceptEntries={onAcceptEntries}
-        batchMode={batchMode}
-        selectedIds={selectedIds}
-        onToggleSelect={onToggleSelect}
-        onBulkSelect={onBulkSelect}
-        purposeByEntryId={purposeByEntryId}
-        onTogglePurpose={onTogglePurpose}
-      />
+      {entropyGroups.map((group) => (
+        <InboxRedesignGroup
+          key={group.key}
+          groupKey={group.key}
+          title={group.meta.label}
+          description={group.meta.reason}
+          count={group.entries.length}
+          priority={group.meta.priority}
+          color={group.meta.color}
+          bulkAccept={group.meta.bulkAccept}
+          entries={group.entries}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onAccept={onAccept}
+          onReject={onReject}
+          onEdit={onEdit}
+          onAcceptEntries={onAcceptEntries}
+          batchMode={batchMode}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
+          onBulkSelect={onBulkSelect}
+          purposeByEntryId={purposeByEntryId}
+          onTogglePurpose={onTogglePurpose}
+          lifecycleByEntryId={lifecycleByEntryId}
+          onSetPriority={onSetPriority}
+          onSetVitality={onSetVitality}
+          crossDomainByEntryId={crossDomainByEntryId}
+          onSetCrossDomainUse={onSetCrossDomainUse}
+          onIgnoreCrossDomain={onIgnoreCrossDomain}
+        />
+      ))}
     </div>
   );
 }
 
 function InboxRedesignGroup({
+  groupKey,
   title,
+  description,
   count,
   priority,
   color,
+  bulkAccept,
   entries,
   selectedId,
   onSelect,
@@ -1300,11 +1522,20 @@ function InboxRedesignGroup({
   onBulkSelect,
   purposeByEntryId,
   onTogglePurpose,
+  lifecycleByEntryId,
+  onSetPriority,
+  onSetVitality,
+  crossDomainByEntryId,
+  onSetCrossDomainUse,
+  onIgnoreCrossDomain,
 }: {
+  groupKey: EntropyInboxGroupKey;
   title: string;
+  description: string;
   count: number;
   priority?: string;
   color: string;
+  bulkAccept: boolean;
   entries: IntelligentEntry[];
   selectedId: number | null;
   onSelect: (id: number) => void;
@@ -1318,6 +1549,23 @@ function InboxRedesignGroup({
   onBulkSelect: (ids: number[], on: boolean) => void;
   purposeByEntryId: Record<number, PurposeLensId[]>;
   onTogglePurpose: (entryId: number, lens: PurposeLensId) => void;
+  lifecycleByEntryId: Record<number, InboxLifecycleChoice>;
+  crossDomainByEntryId: Record<number, CrossDomainInference>;
+  onSetPriority: (
+    entry: IntelligentEntry,
+    groupKey: EntropyInboxGroupKey,
+    priority: InboxPriorityValue,
+  ) => void;
+  onSetVitality: (
+    entry: IntelligentEntry,
+    groupKey: EntropyInboxGroupKey,
+    vitality: InboxVitalityValue,
+  ) => void;
+  onSetCrossDomainUse: (
+    entry: IntelligentEntry,
+    inferredUse: InferredUseDomain,
+  ) => void;
+  onIgnoreCrossDomain: (entry: IntelligentEntry) => void;
 }) {
   if (entries.length === 0) return null;
 
@@ -1328,17 +1576,20 @@ function InboxRedesignGroup({
   return (
     <section className="inbox-redesign-group">
       <div className="inbox-redesign-group-header">
-        <div className="inbox-redesign-group-title">
-          <span
-            className="inbox-redesign-group-stripe"
-            style={{ backgroundColor: color }}
-            aria-hidden
-          />
-          <span>{title}</span>
-          <span className="inbox-redesign-group-count">· {count} 条</span>
-          {priority && (
-            <span className="inbox-redesign-group-priority">· {priority}</span>
-          )}
+        <div className="inbox-redesign-group-copy">
+          <div className="inbox-redesign-group-title">
+            <span
+              className="inbox-redesign-group-stripe"
+              style={{ backgroundColor: color }}
+              aria-hidden
+            />
+            <span>{title}</span>
+            <span className="inbox-redesign-group-count">· {count} 条</span>
+            {priority && (
+              <span className="inbox-redesign-group-priority">· {priority}</span>
+            )}
+          </div>
+          <p className="inbox-redesign-group-description">{description}</p>
         </div>
         <div className="inbox-redesign-group-actions">
           {batchMode && (
@@ -1350,13 +1601,17 @@ function InboxRedesignGroup({
               {allSelected ? "取消选择" : "选择本组"}
             </button>
           )}
-          <button
-            type="button"
-            className="inbox-redesign-group-accept"
-            onClick={() => void onAcceptEntries(entries)}
-          >
-            全部接受
-          </button>
+          {bulkAccept ? (
+            <button
+              type="button"
+              className="inbox-redesign-group-accept"
+              onClick={() => void onAcceptEntries(entries)}
+            >
+              接受本组
+            </button>
+          ) : (
+            <span className="inbox-redesign-group-hold">逐条判断</span>
+          )}
         </div>
       </div>
 
@@ -1365,6 +1620,7 @@ function InboxRedesignGroup({
           <InboxRedesignRow
             key={entry.id}
             entry={entry}
+            groupKey={groupKey}
             active={entry.id === selectedId}
             color={color}
             batchMode={batchMode}
@@ -1374,6 +1630,12 @@ function InboxRedesignGroup({
             onToggleSelect={() => onToggleSelect(entry.id)}
             selectedPurpose={purposeByEntryId[entry.id] ?? ["learning"]}
             onTogglePurpose={(lens) => onTogglePurpose(entry.id, lens)}
+            lifecycle={lifecycleByEntryId[entry.id] ?? defaultLifecycleChoice(groupKey, entry)}
+            onSetPriority={(priority) => onSetPriority(entry, groupKey, priority)}
+            onSetVitality={(vitality) => onSetVitality(entry, groupKey, vitality)}
+            crossDomain={crossDomainByEntryId[entry.id] ?? entry.crossDomain}
+            onSetCrossDomainUse={(inferredUse) => onSetCrossDomainUse(entry, inferredUse)}
+            onIgnoreCrossDomain={() => onIgnoreCrossDomain(entry)}
             onAccept={() => void onAccept(entry)}
             onEdit={() => onEdit(entry)}
             onReject={() => void onReject(entry)}
@@ -1386,6 +1648,7 @@ function InboxRedesignGroup({
 
 function InboxRedesignRow({
   entry,
+  groupKey,
   active,
   color,
   batchMode,
@@ -1395,11 +1658,18 @@ function InboxRedesignRow({
   onToggleSelect,
   selectedPurpose,
   onTogglePurpose,
+  lifecycle,
+  onSetPriority,
+  onSetVitality,
+  crossDomain,
+  onSetCrossDomainUse,
+  onIgnoreCrossDomain,
   onAccept,
   onEdit,
   onReject,
 }: {
   entry: IntelligentEntry;
+  groupKey: EntropyInboxGroupKey;
   active: boolean;
   color: string;
   batchMode: boolean;
@@ -1409,14 +1679,21 @@ function InboxRedesignRow({
   onToggleSelect: () => void;
   selectedPurpose: PurposeLensId[];
   onTogglePurpose: (lens: PurposeLensId) => void;
+  lifecycle: InboxLifecycleChoice;
+  onSetPriority: (priority: InboxPriorityValue) => void;
+  onSetVitality: (vitality: InboxVitalityValue) => void;
+  crossDomain: CrossDomainInference;
+  onSetCrossDomainUse: (inferredUse: InferredUseDomain) => void;
+  onIgnoreCrossDomain: () => void;
   onAccept: () => void;
   onEdit: () => void;
   onReject: () => void;
 }) {
   const visualAction = getVisualAction(entry);
-  const actionText = visualAction === "merge" ? "合并到" : "新建页";
+  const actionText = getEntropyActionText(entry);
   const target = getTargetLabel(entry);
   const targetColor = visualAction === "merge" ? INBOX_MERGE_COLOR : INBOX_CREATE_COLOR;
+  const quickAcceptable = canQuickAcceptEntry(entry);
   const titleClassName = isUrlLikeTitle(entry.title)
     ? "inbox-redesign-row-title inbox-redesign-row-title--url"
     : "inbox-redesign-row-title";
@@ -1461,9 +1738,21 @@ function InboxRedesignRow({
           <span>·</span>
           <span>{getSourceLabel(entry)}</span>
         </div>
+        <div className="inbox-redesign-row-reason">{entry.intelligence.why}</div>
         <InboxPurposeLensRow
           selected={selectedPurpose}
           onToggle={onTogglePurpose}
+        />
+        <InboxLifecycleRow
+          groupKey={groupKey}
+          lifecycle={lifecycle}
+          onSetPriority={onSetPriority}
+          onSetVitality={onSetVitality}
+        />
+        <InboxCrossDomainRow
+          inference={crossDomain}
+          onSetUse={onSetCrossDomainUse}
+          onIgnore={onIgnoreCrossDomain}
         />
       </div>
 
@@ -1472,8 +1761,9 @@ function InboxRedesignRow({
           type="button"
           className="inbox-redesign-row-action inbox-redesign-row-action--accept"
           onClick={onAccept}
-          aria-label="接受"
-          title="接受"
+          disabled={!quickAcceptable}
+          aria-label={quickAcceptable ? "接受" : "需要先判断"}
+          title={quickAcceptable ? "接受" : "需要先判断"}
         >
           <Check className="size-3.5" aria-hidden />
         </button>
@@ -1536,6 +1826,121 @@ function InboxPurposeLensRow({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function InboxLifecycleRow({
+  groupKey,
+  lifecycle,
+  onSetPriority,
+  onSetVitality,
+}: {
+  groupKey: EntropyInboxGroupKey;
+  lifecycle: InboxLifecycleChoice;
+  onSetPriority: (priority: InboxPriorityValue) => void;
+  onSetVitality: (vitality: InboxVitalityValue) => void;
+}) {
+  return (
+    <div
+      className="inbox-redesign-lifecycle-row"
+      aria-label={`Inbox lifecycle ${groupKey}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="inbox-redesign-lifecycle-label">优先级</span>
+      {PRIORITY_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={lifecycle.priority === option.value}
+          onClick={() => onSetPriority(option.value)}
+          className={
+            "inbox-redesign-lifecycle-chip " +
+            (lifecycle.priority === option.value ? "is-active" : "")
+          }
+        >
+          {option.label}
+        </button>
+      ))}
+      <span className="inbox-redesign-lifecycle-divider" aria-hidden />
+      <span className="inbox-redesign-lifecycle-label">生命力</span>
+      {VITALITY_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={lifecycle.vitality === option.value}
+          onClick={() => onSetVitality(option.value)}
+          className={
+            "inbox-redesign-lifecycle-chip " +
+            (lifecycle.vitality === option.value ? "is-active" : "")
+          }
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function InboxCrossDomainRow({
+  inference,
+  onSetUse,
+  onIgnore,
+}: {
+  inference: CrossDomainInference;
+  onSetUse: (inferredUse: InferredUseDomain) => void;
+  onIgnore: () => void;
+}) {
+  const sourceLabel = SOURCE_DOMAIN_LABELS[inference.source_domain];
+  const useLabel = INFERRED_USE_DOMAIN_LABELS[inference.inferred_use_domain];
+  const visible =
+    inference.source_domain !== "unknown" ||
+    inference.inferred_use_domain !== "unknown";
+
+  if (!visible) return null;
+
+  return (
+    <div
+      className={`inbox-redesign-cross-domain-row ${inference.ignored ? "is-ignored" : ""}`}
+      aria-label="Inbox cross-domain inference"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="inbox-redesign-cross-domain-summary">
+        <span className="inbox-redesign-cross-domain-label">Cross-domain</span>
+        <span>{sourceLabel}</span>
+        <ArrowRight className="size-3" aria-hidden />
+        <span>{useLabel}</span>
+        <span className="inbox-redesign-cross-domain-reason" title={inference.reason}>
+          {inference.confidence === "low" ? "observing" : inference.reason}
+        </span>
+      </div>
+      <div className="inbox-redesign-cross-domain-actions">
+        {INFERRED_USE_DOMAIN_OPTIONS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={!inference.ignored && inference.inferred_use_domain === option}
+            onClick={() => onSetUse(option)}
+            className={
+              "inbox-redesign-cross-domain-chip " +
+              (!inference.ignored && inference.inferred_use_domain === option ? "is-active" : "")
+            }
+          >
+            {INFERRED_USE_DOMAIN_LABELS[option]}
+          </button>
+        ))}
+        <button
+          type="button"
+          aria-pressed={inference.ignored === true}
+          onClick={onIgnore}
+          className={
+            "inbox-redesign-cross-domain-chip " +
+            (inference.ignored ? "is-active" : "")
+          }
+        >
+          ignore
+        </button>
+      </div>
     </div>
   );
 }

@@ -47,6 +47,7 @@ import {
   DeepLinkNotFoundBanner,
 } from "@/components/deep-link";
 import { RawEntryCard } from "@/components/ds/RawEntryCard";
+import { deriveRawEntropyStatus } from "@/features/raw/raw-entropy";
 import {
   SourceIcon,
   sourceBadgeStyle,
@@ -387,7 +388,7 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
       <div className="raw-library-header raw-library-header-v2 shrink-0">
         <div className="raw-library-title-block">
           <h1>素材库</h1>
-          <p>原料区 · 微信转发、网页链接、文件和手动粘贴都会先落在这里</p>
+          <p>安全暂存区 · 先保存来源，Buddy 会在 Inbox 里去重、降噪、结晶</p>
         </div>
 
         {selectedIds.size > 0 ? (
@@ -516,9 +517,9 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
         <div className="raw-library-flow-hint" aria-label="知识库流转">
           <span><b>{allEntries.length}</b> 条原料</span>
           <span>→</span>
-          <span>进入页面整理</span>
+          <span>保守筛选</span>
           <span>→</span>
-          <span>形成关系图</span>
+          <span>值得的再成页</span>
         </div>
       </div>
 
@@ -597,6 +598,7 @@ export function RawLibraryPage({ embedded = false }: { embedded?: boolean } = {}
               ? (refetchWechatMutation.variables?.id ?? null)
               : null
           }
+          pendingRawIds={pendingRawIds}
         />
       </div>
     </div>
@@ -958,6 +960,7 @@ interface CardListProps {
   organizingIds: Set<number>;
   onRefetchWechat: (entry: RawEntry) => void;
   refetchingRawId: number | null;
+  pendingRawIds: Set<number>;
 }
 
 function CardList({
@@ -977,6 +980,7 @@ function CardList({
   organizingIds,
   onRefetchWechat,
   refetchingRawId,
+  pendingRawIds,
 }: CardListProps) {
   const navigate = useNavigate();
   const [isDragSelecting, setIsDragSelecting] = useState(false);
@@ -1031,9 +1035,9 @@ function CardList({
         title="暂无素材"
         description={
           <>
-            素材库是所有入库内容的主列表。
+            素材库先承担安全留存，不要求你立刻分类。
             <br />
-            你可以通过微信转发、Ask 对话发链接、或点右上角「添加」手动入库。
+            通过微信、链接、文件或文本入库后，Buddy 会再提示哪些值得整理。
           </>
         }
       />
@@ -1075,6 +1079,7 @@ function CardList({
                 : undefined
             }
             isRefetching={refetchingRawId === entry.id}
+            entropyStatus={deriveRawEntropyStatus(entry, { pendingRawIds })}
             onBeginDragSelect={() => {
               if (!selectedIds.has(entry.id)) {
                 onToggleSelect(entry.id);
@@ -1136,6 +1141,7 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
   if (!detailQuery.data) return null;
 
   const { body } = detailQuery.data;
+  const entropyStatus = deriveRawEntropyStatus(entry);
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(body);
@@ -1153,6 +1159,12 @@ function ExpandedDetail({ id, entry }: { id: number; entry: RawEntry }) {
             <span>{entry.filename}</span>
             <span>{formatRawFriendlyTime(entry.ingested_at)}</span>
             <span>{formatRawAmount(entry.byte_size)}</span>
+            <span
+              className={`raw-entry-card-v2-entropy raw-entry-card-v2-entropy--${entropyStatus.meta.tone}`}
+              title={entropyStatus.meta.description}
+            >
+              {entropyStatus.meta.label}
+            </span>
           </div>
           <div className="flex items-center gap-1">
             <button

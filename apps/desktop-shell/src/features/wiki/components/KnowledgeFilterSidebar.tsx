@@ -18,9 +18,19 @@ import {
 } from "@/features/purpose/purpose-lenses";
 import { useKnowledgeFilterSidebarStore } from "@/state/knowledge-filter-sidebar-store";
 
-export type FilterMode = "all" | "concept" | "derived";
+export type FilterMode = "all" | "concept" | "derived" | "inspiration";
 export type PurposeFilterMode = "all" | PurposeLensId;
 export type SourceFilterMode = "all" | "sourced" | "missing";
+export type PriorityFilterMode = "all" | "high" | "medium" | "low";
+export type VitalityFilterMode =
+  | "all"
+  | "spark"
+  | "seed"
+  | "growing"
+  | "stable"
+  | "cooling"
+  | "archived"
+  | "noise";
 
 export interface KnowledgeFilterSidebarProps {
   filterMode: FilterMode;
@@ -29,6 +39,10 @@ export interface KnowledgeFilterSidebarProps {
   onPurposeMode: (m: PurposeFilterMode) => void;
   sourceMode: SourceFilterMode;
   onSourceMode: (m: SourceFilterMode) => void;
+  priorityMode: PriorityFilterMode;
+  onPriorityMode: (m: PriorityFilterMode) => void;
+  vitalityMode: VitalityFilterMode;
+  onVitalityMode: (m: VitalityFilterMode) => void;
   visibleCount: number;
   total: number;
 }
@@ -37,6 +51,7 @@ const FILTER_OPTIONS: ReadonlyArray<{ value: FilterMode; label: string }> = [
   { value: "all", label: "全部" },
   { value: "concept", label: "概念" },
   { value: "derived", label: "素材衍生" },
+  { value: "inspiration", label: "灵感" },
 ];
 
 const SOURCE_OPTIONS: ReadonlyArray<{
@@ -48,6 +63,30 @@ const SOURCE_OPTIONS: ReadonlyArray<{
   { value: "missing", label: "缺来源" },
 ];
 
+const PRIORITY_OPTIONS: ReadonlyArray<{
+  value: PriorityFilterMode;
+  label: string;
+}> = [
+  { value: "all", label: "全部" },
+  { value: "high", label: "高" },
+  { value: "medium", label: "中" },
+  { value: "low", label: "低" },
+];
+
+const VITALITY_OPTIONS: ReadonlyArray<{
+  value: VitalityFilterMode;
+  label: string;
+}> = [
+  { value: "all", label: "全部" },
+  { value: "spark", label: "火花" },
+  { value: "seed", label: "种子" },
+  { value: "growing", label: "增长" },
+  { value: "stable", label: "稳定" },
+  { value: "cooling", label: "冷却" },
+  { value: "archived", label: "归档" },
+  { value: "noise", label: "噪音" },
+];
+
 export function KnowledgeFilterSidebar({
   filterMode,
   onFilterMode,
@@ -55,6 +94,10 @@ export function KnowledgeFilterSidebar({
   onPurposeMode,
   sourceMode,
   onSourceMode,
+  priorityMode,
+  onPriorityMode,
+  vitalityMode,
+  onVitalityMode,
   visibleCount,
   total,
 }: KnowledgeFilterSidebarProps) {
@@ -130,6 +173,30 @@ export function KnowledgeFilterSidebar({
             key={opt.value}
             active={sourceMode === opt.value}
             onClick={() => onSourceMode(opt.value)}
+          >
+            {opt.label}
+          </ChipButton>
+        ))}
+      </Section>
+
+      <Section label="Priority">
+        {PRIORITY_OPTIONS.map((opt) => (
+          <ChipButton
+            key={opt.value}
+            active={priorityMode === opt.value}
+            onClick={() => onPriorityMode(opt.value)}
+          >
+            {opt.label}
+          </ChipButton>
+        ))}
+      </Section>
+
+      <Section label="Vitality">
+        {VITALITY_OPTIONS.map((opt) => (
+          <ChipButton
+            key={opt.value}
+            active={vitalityMode === opt.value}
+            onClick={() => onVitalityMode(opt.value)}
           >
             {opt.label}
           </ChipButton>

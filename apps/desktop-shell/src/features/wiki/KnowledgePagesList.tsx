@@ -24,9 +24,19 @@ import {
 } from "@/features/purpose/purpose-lenses";
 
 type SortMode = "recent" | "oldest" | "words" | "refs";
-type FilterMode = "all" | "concept" | "derived";
+type FilterMode = "all" | "concept" | "derived" | "inspiration";
 type PurposeFilterMode = "all" | PurposeLensId;
 type SourceFilterMode = "all" | "sourced" | "missing";
+type PriorityFilterMode = "all" | "high" | "medium" | "low";
+type VitalityFilterMode =
+  | "all"
+  | "spark"
+  | "seed"
+  | "growing"
+  | "stable"
+  | "cooling"
+  | "archived"
+  | "noise";
 type GroupKey = "today" | "yesterday" | "week" | "older";
 
 const GROUPS: Array<{ key: GroupKey; label: string }> = [
@@ -45,9 +55,12 @@ function toTime(raw: string | null | undefined): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-function classifyPage(page: WikiPageSummary): "concept" | "derived" | "other" {
+function classifyPage(page: WikiPageSummary): "concept" | "derived" | "inspiration" | "other" {
   const category = page.category?.toLowerCase();
   const slug = page.slug.toLowerCase();
+  if (category === "inspiration" || slug.includes("inspiration/")) {
+    return "inspiration";
+  }
   if (category === "concept" || slug.includes("concept/") || slug.includes("concepts/")) {
     return "concept";
   }
@@ -126,6 +139,7 @@ function displaySummary(page: WikiPageSummary): string {
 
 function pageKindLabel(page: WikiPageSummary): string {
   const kind = classifyPage(page);
+  if (kind === "inspiration") return "灵感";
   if (kind === "concept") return "概念";
   if (kind === "derived") return "素材衍生";
   return "知识页";
@@ -162,6 +176,26 @@ function parsePurposeFilter(raw: string | null): PurposeFilterMode {
 
 function parseSourceFilter(raw: string | null): SourceFilterMode {
   if (raw === "sourced" || raw === "missing") return raw;
+  return "all";
+}
+
+function parsePriorityFilter(raw: string | null): PriorityFilterMode {
+  if (raw === "high" || raw === "medium" || raw === "low") return raw;
+  return "all";
+}
+
+function parseVitalityFilter(raw: string | null): VitalityFilterMode {
+  if (
+    raw === "spark" ||
+    raw === "seed" ||
+    raw === "growing" ||
+    raw === "stable" ||
+    raw === "cooling" ||
+    raw === "archived" ||
+    raw === "noise"
+  ) {
+    return raw;
+  }
   return "all";
 }
 
@@ -205,6 +239,12 @@ export function KnowledgePagesList() {
   const [sourceMode, setSourceMode] = useState<SourceFilterMode>(() =>
     parseSourceFilter(searchParams.get("source")),
   );
+  const [priorityMode, setPriorityMode] = useState<PriorityFilterMode>(() =>
+    parsePriorityFilter(searchParams.get("priority")),
+  );
+  const [vitalityMode, setVitalityMode] = useState<VitalityFilterMode>(() =>
+    parseVitalityFilter(searchParams.get("vitality")),
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const rawSearchTerm = searchTerm.trim();
   const debouncedQuery = useDebouncedValue(rawSearchTerm, 250);
@@ -221,6 +261,8 @@ export function KnowledgePagesList() {
   useEffect(() => {
     setPurposeMode(parsePurposeFilter(searchParams.get("purpose")));
     setSourceMode(parseSourceFilter(searchParams.get("source")));
+    setPriorityMode(parsePriorityFilter(searchParams.get("priority")));
+    setVitalityMode(parseVitalityFilter(searchParams.get("vitality")));
   }, [searchParams]);
 
   const updatePurposeMode = (next: PurposeFilterMode) => {
@@ -241,6 +283,28 @@ export function KnowledgePagesList() {
       params.delete("source");
     } else {
       params.set("source", next);
+    }
+    setSearchParams(params, { replace: true });
+  };
+
+  const updatePriorityMode = (next: PriorityFilterMode) => {
+    setPriorityMode(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "all") {
+      params.delete("priority");
+    } else {
+      params.set("priority", next);
+    }
+    setSearchParams(params, { replace: true });
+  };
+
+  const updateVitalityMode = (next: VitalityFilterMode) => {
+    setVitalityMode(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "all") {
+      params.delete("vitality");
+    } else {
+      params.set("vitality", next);
     }
     setSearchParams(params, { replace: true });
   };
@@ -293,8 +357,21 @@ export function KnowledgePagesList() {
         const hasSource = hasSourceLineage(page);
         if (filterMode === "concept" && kind !== "concept") return false;
         if (filterMode === "derived" && kind !== "derived") return false;
+        if (filterMode === "inspiration" && kind !== "inspiration") return false;
         if (sourceMode === "sourced" && !hasSource) return false;
         if (sourceMode === "missing" && hasSource) return false;
+        if (
+          priorityMode !== "all" &&
+          page.priority?.toLowerCase() !== priorityMode
+        ) {
+          return false;
+        }
+        if (
+          vitalityMode !== "all" &&
+          page.vitality?.toLowerCase() !== vitalityMode
+        ) {
+          return false;
+        }
         if (
           purposeMode !== "all" &&
           !(page.purpose ?? []).includes(purposeMode)
@@ -313,7 +390,7 @@ export function KnowledgePagesList() {
         }
         return toTime(b.created_at) - toTime(a.created_at);
       });
-  }, [degreeById, filterMode, pages, purposeMode, sortMode, sourceMode]);
+  }, [degreeById, filterMode, pages, priorityMode, purposeMode, sortMode, sourceMode, vitalityMode]);
 
   const searchHits: WikiSearchHit[] = useMemo(
     () => searchQuery.data?.hits ?? [],
@@ -420,6 +497,10 @@ export function KnowledgePagesList() {
         onPurposeMode={updatePurposeMode}
         sourceMode={sourceMode}
         onSourceMode={updateSourceMode}
+        priorityMode={priorityMode}
+        onPriorityMode={updatePriorityMode}
+        vitalityMode={vitalityMode}
+        onVitalityMode={updateVitalityMode}
         visibleCount={visibleCount}
         total={total}
       />

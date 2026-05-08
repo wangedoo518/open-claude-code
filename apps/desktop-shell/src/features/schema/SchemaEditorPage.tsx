@@ -423,7 +423,7 @@ function SchemaBody({
           {
             title: "AI 行为契约",
             sub: "外部 AI 能碰哪些文件",
-            count: `${guidanceFiles.filter((f) => f.exists).length}/${guidanceFiles.length || 4} 已就绪`,
+            count: `${guidanceFiles.filter((f) => f.exists).length}/${guidanceFiles.length || 5} 已就绪`,
           },
           {
             title: "健康巡检",
@@ -514,7 +514,7 @@ function SchemaBody({
             </p>
           </div>
           <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-            {guidanceFiles.filter((file) => file.exists).length}/{guidanceFiles.length || 4}
+            {guidanceFiles.filter((file) => file.exists).length}/{guidanceFiles.length || 5}
           </span>
         </div>
         <div className="mt-4 grid gap-2 md:grid-cols-2">

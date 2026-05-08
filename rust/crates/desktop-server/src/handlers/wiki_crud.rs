@@ -1377,6 +1377,21 @@ pub(crate) struct InboxMaintainRequest {
     /// Buddy default (`learning`) inside wiki_store.
     #[serde(default)]
     purpose_lenses: Vec<String>,
+    /// Optional lifecycle metadata confirmed in the Inbox row.
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    vitality: Option<String>,
+    #[serde(default)]
+    priority_reason: Option<String>,
+    #[serde(default)]
+    next_review_at: Option<String>,
+    #[serde(default)]
+    source_domain: Option<String>,
+    #[serde(default)]
+    inferred_use_domain: Option<String>,
+    #[serde(default)]
+    cross_domain_reason: Option<String>,
     /// Required when `action == "update_existing"`.
     #[serde(default)]
     target_page_slug: Option<String>,
@@ -1413,12 +1428,23 @@ pub(crate) async fn inbox_maintain_handler(
     Json(body): Json<InboxMaintainRequest>,
 ) -> Result<Json<InboxMaintainResponse>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
+    let lifecycle = wiki_store::WikiPageLifecycleMetadata {
+        priority: body.priority.clone(),
+        vitality: body.vitality.clone(),
+        priority_reason: body.priority_reason.clone(),
+        last_revisited_at: None,
+        next_review_at: body.next_review_at.clone(),
+        source_domain: body.source_domain.clone(),
+        inferred_use_domain: body.inferred_use_domain.clone(),
+        cross_domain_reason: body.cross_domain_reason.clone(),
+    };
 
     // Step 1: translate the flat action into the tagged enum, with
     // strict validation of the per-variant required fields.
     let action = match body.action.as_str() {
         "create_new" => wiki_maintainer::MaintainAction::CreateNew {
             purpose_lenses: body.purpose_lenses.clone(),
+            lifecycle: lifecycle.clone(),
         },
         "update_existing" => {
             let slug = body
@@ -1438,6 +1464,7 @@ pub(crate) async fn inbox_maintain_handler(
             wiki_maintainer::MaintainAction::UpdateExisting {
                 target_page_slug: slug,
                 purpose_lenses: body.purpose_lenses.clone(),
+                lifecycle: lifecycle.clone(),
             }
         }
         "reject" => {
@@ -1585,6 +1612,24 @@ pub(crate) struct ApplyProposalResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ApplyProposalRequest {
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    vitality: Option<String>,
+    #[serde(default)]
+    priority_reason: Option<String>,
+    #[serde(default)]
+    next_review_at: Option<String>,
+    #[serde(default)]
+    source_domain: Option<String>,
+    #[serde(default)]
+    inferred_use_domain: Option<String>,
+    #[serde(default)]
+    cross_domain_reason: Option<String>,
+}
+
 /// Response body for `POST /api/wiki/inbox/{id}/proposal/cancel`.
 /// Deliberately minimal — the UI just needs a "cancelled or error".
 #[derive(Debug, Serialize)]
@@ -1645,9 +1690,21 @@ pub(crate) async fn create_proposal_handler(
 /// because that's a state precondition the caller should know about.
 pub(crate) async fn apply_proposal_handler(
     Path(id): Path<u32>,
+    body: Option<Json<ApplyProposalRequest>>,
 ) -> Result<Json<ApplyProposalResponse>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
-    match wiki_maintainer::apply_update_proposal(&paths, id) {
+    let body = body.map(|Json(body)| body).unwrap_or_default();
+    let lifecycle = wiki_store::WikiPageLifecycleMetadata {
+        priority: body.priority,
+        vitality: body.vitality,
+        priority_reason: body.priority_reason,
+        last_revisited_at: None,
+        next_review_at: body.next_review_at,
+        source_domain: body.source_domain,
+        inferred_use_domain: body.inferred_use_domain,
+        cross_domain_reason: body.cross_domain_reason,
+    };
+    match wiki_maintainer::apply_update_proposal_with_lifecycle(&paths, id, &lifecycle) {
         Ok(wiki_maintainer::MaintainOutcome::Updated { target_page_slug }) => {
             fire_inbox_notify();
             Ok(Json(ApplyProposalResponse {
@@ -2143,14 +2200,15 @@ pub(crate) async fn get_vault_git_audit_handler(
     Query(query): Query<GitAuditQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
-    let audit = wiki_store::vault_git_audit_log(&paths, query.limit.unwrap_or(10)).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("git audit read failed: {e}"),
-            }),
-        )
-    })?;
+    let audit =
+        wiki_store::vault_git_audit_log(&paths, query.limit.unwrap_or(10)).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("git audit read failed: {e}"),
+                }),
+            )
+        })?;
     Ok(Json(
         serde_json::to_value(audit).unwrap_or(serde_json::Value::Null),
     ))

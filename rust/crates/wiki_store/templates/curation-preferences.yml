@@ -1,0 +1,44 @@
+# Curation Preferences
+#
+# Human-editable defaults for Buddy's entropy, priority, and archive behavior.
+# Keep these conservative. Buddy may down-rank or suggest archive, but should
+# not delete raw material automatically.
+
+cooling:
+  spark_days_without_revisit: 14
+  growing_days_without_revisit: 30
+  stable_days_without_revisit: 90
+
+archive:
+  min_duplicate_count: 3
+  safe_archive_after_days: 90
+  require_user_confirmation: true
+
+priority:
+  high_signals:
+    - repeated_across_sources
+    - expressed_in_ask
+    - cross_domain_reuse
+  low_signals:
+    - duplicate_only
+    - no_source_lineage
+    - not_revisited
+
+purpose_lenses:
+  enabled:
+    - learning
+    - building
+    - decision
+    - personal
+    - research
+
+source_filters:
+  shopping:
+    infer_as: aesthetic
+    keep_visual_evidence: true
+  music:
+    infer_as: healing
+    keep_mood_evidence: true
+  article:
+    infer_as: research
+    keep_source_refs: true

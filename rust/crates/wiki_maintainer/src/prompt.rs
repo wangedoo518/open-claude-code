@@ -291,6 +291,9 @@ mod tests {
             byte_size: 1234,
             content_hash: None,
             original_url: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
         }
     }
 

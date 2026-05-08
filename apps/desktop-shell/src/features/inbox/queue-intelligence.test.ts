@@ -15,7 +15,10 @@
  */
 
 import {
+  ENTROPY_GROUP_ORDER,
   computeQueueIntelligence,
+  defaultLifecycleForEntropyGroup,
+  groupByEntropyJudgment,
   groupAndSortByAction,
   GROUP_ORDER,
   type QueueIntelligence,
@@ -299,5 +302,83 @@ describe("groupAndSortByAction", () => {
 
   it("空输入返回空数组", () => {
     expect(groupAndSortByAction([])).toEqual([]);
+  });
+});
+describe("groupByEntropyJudgment", () => {
+  it("puts pending proposals into the small review-today lane", () => {
+    const entries: DecoratedEntry[] = [
+      decorate(makeEntry({ id: 1, proposal_status: "pending" })),
+      decorate(makeEntry({ id: 2, proposal_status: "pending" })),
+      decorate(makeEntry({ id: 3, proposal_status: "pending" })),
+      decorate(makeEntry({ id: 4, proposal_status: "pending" })),
+    ];
+
+    const grouped = groupByEntropyJudgment(entries, { todayLimit: 2 });
+    const review = grouped.find((group) => group.key === "review_today");
+
+    expect(review).toBeDefined();
+    expect(review?.entries.map((entry) => entry.id)).toEqual([4, 3]);
+    expect(review?.entries).toHaveLength(2);
+  });
+
+  it("keeps duplicate and already-approved material in cooling, never bulk-review", () => {
+    const duplicate = decorate(makeEntry({ id: 1 }), {
+      kind: "content_duplicate",
+      matching_raw_id: 42,
+      matching_url: "https://example.com/dup",
+    });
+    const reused = decorate(makeEntry({ id: 2 }), {
+      kind: "reused_approved",
+      reason: "already accepted",
+    });
+
+    const grouped = groupByEntropyJudgment([duplicate, reused]);
+    const cooling = grouped.find((group) => group.key === "cooling");
+
+    expect(cooling).toBeDefined();
+    expect(cooling?.meta.bulkAccept).toBe(false);
+    expect(cooling?.entries.map((entry) => entry.id)).toEqual([1, 2]);
+  });
+
+  it("splits mergeable, crystallize, and needs-decision judgments", () => {
+    const merge = decorate(makeEntry({ id: 1, target_page_slug: "existing" }));
+    const create = decorate(makeEntry({ id: 2, source_raw_id: 10 }));
+    const ask = decorate(makeEntry({ id: 3, kind: "conflict" }));
+
+    const grouped = groupByEntropyJudgment([ask, create, merge]);
+    const order = grouped.map((group) => group.key);
+
+    expect(order).toEqual(["crystallize", "mergeable", "needs_decision"]);
+  });
+
+  it("recognizes repeated target direction as growing before ordinary merge", () => {
+    const first = decorate(makeEntry({ id: 1, target_page_slug: "taste-map" }));
+    const second = decorate(makeEntry({ id: 2, target_page_slug: "taste-map" }));
+
+    const grouped = groupByEntropyJudgment([first, second]);
+    const growing = grouped.find((group) => group.key === "growing");
+
+    expect(growing).toBeDefined();
+    expect(growing?.entries.map((entry) => entry.id)).toEqual([2, 1]);
+  });
+
+  it("declares entropy group order from review through cooling", () => {
+    expect(ENTROPY_GROUP_ORDER).toEqual([
+      "review_today",
+      "growing",
+      "crystallize",
+      "mergeable",
+      "needs_decision",
+      "cooling",
+    ]);
+  });
+
+  it("maps entropy groups to lifecycle defaults for maintain payloads", () => {
+    expect(defaultLifecycleForEntropyGroup("growing").priority).toBe("high");
+    expect(defaultLifecycleForEntropyGroup("growing").vitality).toBe("growing");
+    expect(defaultLifecycleForEntropyGroup("crystallize").priority).toBe("medium");
+    expect(defaultLifecycleForEntropyGroup("crystallize").vitality).toBe("seed");
+    expect(defaultLifecycleForEntropyGroup("cooling").priority).toBe("low");
+    expect(defaultLifecycleForEntropyGroup("cooling").vitality).toBe("cooling");
   });
 });

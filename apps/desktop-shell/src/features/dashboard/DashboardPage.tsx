@@ -2,8 +2,10 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  Archive,
   ArrowRight,
   Bot,
+  CalendarCheck,
   CheckCircle2,
   ClipboardList,
   FileText,
@@ -14,6 +16,7 @@ import {
   Loader2,
   MessageCircle,
   ShieldCheck,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -31,6 +34,14 @@ import {
   PURPOSE_LENSES,
   type PurposeLensId,
 } from "@/features/purpose/purpose-lenses";
+import {
+  buildPatrolLifecycleSuggestions,
+  buildEntropyPulseSummary,
+  countPatrolLifecycleSuggestions,
+  type EntropyPulseItem,
+  type EntropyPulseSummary,
+  type PatrolLifecycleSuggestion,
+} from "./entropy-pulse";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const EXPRESSIBLE_CATEGORIES = new Set(["concept", "people", "topic", "compare"]);
@@ -151,6 +162,16 @@ export function DashboardPage() {
     () => buildRecentExpressions(pagesQuery.data?.pages ?? []),
     [pagesQuery.data?.pages],
   );
+  const entropyPulse = useMemo(
+    () => buildEntropyPulseSummary(pagesQuery.data?.pages ?? []),
+    [pagesQuery.data?.pages],
+  );
+  const lifecyclePatrolSuggestions = useMemo(
+    () => buildPatrolLifecycleSuggestions(patrol, pagesQuery.data?.pages ?? []),
+    [pagesQuery.data?.pages, patrol],
+  );
+  const lifecyclePatrolCount = countPatrolLifecycleSuggestions(patrol);
+  const entropyReviewCount = entropyPulse.reviewToday.length;
   const activeExternalAiGrants =
     externalAiQuery.data?.grants.filter((grant) => grant.enabled).length ?? 0;
   const schemaViolations = patrol?.summary.schema_violations ?? 0;
@@ -202,6 +223,27 @@ export function DashboardPage() {
               tone: "warning" as const,
             }
           : null,
+        git?.dirty
+          ? {
+              label: `保存 ${git.changed_count} 个 Vault 改动`,
+              href: "/connections#git",
+              tone: "warning" as const,
+            }
+          : null,
+        entropyReviewCount > 0
+          ? {
+              label: `今天只复盘 ${entropyReviewCount} 个高信号主题`,
+              href: "/#entropy-pulse",
+              tone: "warning" as const,
+            }
+          : null,
+        lifecyclePatrolCount > 0
+          ? {
+              label: `大浪淘沙 ${lifecyclePatrolCount} 个生命周期建议`,
+              href: "/#entropy-pulse",
+              tone: "warning" as const,
+            }
+          : null,
         missingSourceCount > 0
           ? {
               label: `补齐 ${missingSourceCount} 页来源线索`,
@@ -223,13 +265,6 @@ export function DashboardPage() {
               tone: "warning" as const,
             }
           : null,
-        git?.dirty
-          ? {
-              label: `提交 ${git.changed_count} 个 Vault 改动`,
-              href: "/connections#git",
-              tone: "warning" as const,
-            }
-          : null,
         {
           label: "问外脑一个问题",
           href: "/ask",
@@ -244,7 +279,9 @@ export function DashboardPage() {
     [
       git?.changed_count,
       git?.dirty,
+      entropyReviewCount,
       isFreshVault,
+      lifecyclePatrolCount,
       missingSourceCount,
       orphanPages,
       pendingInbox,
@@ -255,7 +292,13 @@ export function DashboardPage() {
 
   const gitRisk = git?.dirty ? git.changed_count : 0;
   const totalRisks =
-    pendingInbox + schemaViolations + stalePages + orphanPages + missingSourceCount + gitRisk;
+    pendingInbox +
+    schemaViolations +
+    stalePages +
+    orphanPages +
+    missingSourceCount +
+    lifecyclePatrolCount +
+    gitRisk;
   const isLoading =
     statsQuery.isLoading ||
     inboxQuery.isLoading ||
@@ -326,13 +369,15 @@ export function DashboardPage() {
           <HealthCard
             icon={ShieldCheck}
             title="知识质量"
-            value={schemaViolations + stalePages + orphanPages}
+            value={schemaViolations + stalePages + orphanPages + lifecyclePatrolCount}
             unit="项"
             status={
-              schemaViolations + stalePages + orphanPages > 0 ? "有风险" : "正常"
+              schemaViolations + stalePages + orphanPages + lifecyclePatrolCount > 0
+                ? "有风险"
+                : "正常"
             }
             tone={
-              schemaViolations + stalePages + orphanPages > 0
+              schemaViolations + stalePages + orphanPages + lifecyclePatrolCount > 0
                 ? "warning"
                 : "success"
             }
@@ -356,6 +401,12 @@ export function DashboardPage() {
         <PurposeWeeklyDigest
           items={purposeDigest.items}
           missingPurposeCount={purposeDigest.missingPurposeCount}
+          loading={pagesQuery.isLoading}
+        />
+
+        <EntropyPulsePanel
+          summary={entropyPulse}
+          patrolSuggestions={lifecyclePatrolSuggestions}
           loading={pagesQuery.isLoading}
         />
 
@@ -634,6 +685,176 @@ function PurposeWeeklyDigest({
         </Link>
       ) : null}
     </section>
+  );
+}
+
+function EntropyPulsePanel({
+  summary,
+  patrolSuggestions,
+  loading,
+}: {
+  summary: EntropyPulseSummary;
+  patrolSuggestions: PatrolLifecycleSuggestion[];
+  loading: boolean;
+}) {
+  return (
+    <section id="entropy-pulse" className="space-y-3 scroll-mt-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <HeartPulse className="size-4 text-primary" />
+            <h2 className="text-[15px] font-medium">减熵脉冲</h2>
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+            只把高信号、增长和冷却候选提出来；归档是注意力状态，不会删除证据。
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-[12px]">
+          <DigestMetric label="高优先级" value={summary.highPriorityCount} />
+          <DigestMetric label="到期复盘" value={summary.dueReviewCount} />
+          <DigestMetric label="冷却候选" value={summary.coolingCount} />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-4 text-[12px] text-muted-foreground">
+          正在读取 priority / vitality 信号…
+        </div>
+      ) : !summary.hasLifecycleSignals ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-4 text-[12px] leading-5 text-muted-foreground">
+          还没有 priority / vitality 信号。Buddy 会先保留捕获和来源，不会要求你在入口处手动分类。
+        </div>
+      ) : (
+        <div className="grid gap-3 lg:grid-cols-3">
+          <EntropyPulseColumn
+            icon={CalendarCheck}
+            title="今天只看这些"
+            description="高优先级、到期复盘，且尚未表达过的页面。"
+            items={summary.reviewToday}
+            empty="今天没有必须复盘的高信号主题。"
+          />
+          <EntropyPulseColumn
+            icon={TrendingUp}
+            title="正在增长"
+            description="反复出现、优先级高，或仍在发芽的主题。"
+            items={summary.growing}
+            empty="暂时没有增长信号。继续捕获，先观察反复出现的方向。"
+          />
+          <EntropyPulseColumn
+            icon={Archive}
+            title="冷却 / 可归档"
+            description="适合降噪、合并或放入低关注状态，不代表删除。"
+            items={summary.cooling}
+            empty="暂时没有冷却候选。"
+          />
+        </div>
+      )}
+
+      {!loading && patrolSuggestions.length ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[14px] font-medium">Patrol 生命周期建议</div>
+              <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                把高优先级未表达、陈旧火花、冷却页和噪音候选提出来，由 Inbox 审阅后再归档或降级。
+              </p>
+            </div>
+            <Link
+              to="/inbox"
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-[12px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              去 Inbox
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+          <div className="mt-4 grid gap-2 md:grid-cols-3">
+            {patrolSuggestions.map((item) => (
+              <PatrolLifecycleRow key={`${item.kind}-${item.slug}`} item={item} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function EntropyPulseColumn({
+  icon: Icon,
+  title,
+  description,
+  items,
+  empty,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  items: EntropyPulseItem[];
+  empty: string;
+}) {
+  return (
+    <div className="min-h-[218px] rounded-lg border border-border bg-card px-4 py-4">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+          <Icon className="size-3.5" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-medium">{title}</h3>
+          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        {items.length ? (
+          items.map((item) => <EntropyPulseRow key={item.slug} item={item} />)
+        ) : (
+          <div className="rounded-md bg-muted/50 px-3 py-3 text-[12px] leading-5 text-muted-foreground">
+            {empty}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EntropyPulseRow({ item }: { item: EntropyPulseItem }) {
+  return (
+    <Link
+      to={`/wiki/${item.slug}`}
+      className="block rounded-md bg-muted/50 px-3 py-2.5 text-[12px] transition-colors hover:bg-muted"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 truncate text-foreground">{item.title}</span>
+        <span className="shrink-0 rounded border border-border/60 bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {item.badge}
+        </span>
+      </div>
+      <div className="mt-1 line-clamp-2 leading-5 text-muted-foreground">
+        {item.reason}
+      </div>
+    </Link>
+  );
+}
+
+function PatrolLifecycleRow({ item }: { item: PatrolLifecycleSuggestion }) {
+  return (
+    <Link
+      to={`/wiki/${item.slug}`}
+      className="block min-h-[128px] rounded-md bg-muted/50 px-3 py-3 text-[12px] transition-colors hover:bg-muted"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 truncate text-foreground">{item.title}</span>
+        <span className="shrink-0 rounded border border-border/60 bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {item.badge}
+        </span>
+      </div>
+      <div className="mt-2 line-clamp-2 leading-5 text-muted-foreground">
+        {item.description}
+      </div>
+      <div className="mt-2 line-clamp-2 leading-5 text-muted-foreground">
+        {item.suggestedAction}
+      </div>
+    </Link>
   );
 }
 

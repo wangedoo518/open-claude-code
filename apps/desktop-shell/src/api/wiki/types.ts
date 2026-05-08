@@ -43,6 +43,12 @@ export interface RawEntry {
   original_url?: string | null;
   /** Hex-encoded SHA-256 of the fetched body; stable across re-fetches. */
   content_hash?: string | null;
+  /** Native source domain inferred from source/source_url without changing the raw source. */
+  source_domain?: string | null;
+  /** Likely user intent/use domain inferred from the raw title/body. */
+  inferred_use_domain?: string | null;
+  /** Reviewer-visible evidence for the cross-domain inference. */
+  cross_domain_reason?: string | null;
   /**
    * The most recent `IngestDecision` that produced (or reused) this raw.
    * Shape is a serde-tagged union — see `IngestDecision` in `lib/tauri.ts`.
@@ -179,6 +185,20 @@ export interface MaintainRequest {
   action: MaintainAction;
   /** Optional when `action === "create_new"`; empty falls back to `learning`. */
   purpose_lenses?: string[];
+  /** Optional priority confirmed in Inbox review. */
+  priority?: "low" | "medium" | "high";
+  /** Optional lifecycle state confirmed in Inbox review. */
+  vitality?: "seed" | "growing" | "stable" | "cooling" | "archived";
+  /** User-visible evidence for the priority/vitality choice. */
+  priority_reason?: string;
+  /** Optional next lifecycle review timestamp. */
+  next_review_at?: string;
+  /** Native source domain preserved separately from the inferred use. */
+  source_domain?: string;
+  /** Likely cross-domain use confirmed during Inbox review. */
+  inferred_use_domain?: string;
+  /** Evidence/reviewer note for the cross-domain inference. */
+  cross_domain_reason?: string;
   /** Required when `action === "update_existing"`. */
   target_page_slug?: string;
   /** Required when `action === "reject"`. Minimum 4 chars enforced client-side. */
@@ -271,10 +291,27 @@ export interface WikiPageSummary {
   purpose?: string[];
   expressed_in?: string[];
   source_refs?: string[];
+  priority?: "low" | "medium" | "high" | string | null;
+  vitality?:
+    | "spark"
+    | "seed"
+    | "growing"
+    | "stable"
+    | "cooling"
+    | "archived"
+    | "noise"
+    | string
+    | null;
+  priority_reason?: string | null;
+  last_revisited_at?: string | null;
+  next_review_at?: string | null;
+  source_domain?: string | null;
+  inferred_use_domain?: string | null;
+  cross_domain_reason?: string | null;
   source_raw_id?: number | null;
   created_at: string;
   byte_size: number;
-  category?: "concept" | "people" | "topic" | "compare" | string;
+  category?: "concept" | "people" | "topic" | "compare" | "inspiration" | string;
   confidence?: number;
   last_verified?: string | null;
 }
@@ -620,7 +657,18 @@ export interface AbsorbTaskResponse {
 
 /** Patrol issue (§3.8). */
 export interface PatrolIssue {
-  kind: "orphan" | "stale" | "schema-violation" | "oversized" | "stub" | "confidence-decay" | "uncrystallized";
+  kind:
+    | "orphan"
+    | "stale"
+    | "schema-violation"
+    | "oversized"
+    | "stub"
+    | "confidence-decay"
+    | "uncrystallized"
+    | "stale-spark"
+    | "cooling-page"
+    | "unexpressed-high-priority"
+    | "noise-candidate";
   page_slug: string;
   description: string;
   suggested_action: string;
@@ -642,6 +690,10 @@ export interface PatrolSummary {
   stubs: number;
   confidence_decay: number;
   uncrystallized: number;
+  stale_sparks?: number;
+  cooling_pages?: number;
+  unexpressed_high_priority?: number;
+  noise_candidates?: number;
 }
 
 export interface PatrolReport {
@@ -690,6 +742,10 @@ export interface QuerySource {
   title: string;
   relevance_score: number;
   snippet: string;
+  source_domain?: string | null;
+  inferred_use_domain?: string | null;
+  cross_domain_reason?: string | null;
+  priority_reason?: string | null;
 }
 
 /** Raw + Inbox ids created when a substantive wiki query answer is crystallized. */

@@ -183,6 +183,17 @@ Done means:
 - Each group has a reason; users can drill into raw evidence.
 - Empty Inbox copy communicates reduced entropy rather than a blank task list.
 
+Implementation note (2026-05-07):
+
+- `queue-intelligence.ts` owns `groupByEntropyJudgment` and lifecycle defaults
+  for the six visible Inbox groups.
+- The redesigned Inbox row now exposes Purpose Lens plus priority/vitality
+  choices before accepting. Cooling and needs-decision groups are not bulk
+  accepted.
+- `POST /api/wiki/inbox/{id}/maintain` and
+  `POST /api/wiki/inbox/{id}/proposal/apply` accept reviewed lifecycle fields;
+  wiki writes preserve existing metadata unless a reviewed field is provided.
+
 ## Slice E4 — Raw Safe Capture And Entropy Status
 
 Scope:
@@ -212,6 +223,15 @@ Done means:
 - Raw cards keep source identity visible.
 - Derived status chips are conservative and reversible.
 - Deep-linked add modes still clear URL params after opening the panel.
+
+Implementation note (2026-05-07):
+
+- `features/raw/raw-entropy.ts` derives reversible raw status from
+  `last_ingest_decision` plus pending Inbox raw ids.
+- Raw cards now show source identity and an entropy status chip without adding
+  required capture fields.
+- Raw header/empty copy frames the page as safe capture first, with Inbox doing
+  later sifting.
 
 ## Slice E5 — Cross-Domain Extraction MVP
 
@@ -249,6 +269,23 @@ Done means:
 - Unknown/weak evidence stays `unknown` rather than forcing a cross-domain label.
 - At least one Inbox fixture and one Ask fixture cover corrected inference.
 
+Implementation note (2026-05-07):
+
+- `features/cross-domain/cross-domain.ts` owns the conservative inference
+  rules. It separates native source, source domain, inferred use domain, reason,
+  and confidence; weak evidence stays `unknown`.
+- The redesigned Inbox row now shows a visible cross-domain row with
+  accept/correct/ignore controls. Corrections call
+  `applyCrossDomainCorrection`, which changes inferred use without mutating
+  native source/source domain.
+- `POST /api/wiki/inbox/{id}/maintain` and
+  `POST /api/wiki/inbox/{id}/proposal/apply` accept `source_domain`,
+  `inferred_use_domain`, and `cross_domain_reason`; wiki writes preserve these
+  fields during create, append, and proposal apply paths.
+- Raw and Wiki DTO/frontmatter structs carry the same optional fields so future
+  Taobao/music/bookmark connectors have a storage contract before any
+  high-volume import is added.
+
 ## Slice E6 — Wiki Inspiration Page Support
 
 Scope:
@@ -279,6 +316,16 @@ Done means:
   pages.
 - Inspiration page templates cite representative source refs and next actions.
 
+Implementation note (2026-05-07):
+
+- `wiki_store::init_wiki` now seeds `wiki/inspiration/` plus
+  `schema/templates/inspiration.md`.
+- `validate_wiki_page_markdown_content` accepts `type: inspiration`, and the
+  seeded template includes insight, evidence, repeated elements, use cases,
+  representative samples, archive candidates, and next actions.
+- Knowledge classification and the left filter sidebar now include an
+  inspiration type filter plus priority/vitality filters.
+
 ## Slice E7 — Ask Reflection Prompts
 
 Scope:
@@ -304,6 +351,18 @@ Done means:
 - Weak evidence answers say "still observing" instead of asserting certainty.
 - Existing source binding and URL enrichment behavior remains unchanged.
 - Reflection prompts can be reached without adding a new top-level route.
+
+Implementation note (2026-05-07):
+
+- `features/ask/ask-reflection-prompts.ts` defines the five reflection prompt
+  templates and `SlashCommandPalette` exposes them through the existing
+  Composer slash menu.
+- `wiki_maintainer::query_wiki` now includes lifecycle and cross-domain
+  metadata in the RAG context so Ask answers can cite `priority_reason` and
+  explain source-domain/inferred-use-domain judgments.
+- `wiki_store::read_wiki_page`, `read_wiki_page_content`, and
+  `overwrite_wiki_page_content` resolve slugs across all wiki categories, which
+  lets Ask retrieve `type: inspiration` pages instead of silently skipping them.
 
 ## Slice E8 — Rules Curation Preferences
 
@@ -333,6 +392,20 @@ Done means:
 - Saves dirty Buddy Vault and appear in Git/checkpoint surfaces.
 - Defaults remain conservative and source-neutral.
 
+Implementation note (2026-05-07):
+
+- `schema/curation-preferences.yml` is now seeded on vault init with
+  conservative cooling, archive, priority, purpose-lens, and source-filter
+  defaults.
+- Rules Studio exposes the curation preferences file through the same
+  allowlisted `GET/PUT /api/wiki/rules/file` editor used for guidance,
+  templates, and policies. Saving it dirties Buddy Vault through the existing
+  Git status surface.
+- `wiki_maintainer::build_absorb_system_prompt` reads the preferences into the
+  maintainer prompt only after the file passes required top-level-key
+  validation. `wiki_patrol` reports a schema violation when the file is missing
+  or malformed.
+
 ## Slice E9 — Lifecycle Patrol And Archive Suggestions
 
 Scope:
@@ -358,6 +431,24 @@ Done means:
 - Suggestions are reversible archive/down-rank actions, not deletions.
 - Home and Inbox can show archive candidates with source links and reasons.
 - Git audit/checkpoint behavior remains intact after archive decisions.
+
+Implementation note:
+
+- `wiki_patrol` now emits `stale-spark`, `cooling-page`,
+  `unexpressed-high-priority`, and `noise-candidate` issues, and
+  `PatrolSummary` carries counts for all four lifecycle buckets.
+- Applying patrol issues creates Inbox review tasks through the existing
+  idempotent path: stale sparks and high-priority unused pages use stale review;
+  cooling/noise candidates use deprecate review. No action deletes raw or wiki
+  evidence automatically.
+- Home/Pulse ranks these Patrol lifecycle issues through
+  `features/dashboard/entropy-pulse.ts`, adds them to the knowledge-quality
+  risk count, and shows a visible "大浪淘沙" path to Inbox/wiki pages.
+- Verification run for the slice:
+  `cargo test -p wiki_patrol lifecycle_suggestions_flag_stale_cooling_unexpressed_and_noise`,
+  `cargo test -p wiki_patrol full_patrol_counts_lifecycle_suggestions`,
+  `cargo test -p wiki_store lifecycle_patrol_issues_map_to_reviewable_inbox_actions`,
+  and `npm run build`.
 
 ## Slice E10 — External Source Readiness Gate
 
@@ -386,6 +477,21 @@ Done means:
   preserved visually.
 - Cross-domain assumptions are explicit and user-correctable.
 - The connector has at least one smoke or integration test plan before landing.
+
+Implementation note:
+
+- Added `features/connections/source-readiness.ts` as the gate contract for
+  high-volume sources. It requires source evidence, dedupe, priority signals,
+  cross-domain extraction, reversible archive behavior, user-visible reason
+  language, and privacy constraints before a connector is considered ready.
+- Connections now renders the gate directly. Taobao, music, and browser
+  bookmarks remain blocked because their current plans would be capture-only;
+  the existing WeChat path is listed as ready because it already routes through
+  Inbox review, dedupe/priority, cross-domain metadata, reversible archive
+  suggestions, and Git trace.
+- `source-readiness.test.ts` pins the policy that capture-only connectors are
+  blocked even if they can preserve source evidence.
+- Verification run for the slice: `npm run build`.
 
 ## Risk Matrix
 

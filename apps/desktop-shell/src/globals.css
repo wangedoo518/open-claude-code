@@ -5348,6 +5348,39 @@ a.ds-status-item:hover {
   font-size: 10.5px;
   line-height: 1.2;
 }
+.raw-entry-card-v2-entropy {
+  flex: 0 0 auto;
+  border: 0.5px solid rgba(44, 44, 42, 0.12);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.raw-entry-card-v2-entropy--success {
+  border-color: rgba(29, 158, 117, 0.22);
+  background: rgba(29, 158, 117, 0.08);
+  color: #167b5d;
+}
+.raw-entry-card-v2-entropy--muted {
+  border-color: rgba(44, 44, 42, 0.12);
+  background: rgba(44, 44, 42, 0.04);
+  color: #77756f;
+}
+.raw-entry-card-v2-entropy--warning {
+  border-color: rgba(154, 106, 24, 0.24);
+  background: rgba(154, 106, 24, 0.08);
+  color: #795411;
+}
+.raw-entry-card-v2-entropy--primary {
+  border-color: rgba(42, 107, 184, 0.24);
+  background: rgba(42, 107, 184, 0.08);
+  color: #235b9d;
+}
+.raw-entry-card-v2-entropy--archive {
+  border-color: rgba(118, 122, 130, 0.2);
+  background: rgba(118, 122, 130, 0.08);
+  color: #63676d;
+}
 .raw-entry-card-v2-subtitle {
   display: block;
   overflow: hidden;
@@ -7355,6 +7388,17 @@ a.ds-status-item:hover {
   font-weight: 500;
 }
 
+.inbox-redesign-group-copy {
+  min-width: 0;
+}
+
+.inbox-redesign-group-description {
+  margin: 4px 0 0;
+  color: #77756f;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
 .inbox-redesign-group-stripe {
   width: 4px;
   height: 14px;
@@ -7374,7 +7418,8 @@ a.ds-status-item:hover {
 }
 
 .inbox-redesign-group-select,
-.inbox-redesign-group-accept {
+.inbox-redesign-group-accept,
+.inbox-redesign-group-hold {
   color: #5f5e5a;
   font-size: 12px;
   transition: color 180ms cubic-bezier(0.2, 0, 0, 1);
@@ -7478,6 +7523,108 @@ a.ds-status-item:hover {
   white-space: nowrap;
 }
 
+.inbox-redesign-row-reason {
+  margin-top: 5px;
+  color: #6d6b65;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.inbox-redesign-lifecycle-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.inbox-redesign-lifecycle-label {
+  color: #8b8982;
+  font-size: 10px;
+}
+
+.inbox-redesign-lifecycle-divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 2px;
+  background: rgba(44, 44, 42, 0.14);
+}
+
+.inbox-redesign-lifecycle-chip {
+  border: 0.5px solid rgba(44, 44, 42, 0.14);
+  border-radius: 999px;
+  background: #fff;
+  color: #696761;
+  padding: 1px 7px;
+  font-size: 10px;
+  line-height: 1.4;
+  transition:
+    border-color 180ms cubic-bezier(0.2, 0, 0, 1),
+    color 180ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.inbox-redesign-lifecycle-chip:hover,
+.inbox-redesign-lifecycle-chip.is-active {
+  border-color: rgba(216, 90, 48, 0.36);
+  background: rgba(216, 90, 48, 0.08);
+  color: #b44a28;
+}
+
+.inbox-redesign-cross-domain-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  margin-top: 7px;
+  color: #696761;
+  font-size: 10px;
+}
+
+.inbox-redesign-cross-domain-row.is-ignored {
+  opacity: 0.62;
+}
+
+.inbox-redesign-cross-domain-summary,
+.inbox-redesign-cross-domain-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.inbox-redesign-cross-domain-label {
+  color: #8b8982;
+}
+
+.inbox-redesign-cross-domain-reason {
+  overflow: hidden;
+  max-width: 320px;
+  color: #8b8982;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-redesign-cross-domain-chip {
+  border: 0.5px solid rgba(44, 44, 42, 0.14);
+  border-radius: 999px;
+  background: #fff;
+  color: #696761;
+  padding: 1px 7px;
+  font-size: 10px;
+  line-height: 1.4;
+  transition:
+    border-color 180ms cubic-bezier(0.2, 0, 0, 1),
+    color 180ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.inbox-redesign-cross-domain-chip:hover,
+.inbox-redesign-cross-domain-chip.is-active {
+  border-color: rgba(42, 107, 184, 0.36);
+  background: rgba(42, 107, 184, 0.08);
+  color: #245d9c;
+}
+
 .inbox-redesign-row-target {
   overflow: hidden;
   max-width: 240px;
@@ -7518,6 +7665,17 @@ a.ds-status-item:hover {
     background-color 180ms cubic-bezier(0.2, 0, 0, 1),
     border-color 180ms cubic-bezier(0.2, 0, 0, 1),
     color 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.inbox-redesign-row-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.inbox-redesign-row-action:disabled:hover {
+  border-color: rgba(44, 44, 42, 0.12);
+  background: #fff;
+  color: #5f5e5a;
 }
 
 .inbox-redesign-row-action--accept:hover {

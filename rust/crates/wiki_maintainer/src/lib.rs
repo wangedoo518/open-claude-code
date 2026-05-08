@@ -437,6 +437,9 @@ pub enum MaintainAction {
         /// falls back to the Buddy default (`learning`).
         #[serde(default)]
         purpose_lenses: Vec<String>,
+        /// Optional lifecycle metadata confirmed by the reviewer.
+        #[serde(default)]
+        lifecycle: wiki_store::WikiPageLifecycleMetadata,
     },
     /// Append the raw body into an existing wiki page. The merge
     /// strategy is pure append in v1; an LLM-driven merge is TODO.
@@ -447,6 +450,9 @@ pub enum MaintainAction {
         /// purpose values.
         #[serde(default)]
         purpose_lenses: Vec<String>,
+        /// Optional lifecycle metadata confirmed by the reviewer.
+        #[serde(default)]
+        lifecycle: wiki_store::WikiPageLifecycleMetadata,
     },
     /// Discard the inbox task with a user-provided reason. Does not
     /// touch the wiki — only audit-logs the decision.
@@ -499,13 +505,21 @@ pub async fn execute_maintain(
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<MaintainOutcome> {
     match action {
-        MaintainAction::CreateNew { purpose_lenses } => {
-            create_new(paths, inbox_id, &purpose_lenses, broker).await
-        }
+        MaintainAction::CreateNew {
+            purpose_lenses,
+            lifecycle,
+        } => create_new(paths, inbox_id, &purpose_lenses, &lifecycle, broker).await,
         MaintainAction::UpdateExisting {
             target_page_slug,
             purpose_lenses,
-        } => update_existing(paths, inbox_id, &target_page_slug, &purpose_lenses),
+            lifecycle,
+        } => update_existing(
+            paths,
+            inbox_id,
+            &target_page_slug,
+            &purpose_lenses,
+            &lifecycle,
+        ),
         MaintainAction::Reject { reason } => reject(paths, inbox_id, &reason),
     }
 }
@@ -527,6 +541,7 @@ pub async fn create_new(
     paths: &wiki_store::WikiPaths,
     inbox_id: u32,
     purpose_lenses: &[String],
+    lifecycle: &wiki_store::WikiPageLifecycleMetadata,
     broker: &(impl BrokerSender + ?Sized),
 ) -> Result<MaintainOutcome> {
     // Step 1: locate the inbox entry + its raw_id.
@@ -543,14 +558,17 @@ pub async fn create_new(
     let proposal = propose_for_raw_entry(paths, raw_id, broker).await?;
 
     // Step 3: write concept page.
-    wiki_store::write_wiki_page_with_purpose(
+    wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
         paths,
+        "concept",
         &proposal.slug,
         &proposal.title,
         &proposal.summary,
         &proposal.body,
         Some(proposal.source_raw_id),
         purpose_lenses,
+        &[],
+        lifecycle,
     )
     .map_err(|e| MaintainerError::Store(e.to_string()))?;
 
@@ -621,6 +639,70 @@ fn merge_reviewed_purpose_lenses(existing: &[String], reviewed: &[String]) -> Ve
     merged
 }
 
+fn merge_reviewed_lifecycle_metadata(
+    existing: &wiki_store::WikiPageLifecycleMetadata,
+    reviewed: &wiki_store::WikiPageLifecycleMetadata,
+) -> wiki_store::WikiPageLifecycleMetadata {
+    let mut merged = existing.clone();
+    if reviewed
+        .priority
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.priority = reviewed.priority.clone();
+    }
+    if reviewed
+        .vitality
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.vitality = reviewed.vitality.clone();
+    }
+    if reviewed
+        .priority_reason
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.priority_reason = reviewed.priority_reason.clone();
+    }
+    if reviewed
+        .last_revisited_at
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.last_revisited_at = reviewed.last_revisited_at.clone();
+    }
+    if reviewed
+        .next_review_at
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.next_review_at = reviewed.next_review_at.clone();
+    }
+    if reviewed
+        .source_domain
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.source_domain = reviewed.source_domain.clone();
+    }
+    if reviewed
+        .inferred_use_domain
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.inferred_use_domain = reviewed.inferred_use_domain.clone();
+    }
+    if reviewed
+        .cross_domain_reason
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        merged.cross_domain_reason = reviewed.cross_domain_reason.clone();
+    }
+    merged
+}
+
 /// Path B — append the inbox's raw body into an existing wiki page.
 ///
 /// v1 strategy: pure append. The raw body is appended under a
@@ -639,6 +721,7 @@ pub fn update_existing(
     inbox_id: u32,
     target_page_slug: &str,
     purpose_lenses: &[String],
+    reviewed_lifecycle: &wiki_store::WikiPageLifecycleMetadata,
 ) -> Result<MaintainOutcome> {
     // Step 1: read the inbox entry (for source_raw_id) + raw body.
     let entries =
@@ -678,7 +761,11 @@ pub fn update_existing(
 
     // Step 4: write back. Preserve existing title/summary and knowledge
     // loop metadata — only body changes plus any reviewed purpose additions.
-    wiki_store::write_wiki_page_in_category_with_metadata(
+    let lifecycle = merge_reviewed_lifecycle_metadata(
+        &wiki_store::WikiPageLifecycleMetadata::from(&summary),
+        reviewed_lifecycle,
+    );
+    wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
         paths,
         &summary.category,
         &summary.slug,
@@ -688,6 +775,7 @@ pub fn update_existing(
         summary.source_raw_id,
         &merged_purpose,
         &summary.expressed_in,
+        &lifecycle,
     )
     .map_err(|e| MaintainerError::Store(e.to_string()))?;
 
@@ -1032,6 +1120,18 @@ pub fn apply_update_proposal(
     paths: &wiki_store::WikiPaths,
     inbox_id: u32,
 ) -> Result<MaintainOutcome> {
+    apply_update_proposal_with_lifecycle(
+        paths,
+        inbox_id,
+        &wiki_store::WikiPageLifecycleMetadata::default(),
+    )
+}
+
+pub fn apply_update_proposal_with_lifecycle(
+    paths: &wiki_store::WikiPaths,
+    inbox_id: u32,
+    reviewed_lifecycle: &wiki_store::WikiPageLifecycleMetadata,
+) -> Result<MaintainOutcome> {
     // Step 1 — locate entry, validate that a pending proposal exists.
     let entries =
         wiki_store::list_inbox_entries(paths).map_err(|e| MaintainerError::Store(e.to_string()))?;
@@ -1077,7 +1177,11 @@ pub fn apply_update_proposal(
     }
 
     // Step 3 — write the merged body back, preserving category + title + summary.
-    wiki_store::write_wiki_page_in_category(
+    let lifecycle = merge_reviewed_lifecycle_metadata(
+        &wiki_store::WikiPageLifecycleMetadata::from(&existing_summary),
+        reviewed_lifecycle,
+    );
+    wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
         paths,
         &existing_summary.category,
         &existing_summary.slug,
@@ -1085,6 +1189,9 @@ pub fn apply_update_proposal(
         &existing_summary.summary,
         &after_markdown,
         existing_summary.source_raw_id,
+        &existing_summary.purpose,
+        &existing_summary.expressed_in,
+        &lifecycle,
     )
     .map_err(|e| MaintainerError::Store(e.to_string()))?;
 
@@ -1754,6 +1861,14 @@ pub struct QuerySource {
     pub title: String,
     pub relevance_score: f32,
     pub snippet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_use_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_domain_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_reason: Option<String>,
 }
 
 /// Source priority for absorb ordering (lower = higher priority).
@@ -1811,6 +1926,7 @@ fn determine_category(_proposal: &WikiPageProposal) -> String {
 /// (absorb still proceeds with the 7 rules alone).
 fn build_absorb_system_prompt(paths: &wiki_store::WikiPaths, index_content: &str) -> String {
     let claude_md = std::fs::read_to_string(&paths.schema_claude_md).unwrap_or_default();
+    let curation_preferences = wiki_store::load_curation_preferences(paths).unwrap_or_default();
     let mut prompt = format!(
         "{claude_md}\n\n\
          ## 当前 Wiki 目录\n\n{index_content}\n\n\
@@ -1826,6 +1942,10 @@ fn build_absorb_system_prompt(paths: &wiki_store::WikiPaths, index_content: &str
     prompt.push_str(
         "\n8. If the raw entry contradicts an existing wiki slug from the index, include conflict_with and conflict_reason; do not silently rewrite that page.",
     );
+    if !curation_preferences.trim().is_empty() {
+        prompt.push_str("\n\n## Curation Preferences\n\n");
+        prompt.push_str(curation_preferences.trim());
+    }
     prompt
 }
 
@@ -2398,6 +2518,41 @@ fn compute_relevance(
     score.min(1.0)
 }
 
+fn query_context_metadata(page: &wiki_store::WikiPageSummary) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    push_context_metadata(&mut lines, "priority", page.priority.as_deref());
+    push_context_metadata(&mut lines, "vitality", page.vitality.as_deref());
+    push_context_metadata(
+        &mut lines,
+        "priority_reason",
+        page.priority_reason.as_deref(),
+    );
+    push_context_metadata(&mut lines, "next_review_at", page.next_review_at.as_deref());
+    push_context_metadata(&mut lines, "source_domain", page.source_domain.as_deref());
+    push_context_metadata(
+        &mut lines,
+        "inferred_use_domain",
+        page.inferred_use_domain.as_deref(),
+    );
+    push_context_metadata(
+        &mut lines,
+        "cross_domain_reason",
+        page.cross_domain_reason.as_deref(),
+    );
+
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nMetadata:\n{}", lines.join("\n"))
+    }
+}
+
+fn push_context_metadata(lines: &mut Vec<String>, key: &str, value: Option<&str>) {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        lines.push(format!("{key}: {value}"));
+    }
+}
+
 /// Wiki-grounded Q&A: retrieve relevant pages, build RAG prompt,
 /// return answer with source citations.
 pub async fn query_wiki(
@@ -2439,10 +2594,15 @@ pub async fn query_wiki(
                 title: page.title.clone(),
                 relevance_score: *score,
                 snippet,
+                source_domain: page.source_domain.clone(),
+                inferred_use_domain: page.inferred_use_domain.clone(),
+                cross_domain_reason: page.cross_domain_reason.clone(),
+                priority_reason: page.priority_reason.clone(),
             });
+            let metadata = query_context_metadata(page);
             context_parts.push(format!(
-                "## {} (slug: {})\n\n{}",
-                page.title, page.slug, body
+                "## {} (slug: {}){}\n\n{}",
+                page.title, page.slug, metadata, body
             ));
         }
     }
@@ -2453,6 +2613,8 @@ pub async fn query_wiki(
         "你是 ClawWiki 知识问答助手。基于以下 wiki 页面回答用户问题。\n\
          引用时使用 [页面标题](concepts/slug.md) 格式。\n\
          如果 wiki 中没有相关信息, 明确说明。\n\n\
+         对反思、优先级、冷却、归档和主题 brief 问题, 必须结合 Metadata 中的 priority_reason、vitality、source_domain、inferred_use_domain 和 cross_domain_reason。\n\
+         如果证据弱或缺少 Metadata, 明确说仍在观察中, 不要做硬断言。\n\n\
          --- Wiki 上下文 ---\n\n{wiki_context}"
     );
     let request = api::MessageRequest {
@@ -3806,6 +3968,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_wiki_includes_lifecycle_metadata_in_reflection_context() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+
+        let lifecycle = wiki_store::WikiPageLifecycleMetadata {
+            priority: Some("high".to_string()),
+            vitality: Some("growing".to_string()),
+            priority_reason: Some(
+                "repeated design references across shopping captures".to_string(),
+            ),
+            last_revisited_at: None,
+            next_review_at: Some("2026-05-14T00:00:00Z".to_string()),
+            source_domain: Some("shopping".to_string()),
+            inferred_use_domain: Some("aesthetic".to_string()),
+            cross_domain_reason: Some("source:shopping -> use:aesthetic".to_string()),
+        };
+        wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
+            &paths,
+            "inspiration",
+            "lamp-shape-study",
+            "Lamp Shape Study",
+            "Shopping captures used as recurring design inspiration.",
+            "# Lamp Shape Study\n\nCross-domain priority signal for lamp silhouettes and studio mood boards.",
+            None,
+            &[],
+            &[],
+            &lifecycle,
+        )
+        .unwrap();
+
+        struct CapturingBroker {
+            canned: String,
+            system: std::sync::Mutex<Option<String>>,
+        }
+
+        #[async_trait]
+        impl BrokerSender for CapturingBroker {
+            async fn chat_completion(&self, request: MessageRequest) -> Result<MessageResponse> {
+                *self.system.lock().unwrap() = request.system.clone();
+                Ok(sample_response(&self.canned))
+            }
+        }
+
+        let broker = CapturingBroker {
+            canned: "Use the lamp shape study as a cited source.".to_string(),
+            system: std::sync::Mutex::new(None),
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+
+        let result = query_wiki(&paths, "cross-domain priority lamp shape", 20, &broker, tx)
+            .await
+            .unwrap();
+        let source = result
+            .sources
+            .iter()
+            .find(|source| source.title == "Lamp Shape Study")
+            .expect("reflection source should be returned");
+        assert_eq!(
+            source.priority_reason.as_deref(),
+            Some("repeated design references across shopping captures")
+        );
+        assert_eq!(source.source_domain.as_deref(), Some("shopping"));
+        assert_eq!(source.inferred_use_domain.as_deref(), Some("aesthetic"));
+        assert_eq!(
+            source.cross_domain_reason.as_deref(),
+            Some("source:shopping -> use:aesthetic")
+        );
+
+        let system = broker
+            .system
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("query should send a system prompt");
+        assert!(
+            system.contains("priority_reason: repeated design references across shopping captures")
+        );
+        assert!(system.contains("source_domain: shopping"));
+        assert!(system.contains("inferred_use_domain: aesthetic"));
+        assert!(system.contains("cross_domain_reason: source:shopping -> use:aesthetic"));
+    }
+
+    #[tokio::test]
     async fn query_wiki_returns_error_on_empty_wiki() {
         let tmp = tempdir().unwrap();
         wiki_store::init_wiki(tmp.path()).unwrap();
@@ -3835,6 +4081,20 @@ mod tests {
     }
 
     #[test]
+    fn absorb_system_prompt_includes_curation_preferences() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+
+        let prompt = build_absorb_system_prompt(&paths, "# Index");
+
+        assert!(prompt.contains("## Curation Preferences"));
+        assert!(prompt.contains("cooling:"));
+        assert!(prompt.contains("archive:"));
+        assert!(prompt.contains("source_filters:"));
+    }
+
+    #[test]
     fn determine_category_defaults_to_concept() {
         let proposal = WikiPageProposal {
             slug: "test".to_string(),
@@ -3857,6 +4117,14 @@ mod tests {
             purpose: Vec::new(),
             expressed_in: Vec::new(),
             source_refs: Vec::new(),
+            priority: None,
+            vitality: None,
+            priority_reason: None,
+            last_revisited_at: None,
+            next_review_at: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -3882,6 +4150,14 @@ mod tests {
             purpose: Vec::new(),
             expressed_in: Vec::new(),
             source_refs: Vec::new(),
+            priority: None,
+            vitality: None,
+            priority_reason: None,
+            last_revisited_at: None,
+            next_review_at: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -3905,6 +4181,14 @@ mod tests {
             purpose: Vec::new(),
             expressed_in: Vec::new(),
             source_refs: Vec::new(),
+            priority: None,
+            vitality: None,
+            priority_reason: None,
+            last_revisited_at: None,
+            next_review_at: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -4147,11 +4431,22 @@ mod tests {
         let broker = MockBrokerSender { canned };
 
         let purpose_lenses = vec!["Research".to_string(), "personal".to_string()];
+        let lifecycle = wiki_store::WikiPageLifecycleMetadata {
+            priority: Some("High".to_string()),
+            vitality: Some("Growing".to_string()),
+            priority_reason: Some("Repeated cross-domain inbox signal".to_string()),
+            last_revisited_at: None,
+            next_review_at: Some("2026-05-14T00:00:00Z".to_string()),
+            source_domain: Some("shopping".to_string()),
+            inferred_use_domain: Some("aesthetic".to_string()),
+            cross_domain_reason: Some("source:shopping -> use:aesthetic".to_string()),
+        };
         let outcome = execute_maintain(
             &paths,
             inbox_id,
             MaintainAction::CreateNew {
                 purpose_lenses: purpose_lenses.clone(),
+                lifecycle: lifecycle.clone(),
             },
             &broker,
         )
@@ -4168,6 +4463,16 @@ mod tests {
         // Wiki page written.
         let (summary, _body) = wiki_store::read_wiki_page(&paths, "transformer").unwrap();
         assert_eq!(summary.purpose, vec!["research", "personal"]);
+        assert_eq!(summary.priority.as_deref(), Some("high"));
+        assert_eq!(summary.vitality.as_deref(), Some("growing"));
+        assert_eq!(
+            summary.priority_reason.as_deref(),
+            Some("Repeated cross-domain inbox signal")
+        );
+        assert_eq!(
+            summary.next_review_at.as_deref(),
+            Some("2026-05-14T00:00:00Z")
+        );
 
         // Inbox patched.
         let entries = wiki_store::list_inbox_entries(&paths).unwrap();
@@ -4185,14 +4490,28 @@ mod tests {
         wiki_store::init_wiki(tmp.path()).unwrap();
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
 
-        // Pre-existing target page.
-        wiki_store::write_wiki_page(
+        // Pre-existing target page with user-corrected lifecycle metadata.
+        let lifecycle = wiki_store::WikiPageLifecycleMetadata {
+            priority: Some("high".to_string()),
+            vitality: Some("growing".to_string()),
+            priority_reason: Some("Repeatedly reused attention notes".to_string()),
+            last_revisited_at: Some("2026-05-07T00:00:00Z".to_string()),
+            next_review_at: Some("2026-05-14T00:00:00Z".to_string()),
+            source_domain: Some("article".to_string()),
+            inferred_use_domain: Some("research".to_string()),
+            cross_domain_reason: Some("source:article -> use:research".to_string()),
+        };
+        wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
             &paths,
+            "concept",
             "attention",
             "Attention Mechanism",
             "Summary of attention.",
             "# Attention\n\nOriginal body.",
             None,
+            &["learning".to_string()],
+            &[],
+            &lifecycle,
         )
         .unwrap();
 
@@ -4207,6 +4526,7 @@ mod tests {
             MaintainAction::UpdateExisting {
                 target_page_slug: "attention".to_string(),
                 purpose_lenses: vec!["building".to_string()],
+                lifecycle: wiki_store::WikiPageLifecycleMetadata::default(),
             },
             &broker,
         )
@@ -4223,6 +4543,20 @@ mod tests {
         // Page body now has both the original content and a dated update heading.
         let (summary, body) = wiki_store::read_wiki_page(&paths, "attention").unwrap();
         assert_eq!(summary.purpose, vec!["learning", "building"]);
+        assert_eq!(summary.priority.as_deref(), Some("high"));
+        assert_eq!(summary.vitality.as_deref(), Some("growing"));
+        assert_eq!(
+            summary.priority_reason.as_deref(),
+            Some("Repeatedly reused attention notes")
+        );
+        assert_eq!(
+            summary.last_revisited_at.as_deref(),
+            Some("2026-05-07T00:00:00Z")
+        );
+        assert_eq!(
+            summary.next_review_at.as_deref(),
+            Some("2026-05-14T00:00:00Z")
+        );
         assert!(body.contains("Original body."));
         assert!(
             body.contains("## 更新 ["),
@@ -4420,7 +4754,17 @@ mod tests {
             .unwrap();
 
         // Phase 2: apply.
-        let outcome = apply_update_proposal(&paths, inbox_id).unwrap();
+        let lifecycle = wiki_store::WikiPageLifecycleMetadata {
+            priority: Some("high".to_string()),
+            vitality: Some("growing".to_string()),
+            priority_reason: Some("Diff proposal confirmed from Inbox".to_string()),
+            last_revisited_at: None,
+            next_review_at: Some("2026-05-21T00:00:00Z".to_string()),
+            source_domain: Some("article".to_string()),
+            inferred_use_domain: Some("research".to_string()),
+            cross_domain_reason: Some("source:article -> use:research".to_string()),
+        };
+        let outcome = apply_update_proposal_with_lifecycle(&paths, inbox_id, &lifecycle).unwrap();
         match outcome {
             MaintainOutcome::Updated { target_page_slug } => {
                 assert_eq!(target_page_slug, "dropout");
@@ -4429,8 +4773,18 @@ mod tests {
         }
 
         // Page on disk has the merged body.
-        let (_summary, body) = wiki_store::read_wiki_page(&paths, "dropout").unwrap();
+        let (summary, body) = wiki_store::read_wiki_page(&paths, "dropout").unwrap();
         assert!(body.contains("## Extra"));
+        assert_eq!(summary.priority.as_deref(), Some("high"));
+        assert_eq!(summary.vitality.as_deref(), Some("growing"));
+        assert_eq!(
+            summary.priority_reason.as_deref(),
+            Some("Diff proposal confirmed from Inbox")
+        );
+        assert_eq!(
+            summary.next_review_at.as_deref(),
+            Some("2026-05-21T00:00:00Z")
+        );
         assert!(body.contains("merged."));
 
         // Inbox entry: proposal_status=applied, status=Approved, staged

@@ -33,7 +33,7 @@
 //! is channel-agnostic: whichever crate ends up writing into `raw/`
 //! sees the same on-disk shape.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -168,12 +168,16 @@ pub const WIKI_TOPICS_SUBDIR: &str = "topics";
 /// Structured A-vs-B comparisons with argument columns.
 pub const WIKI_COMPARE_SUBDIR: &str = "compare";
 
+/// Subdirectory under `wiki/` for inspiration pages.
+pub const WIKI_INSPIRATION_SUBDIR: &str = "inspiration";
+
 /// All wiki page categories, in display order.
 pub const WIKI_CATEGORIES: &[(&str, &str)] = &[
     ("concept", WIKI_CONCEPTS_SUBDIR),
     ("people", WIKI_PEOPLE_SUBDIR),
     ("topic", WIKI_TOPICS_SUBDIR),
     ("compare", WIKI_COMPARE_SUBDIR),
+    ("inspiration", WIKI_INSPIRATION_SUBDIR),
 ];
 
 /// Filename for the content-oriented catalog at the top of `wiki/`.
@@ -219,6 +223,9 @@ pub const META_DIR: &str = ".clawwiki";
 /// writes the canonical `templates/CLAUDE.md` content here on first run.
 pub const CLAUDE_MD_FILENAME: &str = "CLAUDE.md";
 
+/// Human-editable entropy/priority/archive preferences inside `schema/`.
+pub const CURATION_PREFERENCES_FILENAME: &str = "curation-preferences.yml";
+
 /// Environment variable that overrides the default `~/.clawwiki/` path.
 /// Useful for tests, CI, and per-project sandboxes.
 pub const ENV_OVERRIDE: &str = "CLAWWIKI_HOME";
@@ -241,7 +248,9 @@ const TEMPLATE_TOPIC: &str = include_str!("../templates/templates/topic.md");
 const TEMPLATE_COMPARE: &str = include_str!("../templates/templates/compare.md");
 const TEMPLATE_PERSONAL: &str = include_str!("../templates/templates/personal.md");
 const TEMPLATE_RESEARCH: &str = include_str!("../templates/templates/research.md");
+const TEMPLATE_INSPIRATION: &str = include_str!("../templates/templates/inspiration.md");
 const PURPOSE_LENSES_TEMPLATE: &str = include_str!("../templates/purpose-lenses.yml");
+const CURATION_PREFERENCES_TEMPLATE: &str = include_str!("../templates/curation-preferences.yml");
 const ROOT_AGENTS_SHIM: &str = "# Buddy Vault Agent Guide\n\nThis Buddy Vault is local-first. Read `schema/AGENTS.md` for the detailed multi-agent rules before writing.\n\nWrite boundaries:\n\n- Prefer proposed diffs for `wiki/` edits.\n- `raw/` is append-only evidence.\n- `schema/templates` may be edited only under explicit Buddy authorization.\n- Record changes through Buddy lineage and Git diff.\n";
 const ROOT_CLAUDE_SHIM: &str = "# Buddy Vault Claude Guide\n\nThis file is a shim for Claude-compatible tools. The canonical guidance lives in `schema/CLAUDE.md` and `schema/AGENTS.md`.\n\nFollow Buddy's controlled-write policy: read by default, write only within the authorized scope for this session or a saved permanent rule.\n";
 
@@ -530,6 +539,7 @@ pub fn init_wiki(root: &Path) -> Result<()> {
         ("compare.md", TEMPLATE_COMPARE),
         ("personal.md", TEMPLATE_PERSONAL),
         ("research.md", TEMPLATE_RESEARCH),
+        ("inspiration.md", TEMPLATE_INSPIRATION),
     ] {
         let file = templates_dir.join(name);
         if !file.exists() {
@@ -541,6 +551,12 @@ pub fn init_wiki(root: &Path) -> Result<()> {
     if !purpose_lenses_path.exists() {
         fs::write(&purpose_lenses_path, PURPOSE_LENSES_TEMPLATE)
             .map_err(|e| WikiStoreError::io(purpose_lenses_path.clone(), e))?;
+    }
+
+    let curation_preferences_path = curation_preferences_path(&paths);
+    if !curation_preferences_path.exists() {
+        fs::write(&curation_preferences_path, CURATION_PREFERENCES_TEMPLATE)
+            .map_err(|e| WikiStoreError::io(curation_preferences_path.clone(), e))?;
     }
 
     // Seed schema/policies/ directory with governance rules.
@@ -899,7 +915,11 @@ fn parse_ahead_behind(root: &Path, upstream: Option<&str>) -> (u32, u32) {
 fn preferred_remote_name(root: &Path) -> Option<String> {
     let remotes = try_run_git(root, &["remote"])?;
     let mut first_remote: Option<String> = None;
-    for remote in remotes.lines().map(str::trim).filter(|remote| !remote.is_empty()) {
+    for remote in remotes
+        .lines()
+        .map(str::trim)
+        .filter(|remote| !remote.is_empty())
+    {
         if first_remote.is_none() {
             first_remote = Some(remote.to_string());
         }
@@ -983,24 +1003,18 @@ fn validate_git_relative_path(path: &str) -> Result<String> {
             std::path::Component::Normal(part) => {
                 let part = part.to_string_lossy();
                 if part.is_empty() {
-                    return Err(WikiStoreError::Invalid(format!(
-                        "invalid git path: {path}"
-                    )));
+                    return Err(WikiStoreError::Invalid(format!("invalid git path: {path}")));
                 }
                 parts.push(part.to_string());
             }
             std::path::Component::CurDir => {}
             _ => {
-                return Err(WikiStoreError::Invalid(format!(
-                    "invalid git path: {path}"
-                )));
+                return Err(WikiStoreError::Invalid(format!("invalid git path: {path}")));
             }
         }
     }
     if parts.is_empty() {
-        return Err(WikiStoreError::Invalid(format!(
-            "invalid git path: {path}"
-        )));
+        return Err(WikiStoreError::Invalid(format!("invalid git path: {path}")));
     }
     Ok(parts.join("/"))
 }
@@ -1762,7 +1776,11 @@ pub fn vault_git_commit(paths: &WikiPaths, message: &str) -> Result<VaultGitComm
     record_vault_git_audit(
         paths,
         "commit",
-        if summary.is_empty() { message } else { &summary },
+        if summary.is_empty() {
+            message
+        } else {
+            &summary
+        },
         None,
         None,
         None,
@@ -1939,7 +1957,10 @@ pub fn vault_git_discard_path(paths: &WikiPaths, path: &str) -> Result<VaultGitD
         }
         "untracked"
     } else {
-        run_git(&paths.root, &["restore", "--staged", "--worktree", "--", &path])?;
+        run_git(
+            &paths.root,
+            &["restore", "--staged", "--worktree", "--", &path],
+        )?;
         "tracked"
     };
 
@@ -2500,6 +2521,56 @@ pub fn overwrite_rules_file_content(
     })
 }
 
+pub fn curation_preferences_path(paths: &WikiPaths) -> PathBuf {
+    paths.schema.join(CURATION_PREFERENCES_FILENAME)
+}
+
+pub fn load_curation_preferences(paths: &WikiPaths) -> Result<String> {
+    let path = curation_preferences_path(paths);
+    let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    validate_curation_preferences_content(&content)?;
+    Ok(content)
+}
+
+pub fn validate_curation_preferences_content(content: &str) -> Result<()> {
+    let required = [
+        "cooling",
+        "archive",
+        "priority",
+        "purpose_lenses",
+        "source_filters",
+    ];
+    let mut top_level_keys = HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        if let Some((key, _value)) = trimmed.split_once(':') {
+            let key = key.trim();
+            if !key.is_empty() {
+                top_level_keys.insert(key.to_string());
+            }
+        }
+    }
+
+    let missing: Vec<&str> = required
+        .into_iter()
+        .filter(|key| !top_level_keys.contains(*key))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(WikiStoreError::Invalid(format!(
+            "curation preferences missing required keys: {}",
+            missing.join(", ")
+        )))
+    }
+}
+
 fn resolve_editable_rules_file_path(
     paths: &WikiPaths,
     relative_path: &str,
@@ -2508,9 +2579,10 @@ fn resolve_editable_rules_file_path(
     let parts: Vec<&str> = relative_path.split('/').collect();
     let allowed = match parts.as_slice() {
         ["AGENTS.md"] | ["CLAUDE.md"] => true,
-        ["schema", "AGENTS.md"] | ["schema", "CLAUDE.md"] | ["schema", "purpose-lenses.yml"] => {
-            true
-        }
+        ["schema", "AGENTS.md"]
+        | ["schema", "CLAUDE.md"]
+        | ["schema", "purpose-lenses.yml"]
+        | ["schema", CURATION_PREFERENCES_FILENAME] => true,
         ["schema", "templates", file] | ["schema", "policies", file] => {
             file.ends_with(".md") && !file.starts_with('.')
         }
@@ -2529,7 +2601,9 @@ fn normalize_rules_relative_path(relative_path: &str) -> Result<String> {
     if trimmed.is_empty()
         || trimmed.starts_with('/')
         || trimmed.contains('\\')
-        || trimmed.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        || trimmed
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
     {
         return Err(WikiStoreError::Invalid(format!(
             "invalid rules file path: {relative_path}"
@@ -2606,6 +2680,15 @@ pub struct RawFrontmatter {
     /// recent log is the primary surface that displays this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_url: Option<String>,
+    /// Optional native source domain inferred without changing `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_domain: Option<String>,
+    /// Optional intended-use domain inferred from raw title/body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_use_domain: Option<String>,
+    /// Optional evidence string for the cross-domain inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_domain_reason: Option<String>,
 }
 
 impl RawFrontmatter {
@@ -2628,6 +2711,9 @@ impl RawFrontmatter {
             ingested_at: now_iso8601(),
             content_hash: None,
             original_url: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
         }
     }
 
@@ -2660,6 +2746,9 @@ impl RawFrontmatter {
             ingested_at: now_iso8601(),
             content_hash,
             original_url,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
         }
     }
 
@@ -2689,6 +2778,15 @@ impl RawFrontmatter {
         }
         if let Some(url) = &self.original_url {
             s.push_str(&format!("original_url: {url}\n"));
+        }
+        if let Some(source_domain) = &self.source_domain {
+            s.push_str(&format!("source_domain: {source_domain}\n"));
+        }
+        if let Some(inferred_use_domain) = &self.inferred_use_domain {
+            s.push_str(&format!("inferred_use_domain: {inferred_use_domain}\n"));
+        }
+        if let Some(reason) = &self.cross_domain_reason {
+            s.push_str(&format!("cross_domain_reason: {reason}\n"));
         }
         s.push_str("---\n");
         s
@@ -2724,6 +2822,15 @@ pub struct RawEntry {
     /// canonical or when the entry was written pre-M4.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_url: Option<String>,
+    /// Optional native source domain inferred without mutating `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_domain: Option<String>,
+    /// Optional intended-use domain inferred from the raw evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_use_domain: Option<String>,
+    /// Optional evidence string for the cross-domain inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_domain_reason: Option<String>,
 }
 
 /// Compute the next available numeric id by scanning `raw/` for
@@ -3053,6 +3160,9 @@ pub fn write_raw_entry(
         byte_size: metadata.len(),
         content_hash: frontmatter.content_hash.clone(),
         original_url: frontmatter.original_url.clone(),
+        source_domain: frontmatter.source_domain.clone(),
+        inferred_use_domain: frontmatter.inferred_use_domain.clone(),
+        cross_domain_reason: frontmatter.cross_domain_reason.clone(),
     })
 }
 
@@ -3284,6 +3394,9 @@ fn parse_raw_file(path: &Path) -> Result<RawEntry> {
         byte_size: metadata.len(),
         content_hash: fields.content_hash,
         original_url: fields.original_url,
+        source_domain: fields.source_domain,
+        inferred_use_domain: fields.inferred_use_domain,
+        cross_domain_reason: fields.cross_domain_reason,
     })
 }
 
@@ -3296,6 +3409,9 @@ struct RawFrontmatterFields {
     ingested_at: String,
     content_hash: Option<String>,
     original_url: Option<String>,
+    source_domain: Option<String>,
+    inferred_use_domain: Option<String>,
+    cross_domain_reason: Option<String>,
 }
 
 /// Pull frontmatter fields out of the YAML block at the top of a file.
@@ -3324,6 +3440,12 @@ fn parse_frontmatter_fields(content: &str) -> RawFrontmatterFields {
             fields.content_hash = Some(rest.to_string());
         } else if let Some(rest) = line.strip_prefix("original_url: ") {
             fields.original_url = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("source_domain: ") {
+            fields.source_domain = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("inferred_use_domain: ") {
+            fields.inferred_use_domain = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("cross_domain_reason: ") {
+            fields.cross_domain_reason = Some(rest.to_string());
         }
     }
     fields
@@ -3396,6 +3518,32 @@ pub struct WikiFrontmatter {
     /// capture -> organize -> express loop without requiring a separate DB.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expressed_in: Vec<String>,
+    /// Attention priority for entropy/lifecycle surfaces. Optional so
+    /// legacy wiki pages remain valid without migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Lifecycle state for idea/knowledge vitality. Optional and
+    /// conservative; missing means "unknown".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vitality: Option<String>,
+    /// Human-readable evidence for the priority/vitality assignment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_reason: Option<String>,
+    /// ISO-ish timestamp of the last user revisit/expression signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_revisited_at: Option<String>,
+    /// ISO-ish timestamp for the next lifecycle review prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_review_at: Option<String>,
+    /// Native source domain preserved separately from the inferred use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_domain: Option<String>,
+    /// Likely use domain inferred/confirmed during review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_use_domain: Option<String>,
+    /// Evidence string for the cross-domain inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_domain_reason: Option<String>,
     /// The raw/ entry id that seeded this proposal. `None` when the
     /// page was hand-written outside the maintainer flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3425,6 +3573,14 @@ impl WikiFrontmatter {
             summary: summary.to_string(),
             purpose: vec!["learning".to_string()],
             expressed_in: Vec::new(),
+            priority: None,
+            vitality: None,
+            priority_reason: None,
+            last_revisited_at: None,
+            next_review_at: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
             source_raw_id,
             created_at: now_iso8601(),
             confidence: 0.0,
@@ -3458,6 +3614,30 @@ impl WikiFrontmatter {
             for reference in &self.expressed_in {
                 s.push_str(&format!("  - {reference}\n"));
             }
+        }
+        if let Some(priority) = &self.priority {
+            s.push_str(&format!("priority: {priority}\n"));
+        }
+        if let Some(vitality) = &self.vitality {
+            s.push_str(&format!("vitality: {vitality}\n"));
+        }
+        if let Some(reason) = &self.priority_reason {
+            s.push_str(&format!("priority_reason: {reason}\n"));
+        }
+        if let Some(last_revisited_at) = &self.last_revisited_at {
+            s.push_str(&format!("last_revisited_at: {last_revisited_at}\n"));
+        }
+        if let Some(next_review_at) = &self.next_review_at {
+            s.push_str(&format!("next_review_at: {next_review_at}\n"));
+        }
+        if let Some(source_domain) = &self.source_domain {
+            s.push_str(&format!("source_domain: {source_domain}\n"));
+        }
+        if let Some(inferred_use_domain) = &self.inferred_use_domain {
+            s.push_str(&format!("inferred_use_domain: {inferred_use_domain}\n"));
+        }
+        if let Some(reason) = &self.cross_domain_reason {
+            s.push_str(&format!("cross_domain_reason: {reason}\n"));
         }
         if let Some(raw_id) = self.source_raw_id {
             s.push_str(&format!("source_raw_id: {raw_id}\n"));
@@ -3493,6 +3673,30 @@ pub struct WikiPageSummary {
     /// or `wiki:another-page`. Empty means lineage is only implicit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_refs: Vec<String>,
+    /// Optional entropy priority (`low`, `medium`, `high`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Optional lifecycle/vitality state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vitality: Option<String>,
+    /// Optional user-visible reason for priority/vitality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_reason: Option<String>,
+    /// Optional last revisit/expression timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_revisited_at: Option<String>,
+    /// Optional next lifecycle review timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_review_at: Option<String>,
+    /// Native source domain preserved separately from inferred use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_domain: Option<String>,
+    /// Likely cross-domain use confirmed during review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_use_domain: Option<String>,
+    /// Evidence string for the cross-domain inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_domain_reason: Option<String>,
     /// Optional raw/ entry id that seeded this page.
     pub source_raw_id: Option<u32>,
     /// ISO-8601 datetime from the frontmatter.
@@ -3509,6 +3713,34 @@ pub struct WikiPageSummary {
     /// v2: ISO-8601 datetime when the page was last verified by maintenance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_verified: Option<String>,
+}
+
+/// Optional entropy/lifecycle fields that must survive body rewrites.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WikiPageLifecycleMetadata {
+    pub priority: Option<String>,
+    pub vitality: Option<String>,
+    pub priority_reason: Option<String>,
+    pub last_revisited_at: Option<String>,
+    pub next_review_at: Option<String>,
+    pub source_domain: Option<String>,
+    pub inferred_use_domain: Option<String>,
+    pub cross_domain_reason: Option<String>,
+}
+
+impl From<&WikiPageSummary> for WikiPageLifecycleMetadata {
+    fn from(summary: &WikiPageSummary) -> Self {
+        Self {
+            priority: summary.priority.clone(),
+            vitality: summary.vitality.clone(),
+            priority_reason: summary.priority_reason.clone(),
+            last_revisited_at: summary.last_revisited_at.clone(),
+            next_review_at: summary.next_review_at.clone(),
+            source_domain: summary.source_domain.clone(),
+            inferred_use_domain: summary.inferred_use_domain.clone(),
+            cross_domain_reason: summary.cross_domain_reason.clone(),
+        }
+    }
 }
 
 /// Validate a wiki page slug. Rules match `slugify` output plus the
@@ -3575,15 +3807,7 @@ pub fn write_wiki_page(
     body: &str,
     source_raw_id: Option<u32>,
 ) -> Result<PathBuf> {
-    write_wiki_page_with_purpose(
-        paths,
-        slug,
-        title,
-        summary,
-        body,
-        source_raw_id,
-        &[],
-    )
+    write_wiki_page_with_purpose(paths, slug, title, summary, body, source_raw_id, &[])
 }
 
 /// Write a concept wiki page with explicit Purpose Lens frontmatter.
@@ -3686,6 +3910,34 @@ pub fn write_wiki_page_in_category_with_metadata(
     purpose: &[String],
     expressed_in: &[String],
 ) -> Result<PathBuf> {
+    write_wiki_page_in_category_with_lifecycle_metadata(
+        paths,
+        category,
+        slug,
+        title,
+        summary,
+        body,
+        source_raw_id,
+        purpose,
+        expressed_in,
+        &WikiPageLifecycleMetadata::default(),
+    )
+}
+
+/// Write a wiki page to any category subdir while preserving optional
+/// entropy/lifecycle frontmatter assigned by a human or previous pass.
+pub fn write_wiki_page_in_category_with_lifecycle_metadata(
+    paths: &WikiPaths,
+    category: &str,
+    slug: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    source_raw_id: Option<u32>,
+    purpose: &[String],
+    expressed_in: &[String],
+    lifecycle: &WikiPageLifecycleMetadata,
+) -> Result<PathBuf> {
     validate_wiki_slug(slug)?;
     let subdir = WIKI_CATEGORIES
         .iter()
@@ -3704,6 +3956,17 @@ pub fn write_wiki_page_in_category_with_metadata(
     fm.kind = category.to_string();
     fm.purpose = normalize_purpose_lens_values(purpose)?;
     fm.expressed_in = normalize_expressed_ref_values(expressed_in)?;
+    fm.priority = normalize_optional_priority_value(lifecycle.priority.as_deref())?;
+    fm.vitality = normalize_optional_vitality_value(lifecycle.vitality.as_deref())?;
+    fm.priority_reason = normalize_optional_frontmatter_text(lifecycle.priority_reason.as_deref());
+    fm.last_revisited_at =
+        normalize_optional_frontmatter_text(lifecycle.last_revisited_at.as_deref());
+    fm.next_review_at = normalize_optional_frontmatter_text(lifecycle.next_review_at.as_deref());
+    fm.source_domain = normalize_optional_frontmatter_text(lifecycle.source_domain.as_deref());
+    fm.inferred_use_domain =
+        normalize_optional_frontmatter_text(lifecycle.inferred_use_domain.as_deref());
+    fm.cross_domain_reason =
+        normalize_optional_frontmatter_text(lifecycle.cross_domain_reason.as_deref());
     let mut content = fm.to_yaml_block();
     content.push('\n');
     content.push_str(body);
@@ -3830,13 +4093,10 @@ pub fn list_page_summaries_for_resolver(paths: &WikiPaths) -> Result<Vec<PageSum
 /// carrying either ids or slugs.
 pub fn read_wiki_page(paths: &WikiPaths, slug: &str) -> Result<(WikiPageSummary, String)> {
     validate_wiki_slug(slug)?;
-    let path = wiki_concept_path(paths, slug);
-    if !path.is_file() {
-        return Err(WikiStoreError::Invalid(format!(
-            "wiki page not found: {slug}"
-        )));
-    }
-    let summary = parse_wiki_file(&path, slug)?;
+    let (path, category) = locate_wiki_page_file(paths, slug)
+        .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {slug}")))?;
+    let mut summary = parse_wiki_file(&path, slug)?;
+    summary.category = category.to_string();
     let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
     let body = strip_frontmatter(&content).to_string();
     Ok((summary, body))
@@ -3847,12 +4107,8 @@ pub fn read_wiki_page(paths: &WikiPaths, slug: &str) -> Result<(WikiPageSummary,
 /// the full frontmatter schema instead of only the rendered body.
 pub fn read_wiki_page_content(paths: &WikiPaths, slug: &str) -> Result<String> {
     validate_wiki_slug(slug)?;
-    let path = wiki_concept_path(paths, slug);
-    if !path.is_file() {
-        return Err(WikiStoreError::Invalid(format!(
-            "wiki page not found: {slug}"
-        )));
-    }
+    let (path, _category) = locate_wiki_page_file(paths, slug)
+        .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {slug}")))?;
     fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))
 }
 
@@ -3868,12 +4124,8 @@ pub fn overwrite_wiki_page_content(
     validate_wiki_slug(slug)?;
     validate_wiki_page_markdown_content(content)?;
 
-    let path = wiki_concept_path(paths, slug);
-    if !path.is_file() {
-        return Err(WikiStoreError::Invalid(format!(
-            "wiki page not found: {slug}"
-        )));
-    }
+    let (path, _category) = locate_wiki_page_file(paths, slug)
+        .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {slug}")))?;
 
     let tmp = path.with_extension("md.tmp");
     fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
@@ -3896,8 +4148,7 @@ pub fn append_wiki_page_expressed_ref(
 
     let (path, _category) = locate_wiki_page_file(paths, slug)
         .ok_or_else(|| WikiStoreError::Invalid(format!("wiki page not found: {slug}")))?;
-    let content =
-        fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     if lines.first().map(String::as_str) != Some("---") {
         return Err(WikiStoreError::Invalid(
@@ -3910,7 +4161,9 @@ pub fn append_wiki_page_expressed_ref(
         .skip(1)
         .find_map(|(idx, line)| (line == "---").then_some(idx))
         .ok_or_else(|| {
-            WikiStoreError::Invalid("wiki page frontmatter is missing closing delimiter".to_string())
+            WikiStoreError::Invalid(
+                "wiki page frontmatter is missing closing delimiter".to_string(),
+            )
         })?;
 
     let mut expressed_index: Option<usize> = None;
@@ -4061,6 +4314,14 @@ fn validate_wiki_page_markdown_content(content: &str) -> Result<()> {
             for value in normalize_inline_purpose_values(rest) {
                 validate_expressed_ref_value(&value)?;
             }
+        } else if let Some(rest) = line.strip_prefix("priority:") {
+            validate_wiki_priority_value(rest)?;
+        } else if let Some(rest) = line.strip_prefix("vitality:") {
+            validate_wiki_vitality_value(rest)?;
+        } else if let Some(rest) = line.strip_prefix("source_domain:") {
+            validate_wiki_source_domain_value(rest)?;
+        } else if let Some(rest) = line.strip_prefix("inferred_use_domain:") {
+            validate_wiki_inferred_use_domain_value(rest)?;
         }
     }
 
@@ -4094,12 +4355,46 @@ fn validate_wiki_page_type_value(raw: &str) -> Result<()> {
         "compare",
         "personal",
         "research",
+        "inspiration",
     ];
     if allowed.contains(&page_type.as_str()) {
         return Ok(());
     }
     Err(WikiStoreError::Invalid(format!(
         "wiki page type is not allowed: {page_type}"
+    )))
+}
+
+fn validate_wiki_source_domain_value(raw: &str) -> Result<()> {
+    let value = normalize_frontmatter_scalar(raw);
+    let allowed = [
+        "shopping", "music", "chat", "article", "image", "file", "web", "unknown",
+    ];
+    if allowed.contains(&value.as_str()) {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "invalid wiki source_domain value: {value}"
+    )))
+}
+
+fn validate_wiki_inferred_use_domain_value(raw: &str) -> Result<()> {
+    let value = normalize_frontmatter_scalar(raw);
+    let allowed = [
+        "aesthetic",
+        "research",
+        "decision",
+        "creative",
+        "social",
+        "healing",
+        "archive",
+        "unknown",
+    ];
+    if allowed.contains(&value.as_str()) {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "invalid wiki inferred_use_domain value: {value}"
     )))
 }
 
@@ -4140,6 +4435,65 @@ fn validate_optional_u32_frontmatter_value(field: &str, raw: &str) -> Result<()>
     value.parse::<u32>().map(|_| ()).map_err(|_| {
         WikiStoreError::Invalid(format!("{field} must be an unsigned integer: {value}"))
     })
+}
+
+fn normalize_optional_frontmatter_text(raw: Option<&str>) -> Option<String> {
+    raw.map(|value| {
+        value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string()
+    })
+    .filter(|value| !value.is_empty())
+}
+
+fn normalize_optional_priority_value(raw: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    validate_wiki_priority_value(value)?;
+    let normalized = normalize_frontmatter_scalar(value);
+    Ok((!normalized.is_empty()).then_some(normalized))
+}
+
+fn normalize_optional_vitality_value(raw: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    validate_wiki_vitality_value(value)?;
+    let normalized = normalize_frontmatter_scalar(value);
+    Ok((!normalized.is_empty()).then_some(normalized))
+}
+
+fn validate_wiki_priority_value(raw: &str) -> Result<()> {
+    let priority = normalize_frontmatter_scalar(raw);
+    if priority.is_empty() {
+        return Ok(());
+    }
+    let allowed = ["low", "medium", "high"];
+    if allowed.contains(&priority.as_str()) {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "wiki page priority is not allowed: {priority}"
+    )))
+}
+
+fn validate_wiki_vitality_value(raw: &str) -> Result<()> {
+    let vitality = normalize_frontmatter_scalar(raw);
+    if vitality.is_empty() {
+        return Ok(());
+    }
+    let allowed = [
+        "spark", "seed", "growing", "stable", "cooling", "archived", "noise",
+    ];
+    if allowed.contains(&vitality.as_str()) {
+        return Ok(());
+    }
+    Err(WikiStoreError::Invalid(format!(
+        "wiki page vitality is not allowed: {vitality}"
+    )))
 }
 
 fn normalize_inline_purpose_values(raw: &str) -> Vec<String> {
@@ -4524,11 +4878,18 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 purpose,
                 expressed_in,
                 source_refs,
+                priority,
+                vitality,
+                priority_reason,
+                last_revisited_at,
+                next_review_at,
+                source_domain,
+                inferred_use_domain,
+                cross_domain_reason,
                 source_raw_id,
                 created_at,
                 last_verified,
-            ) =
-                parse_wiki_frontmatter_fields(&content);
+            ) = parse_wiki_frontmatter_fields(&content);
             // Parse confidence from frontmatter if present.
             let confidence = content
                 .lines()
@@ -4543,6 +4904,14 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 purpose,
                 expressed_in,
                 source_refs,
+                priority,
+                vitality,
+                priority_reason,
+                last_revisited_at,
+                next_review_at,
+                source_domain,
+                inferred_use_domain,
+                cross_domain_reason,
                 source_raw_id,
                 created_at,
                 byte_size: metadata.len(),
@@ -4722,6 +5091,14 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
         _t_purpose,
         _t_expressed_in,
         target_source_refs,
+        _t_priority,
+        _t_vitality,
+        _t_priority_reason,
+        _t_last_revisited_at,
+        _t_next_review_at,
+        _t_source_domain,
+        _t_inferred_use_domain,
+        _t_cross_domain_reason,
         target_source_raw,
         _t_created,
         _t_last_verified,
@@ -4784,7 +5161,10 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
         for shared_ref in &target_lineage_refs {
             if page_lineage_refs.contains(shared_ref) {
                 score += 3;
-                reasons.push(format!("共享来源: {}", source_ref_display_label(shared_ref)));
+                reasons.push(format!(
+                    "共享来源: {}",
+                    source_ref_display_label(shared_ref)
+                ));
             }
         }
 
@@ -4866,6 +5246,14 @@ pub fn get_page_graph(paths: &WikiPaths, target_slug: &str) -> Result<PageGraph>
         _purpose,
         _expressed_in,
         _source_refs,
+        _priority,
+        _vitality,
+        _priority_reason,
+        _last_revisited_at,
+        _next_review_at,
+        _source_domain,
+        _inferred_use_domain,
+        _cross_domain_reason,
         _source_raw,
         _created_at,
         _last_verified,
@@ -5021,11 +5409,18 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
             purpose,
             expressed_in,
             source_refs,
+            priority,
+            vitality,
+            priority_reason,
+            last_revisited_at,
+            next_review_at,
+            source_domain,
+            inferred_use_domain,
+            cross_domain_reason,
             source_raw_id,
             created_at,
             last_verified,
-        ) =
-            parse_wiki_frontmatter_fields(&content);
+        ) = parse_wiki_frontmatter_fields(&content);
         let body = strip_frontmatter(&content);
 
         // Compute scores per field.
@@ -5066,6 +5461,14 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
                 purpose,
                 expressed_in,
                 source_refs,
+                priority,
+                vitality,
+                priority_reason,
+                last_revisited_at,
+                next_review_at,
+                source_domain,
+                inferred_use_domain,
+                cross_domain_reason,
                 source_raw_id,
                 created_at,
                 byte_size: metadata.len(),
@@ -5181,6 +5584,14 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         purpose,
         expressed_in,
         source_refs,
+        priority,
+        vitality,
+        priority_reason,
+        last_revisited_at,
+        next_review_at,
+        source_domain,
+        inferred_use_domain,
+        cross_domain_reason,
         source_raw_id,
         created_at,
         last_verified,
@@ -5197,6 +5608,14 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         purpose,
         expressed_in,
         source_refs,
+        priority,
+        vitality,
+        priority_reason,
+        last_revisited_at,
+        next_review_at,
+        source_domain,
+        inferred_use_domain,
+        cross_domain_reason,
         source_raw_id,
         created_at,
         byte_size: metadata.len(),
@@ -5218,6 +5637,14 @@ fn parse_wiki_frontmatter_fields(
     Vec<String>,
     Vec<String>,
     Vec<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
     Option<u32>,
     String,
     Option<String>,
@@ -5227,6 +5654,14 @@ fn parse_wiki_frontmatter_fields(
     let mut purpose: Vec<String> = Vec::new();
     let mut expressed_in: Vec<String> = Vec::new();
     let mut source_refs: Vec<String> = Vec::new();
+    let mut priority: Option<String> = None;
+    let mut vitality: Option<String> = None;
+    let mut priority_reason: Option<String> = None;
+    let mut last_revisited_at: Option<String> = None;
+    let mut next_review_at: Option<String> = None;
+    let mut source_domain: Option<String> = None;
+    let mut inferred_use_domain: Option<String> = None;
+    let mut cross_domain_reason: Option<String> = None;
     let mut source_raw_id: Option<u32> = None;
     let mut created_at = String::new();
     let mut last_verified: Option<String> = None;
@@ -5286,6 +5721,46 @@ fn parse_wiki_frontmatter_fields(
         } else if let Some(rest) = line.strip_prefix("source_refs:") {
             collecting_source_refs = true;
             parse_inline_expressed_ref_values(&mut source_refs, rest);
+        } else if let Some(rest) = line.strip_prefix("priority: ") {
+            let value = normalize_frontmatter_scalar(rest);
+            if !value.is_empty() {
+                priority = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("vitality: ") {
+            let value = normalize_frontmatter_scalar(rest);
+            if !value.is_empty() {
+                vitality = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("priority_reason: ") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                priority_reason = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("last_revisited_at: ") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                last_revisited_at = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("next_review_at: ") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                next_review_at = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("source_domain: ") {
+            let value = normalize_frontmatter_scalar(rest);
+            if !value.is_empty() {
+                source_domain = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("inferred_use_domain: ") {
+            let value = normalize_frontmatter_scalar(rest);
+            if !value.is_empty() {
+                inferred_use_domain = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("cross_domain_reason: ") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                cross_domain_reason = Some(value);
+            }
         } else if let Some(rest) = line.strip_prefix("source_raw_id: ") {
             source_raw_id = rest.trim().parse().ok();
         } else if let Some(rest) = line.strip_prefix("created_at: ") {
@@ -5300,6 +5775,14 @@ fn parse_wiki_frontmatter_fields(
         purpose,
         expressed_in,
         source_refs,
+        priority,
+        vitality,
+        priority_reason,
+        last_revisited_at,
+        next_review_at,
+        source_domain,
+        inferred_use_domain,
+        cross_domain_reason,
         source_raw_id,
         created_at,
         last_verified,
@@ -5341,11 +5824,7 @@ fn parse_inline_expressed_ref_values(out: &mut Vec<String>, raw: &str) {
 }
 
 fn push_expressed_ref_value(out: &mut Vec<String>, raw: &str) {
-    let reference = raw
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_string();
+    let reference = raw.trim().trim_matches('"').trim_matches('\'').to_string();
     if reference.is_empty() || out.iter().any(|existing| existing == &reference) {
         return;
     }
@@ -5996,13 +6475,17 @@ fn patrol_issue_inbox_description(issue: &PatrolIssue) -> String {
 
 fn patrol_issue_inbox_kind(kind: &PatrolIssueKind) -> InboxKind {
     match kind {
-        PatrolIssueKind::Orphan => InboxKind::Deprecate,
+        PatrolIssueKind::Orphan
+        | PatrolIssueKind::CoolingPage
+        | PatrolIssueKind::NoiseCandidate => InboxKind::Deprecate,
         PatrolIssueKind::Stale
         | PatrolIssueKind::SchemaViolation
         | PatrolIssueKind::Oversized
         | PatrolIssueKind::Stub
         | PatrolIssueKind::ConfidenceDecay
-        | PatrolIssueKind::Uncrystallized => InboxKind::Stale,
+        | PatrolIssueKind::Uncrystallized
+        | PatrolIssueKind::StaleSpark
+        | PatrolIssueKind::UnexpressedHighPriority => InboxKind::Stale,
     }
 }
 
@@ -6015,6 +6498,10 @@ fn patrol_issue_kind_label(kind: &PatrolIssueKind) -> &'static str {
         PatrolIssueKind::Stub => "Stub",
         PatrolIssueKind::ConfidenceDecay => "Confidence decay",
         PatrolIssueKind::Uncrystallized => "Uncrystallized",
+        PatrolIssueKind::StaleSpark => "Stale spark",
+        PatrolIssueKind::CoolingPage => "Cooling page",
+        PatrolIssueKind::UnexpressedHighPriority => "Unexpressed high priority",
+        PatrolIssueKind::NoiseCandidate => "Noise candidate",
     }
 }
 
@@ -6027,6 +6514,10 @@ fn patrol_issue_kind_tag(kind: &PatrolIssueKind) -> &'static str {
         PatrolIssueKind::Stub => "stub",
         PatrolIssueKind::ConfidenceDecay => "confidence-decay",
         PatrolIssueKind::Uncrystallized => "uncrystallized",
+        PatrolIssueKind::StaleSpark => "stale-spark",
+        PatrolIssueKind::CoolingPage => "cooling-page",
+        PatrolIssueKind::UnexpressedHighPriority => "unexpressed-high-priority",
+        PatrolIssueKind::NoiseCandidate => "noise-candidate",
     }
 }
 
@@ -7092,6 +7583,7 @@ fn template_display_name(category: &str) -> String {
         "compare" => "对比".to_string(),
         "personal" => "个人".to_string(),
         "research" => "研究".to_string(),
+        "inspiration" => "灵感".to_string(),
         other => other.to_string(),
     }
 }
@@ -7162,6 +7654,12 @@ pub fn load_guidance_file_infos(paths: &WikiPaths) -> Result<GuidanceFilesRespon
             "Schema CLAUDE.md",
             "schema/CLAUDE.md",
             paths.schema_claude_md.clone(),
+        ),
+        (
+            "curation-preferences",
+            "Curation Preferences",
+            "schema/curation-preferences.yml",
+            curation_preferences_path(paths),
         ),
     ];
 
@@ -7358,6 +7856,14 @@ pub enum PatrolIssueKind {
     ConfidenceDecay,
     /// v2: Crystallization mechanism check (query results not being captured).
     Uncrystallized,
+    /// Entropy lifecycle: a spark stayed unexpressed long enough to need review.
+    StaleSpark,
+    /// Entropy lifecycle: a page is explicitly cooling and ready for lower attention.
+    CoolingPage,
+    /// Entropy lifecycle: high-priority knowledge has not been expressed yet.
+    UnexpressedHighPriority,
+    /// Entropy lifecycle: page looks safe to down-rank or merge as noise.
+    NoiseCandidate,
 }
 
 /// Full patrol report aggregating all issues.
@@ -7382,6 +7888,14 @@ pub struct PatrolSummary {
     pub confidence_decay: usize,
     #[serde(default)]
     pub uncrystallized: usize,
+    #[serde(default)]
+    pub stale_sparks: usize,
+    #[serde(default)]
+    pub cooling_pages: usize,
+    #[serde(default)]
+    pub unexpressed_high_priority: usize,
+    #[serde(default)]
+    pub noise_candidates: usize,
 }
 
 /// Record of a superseded claim (technical-design.md §3.3).
@@ -7455,6 +7969,7 @@ fn find_page_file(paths: &WikiPaths, slug: &str, category: &str) -> std::path::P
         "people" => WIKI_PEOPLE_SUBDIR,
         "topic" => WIKI_TOPICS_SUBDIR,
         "compare" => WIKI_COMPARE_SUBDIR,
+        "inspiration" => WIKI_INSPIRATION_SUBDIR,
         _ => WIKI_CONCEPTS_SUBDIR,
     };
     paths.wiki.join(subdir).join(format!("{slug}.md"))
@@ -7826,6 +8341,31 @@ mod tests {
         assert!(fs::read_to_string(root_claude)
             .unwrap()
             .contains("schema/CLAUDE.md"));
+    }
+
+    #[test]
+    fn init_wiki_seeds_curation_preferences() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let preferences = tmp.path().join(SCHEMA_DIR).join("curation-preferences.yml");
+
+        assert!(
+            preferences.is_file(),
+            "schema/curation-preferences.yml not seeded"
+        );
+        let content = fs::read_to_string(preferences).unwrap();
+        for required in [
+            "cooling:",
+            "archive:",
+            "priority:",
+            "purpose_lenses:",
+            "source_filters:",
+        ] {
+            assert!(
+                content.contains(required),
+                "missing curation key {required}"
+            );
+        }
     }
 
     #[test]
@@ -8243,6 +8783,9 @@ mod tests {
             ingested_at: "2026-04-09T14:22:00Z".to_string(),
             content_hash: None,
             original_url: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
         };
         let yaml = fm.to_yaml_block();
         assert!(yaml.starts_with("---\n"));
@@ -8319,6 +8862,23 @@ mod tests {
         assert_eq!(
             fields.original_url.as_deref(),
             Some("https://example.com/?utm_source=x")
+        );
+    }
+
+    #[test]
+    fn parse_frontmatter_fields_extracts_cross_domain_fields() {
+        let yaml = "---\nkind: raw\nstatus: ingested\nowner: user\nschema: v1\n\
+                   source: url\nsource_url: https://item.taobao.com/item.htm\n\
+                   ingested_at: 2026-04-17T00:00:00Z\n\
+                   source_domain: shopping\n\
+                   inferred_use_domain: aesthetic\n\
+                   cross_domain_reason: source:shopping -> use:aesthetic\n---\n\nbody text";
+        let fields = parse_frontmatter_fields(yaml);
+        assert_eq!(fields.source_domain.as_deref(), Some("shopping"));
+        assert_eq!(fields.inferred_use_domain.as_deref(), Some("aesthetic"));
+        assert_eq!(
+            fields.cross_domain_reason.as_deref(),
+            Some("source:shopping -> use:aesthetic")
         );
     }
 
@@ -8628,6 +9188,32 @@ mod tests {
     }
 
     #[test]
+    fn read_wiki_page_finds_pages_outside_concepts() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        write_wiki_page_in_category(
+            &paths,
+            "inspiration",
+            "lamp-shape-study",
+            "Lamp Shape Study",
+            "Recurring lamp silhouette references.",
+            "# Lamp Shape Study\n\nAesthetic evidence from captures.",
+            None,
+        )
+        .unwrap();
+
+        let (summary, body) = read_wiki_page(&paths, "lamp-shape-study").unwrap();
+        assert_eq!(summary.slug, "lamp-shape-study");
+        assert_eq!(summary.category, "inspiration");
+        assert!(body.contains("Aesthetic evidence"));
+
+        let content = read_wiki_page_content(&paths, "lamp-shape-study").unwrap();
+        assert!(content.contains("type: inspiration"));
+    }
+
+    #[test]
     fn write_wiki_page_rejects_invalid_slug() {
         // Slug validation is the last defense against a buggy LLM
         // (or a hostile HTTP caller) trying to path-escape the
@@ -8717,6 +9303,64 @@ mod tests {
     }
 
     #[test]
+    fn write_wiki_page_in_category_with_lifecycle_metadata_preserves_optional_fields() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let lifecycle = WikiPageLifecycleMetadata {
+            priority: Some("High".to_string()),
+            vitality: Some("Growing".to_string()),
+            priority_reason: Some("Repeated cross-domain reuse".to_string()),
+            last_revisited_at: Some("2026-05-07T00:00:00Z".to_string()),
+            next_review_at: Some("2026-05-14T00:00:00Z".to_string()),
+            source_domain: Some("shopping".to_string()),
+            inferred_use_domain: Some("aesthetic".to_string()),
+            cross_domain_reason: Some("source:shopping -> use:aesthetic".to_string()),
+        };
+
+        write_wiki_page_in_category_with_lifecycle_metadata(
+            &paths,
+            "topic",
+            "lifecycle-topic",
+            "Lifecycle Topic",
+            "summary",
+            "Body.",
+            Some(10),
+            &["research".to_string()],
+            &["ask:session-123".to_string()],
+            &lifecycle,
+        )
+        .unwrap();
+
+        let pages = list_all_wiki_pages(&paths).unwrap();
+        let summary = pages
+            .iter()
+            .find(|page| page.slug == "lifecycle-topic")
+            .expect("topic page should be listed");
+        assert_eq!(summary.category, "topic");
+        assert_eq!(summary.priority.as_deref(), Some("high"));
+        assert_eq!(summary.vitality.as_deref(), Some("growing"));
+        assert_eq!(
+            summary.priority_reason.as_deref(),
+            Some("Repeated cross-domain reuse")
+        );
+        assert_eq!(
+            summary.last_revisited_at.as_deref(),
+            Some("2026-05-07T00:00:00Z")
+        );
+        assert_eq!(
+            summary.next_review_at.as_deref(),
+            Some("2026-05-14T00:00:00Z")
+        );
+        assert_eq!(summary.source_domain.as_deref(), Some("shopping"));
+        assert_eq!(summary.inferred_use_domain.as_deref(), Some("aesthetic"));
+        assert_eq!(
+            summary.cross_domain_reason.as_deref(),
+            Some("source:shopping -> use:aesthetic")
+        );
+    }
+
+    #[test]
     fn wiki_frontmatter_emits_canonical_schema_v1() {
         // Pin the YAML shape so a future refactor can't silently
         // swap `type:` back to `kind:`. Canonical §"Frontmatter"
@@ -8748,25 +9392,133 @@ mod tests {
     #[test]
     fn parse_wiki_frontmatter_extracts_purpose_lenses() {
         let content = "---\ntype: concept\nstatus: draft\ntitle: T\nsummary: S\npurpose:\n  - writing\n  - research\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
-        let (_title, _summary, purpose, _expressed_in, _source_refs, _raw, _created, _verified) =
-            parse_wiki_frontmatter_fields(content);
+        let (
+            _title,
+            _summary,
+            purpose,
+            _expressed_in,
+            _source_refs,
+            _priority,
+            _vitality,
+            _priority_reason,
+            _last_revisited_at,
+            _next_review_at,
+            _source_domain,
+            _inferred_use_domain,
+            _cross_domain_reason,
+            _raw,
+            _created,
+            _verified,
+        ) = parse_wiki_frontmatter_fields(content);
         assert_eq!(purpose, vec!["writing", "research"]);
     }
 
     #[test]
     fn parse_wiki_frontmatter_extracts_expressed_refs() {
         let content = "---\ntype: concept\nstatus: active\ntitle: T\nsummary: S\npurpose: [writing]\nexpressed_in:\n  - ask:session-123\n  - doc:project-memo\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
-        let (_title, _summary, _purpose, expressed_in, _source_refs, _raw, _created, _verified) =
-            parse_wiki_frontmatter_fields(content);
+        let (
+            _title,
+            _summary,
+            _purpose,
+            expressed_in,
+            _source_refs,
+            _priority,
+            _vitality,
+            _priority_reason,
+            _last_revisited_at,
+            _next_review_at,
+            _source_domain,
+            _inferred_use_domain,
+            _cross_domain_reason,
+            _raw,
+            _created,
+            _verified,
+        ) = parse_wiki_frontmatter_fields(content);
         assert_eq!(expressed_in, vec!["ask:session-123", "doc:project-memo"]);
     }
 
     #[test]
     fn parse_wiki_frontmatter_extracts_source_refs() {
         let content = "---\ntype: concept\nstatus: active\ntitle: T\nsummary: S\npurpose: [research]\nsource_refs:\n  - raw:00001\n  - wiki:transformer\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
-        let (_title, _summary, _purpose, _expressed_in, source_refs, _raw, _created, _verified) =
-            parse_wiki_frontmatter_fields(content);
+        let (
+            _title,
+            _summary,
+            _purpose,
+            _expressed_in,
+            source_refs,
+            _priority,
+            _vitality,
+            _priority_reason,
+            _last_revisited_at,
+            _next_review_at,
+            _source_domain,
+            _inferred_use_domain,
+            _cross_domain_reason,
+            _raw,
+            _created,
+            _verified,
+        ) = parse_wiki_frontmatter_fields(content);
         assert_eq!(source_refs, vec!["raw:00001", "wiki:transformer"]);
+    }
+
+    #[test]
+    fn parse_wiki_frontmatter_extracts_lifecycle_fields() {
+        let content = "---\ntype: concept\nstatus: active\ntitle: T\nsummary: S\npriority: high\nvitality: growing\npriority_reason: Trend + compounding signal\nlast_revisited_at: 2026-05-07T00:00:00Z\nnext_review_at: 2026-05-14T00:00:00Z\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
+        let (
+            _title,
+            _summary,
+            _purpose,
+            _expressed_in,
+            _source_refs,
+            priority,
+            vitality,
+            priority_reason,
+            last_revisited_at,
+            next_review_at,
+            _source_domain,
+            _inferred_use_domain,
+            _cross_domain_reason,
+            _raw,
+            _created,
+            _verified,
+        ) = parse_wiki_frontmatter_fields(content);
+        assert_eq!(priority.as_deref(), Some("high"));
+        assert_eq!(vitality.as_deref(), Some("growing"));
+        assert_eq!(
+            priority_reason.as_deref(),
+            Some("Trend + compounding signal")
+        );
+        assert_eq!(last_revisited_at.as_deref(), Some("2026-05-07T00:00:00Z"));
+        assert_eq!(next_review_at.as_deref(), Some("2026-05-14T00:00:00Z"));
+    }
+
+    #[test]
+    fn parse_wiki_frontmatter_extracts_cross_domain_fields() {
+        let content = "---\ntype: concept\nstatus: active\ntitle: T\nsummary: S\nsource_domain: shopping\ninferred_use_domain: aesthetic\ncross_domain_reason: source:shopping -> use:aesthetic\ncreated_at: 2026-04-29T00:00:00Z\n---\nBody";
+        let (
+            _title,
+            _summary,
+            _purpose,
+            _expressed_in,
+            _source_refs,
+            _priority,
+            _vitality,
+            _priority_reason,
+            _last_revisited_at,
+            _next_review_at,
+            source_domain,
+            inferred_use_domain,
+            cross_domain_reason,
+            _raw,
+            _created,
+            _verified,
+        ) = parse_wiki_frontmatter_fields(content);
+        assert_eq!(source_domain.as_deref(), Some("shopping"));
+        assert_eq!(inferred_use_domain.as_deref(), Some("aesthetic"));
+        assert_eq!(
+            cross_domain_reason.as_deref(),
+            Some("source:shopping -> use:aesthetic")
+        );
     }
 
     #[test]
@@ -8794,7 +9546,15 @@ mod tests {
         let tmp = tempdir().unwrap();
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
-        write_wiki_page(&paths, "inline-expressed", "Inline", "summary", "Body.", None).unwrap();
+        write_wiki_page(
+            &paths,
+            "inline-expressed",
+            "Inline",
+            "summary",
+            "Body.",
+            None,
+        )
+        .unwrap();
         let content = read_wiki_page_content(&paths, "inline-expressed")
             .unwrap()
             .replace("created_at:", "expressed_in: []\ncreated_at:");
@@ -8815,7 +9575,7 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
         write_wiki_page(&paths, "editable", "Editable", "summary", "Body.", None).unwrap();
 
-        let next = "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: Editable\nsummary: Updated\npurpose:\n  - personal\n  - research\nexpressed_in:\n  - ask:session-123\nsource_refs:\n  - raw:00001\nsource_raw_id: 7\ncustom_field: keep-me\ncreated_at: 2026-04-29T00:00:00Z\n---\n\nUpdated body.\n";
+        let next = "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: Editable\nsummary: Updated\npurpose:\n  - personal\n  - research\nexpressed_in:\n  - ask:session-123\nsource_refs:\n  - raw:00001\npriority: high\nvitality: growing\npriority_reason: Trend + compounding signal\nlast_revisited_at: 2026-05-07T00:00:00Z\nnext_review_at: 2026-05-14T00:00:00Z\nsource_raw_id: 7\ncustom_field: keep-me\ncreated_at: 2026-04-29T00:00:00Z\n---\n\nUpdated body.\n";
         overwrite_wiki_page_content(&paths, "editable", next).unwrap();
         let content = read_wiki_page_content(&paths, "editable").unwrap();
         assert!(content.contains("custom_field: keep-me"));
@@ -8827,6 +9587,20 @@ mod tests {
         assert_eq!(summary.purpose, vec!["personal", "research"]);
         assert_eq!(summary.expressed_in, vec!["ask:session-123"]);
         assert_eq!(summary.source_refs, vec!["raw:00001"]);
+        assert_eq!(summary.priority.as_deref(), Some("high"));
+        assert_eq!(summary.vitality.as_deref(), Some("growing"));
+        assert_eq!(
+            summary.priority_reason.as_deref(),
+            Some("Trend + compounding signal")
+        );
+        assert_eq!(
+            summary.last_revisited_at.as_deref(),
+            Some("2026-05-07T00:00:00Z")
+        );
+        assert_eq!(
+            summary.next_review_at.as_deref(),
+            Some("2026-05-14T00:00:00Z")
+        );
         assert_eq!(summary.source_raw_id, Some(7));
         assert_eq!(body.trim(), "Updated body.");
     }
@@ -8874,10 +9648,17 @@ mod tests {
                 "invalid source_refs",
                 "---\ntype: concept\nstatus: active\ntitle: Editable\nsource_refs:\n  - bad ref\n---\nBody",
             ),
+            (
+                "invalid priority",
+                "---\ntype: concept\nstatus: active\ntitle: Editable\npriority: urgent\n---\nBody",
+            ),
+            (
+                "invalid vitality",
+                "---\ntype: concept\nstatus: active\ntitle: Editable\nvitality: forever\n---\nBody",
+            ),
         ];
         for (label, content) in bad_cases {
-            let err = overwrite_wiki_page_content(&paths, "editable", content)
-                .unwrap_err();
+            let err = overwrite_wiki_page_content(&paths, "editable", content).unwrap_err();
             assert!(
                 matches!(err, WikiStoreError::Invalid(_)),
                 "{label} should be rejected"
@@ -8890,6 +9671,19 @@ mod tests {
         let tmp = tempdir().unwrap();
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
+
+        let curation = read_rules_file_content(&paths, "schema/curation-preferences.yml").unwrap();
+        assert!(curation.content.contains("cooling:"));
+
+        let next_curation = format!("{}\n# rules smoke\n", curation.content);
+        let written_curation =
+            overwrite_rules_file_content(&paths, "schema/curation-preferences.yml", &next_curation)
+                .unwrap();
+        assert_eq!(
+            written_curation.relative_path,
+            "schema/curation-preferences.yml"
+        );
+        assert!(written_curation.content.contains("rules smoke"));
 
         let current = read_rules_file_content(&paths, "schema/policies/naming.md").unwrap();
         assert!(current.content.contains("Naming Policy"));
@@ -8909,9 +9703,8 @@ mod tests {
         let err = overwrite_rules_file_content(&paths, "raw/scratch.md", "bad").unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
 
-        let err =
-            overwrite_rules_file_content(&paths, "schema/templates/new-template.md", "bad")
-                .unwrap_err();
+        let err = overwrite_rules_file_content(&paths, "schema/templates/new-template.md", "bad")
+            .unwrap_err();
         assert!(matches!(err, WikiStoreError::Invalid(_)));
     }
 
@@ -9151,6 +9944,7 @@ mod tests {
         assert!(tpl_dir.join("compare.md").is_file());
         assert!(tpl_dir.join("personal.md").is_file());
         assert!(tpl_dir.join("research.md").is_file());
+        assert!(tpl_dir.join("inspiration.md").is_file());
         assert!(tmp
             .path()
             .join(SCHEMA_DIR)
@@ -9199,6 +9993,11 @@ mod tests {
         assert!(tmp.path().join(WIKI_DIR).join(WIKI_PEOPLE_SUBDIR).is_dir());
         assert!(tmp.path().join(WIKI_DIR).join(WIKI_TOPICS_SUBDIR).is_dir());
         assert!(tmp.path().join(WIKI_DIR).join(WIKI_COMPARE_SUBDIR).is_dir());
+        assert!(tmp
+            .path()
+            .join(WIKI_DIR)
+            .join(WIKI_INSPIRATION_SUBDIR)
+            .is_dir());
     }
 
     #[test]
@@ -10694,10 +11493,7 @@ mod tests {
 
         let audit = vault_git_audit_log(&paths, 10).unwrap();
         assert!(audit.entries.iter().any(|entry| {
-            entry.operation == "commit"
-                && entry
-                    .summary
-                    .contains("Initial Buddy Vault checkpoint")
+            entry.operation == "commit" && entry.summary.contains("Initial Buddy Vault checkpoint")
         }));
         assert!(!vault_git_status(&paths).unwrap().dirty);
     }
@@ -10829,14 +11625,23 @@ mod tests {
             return;
         };
         let remote = init_bare_git_remote();
-        run_git(&paths.root, &["remote", "add", "origin", &git_path_arg(remote.path())]).unwrap();
+        run_git(
+            &paths.root,
+            &["remote", "add", "origin", &git_path_arg(remote.path())],
+        )
+        .unwrap();
         vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
 
         let pushed = vault_git_push(&paths).unwrap();
         assert!(pushed.ok);
         assert_eq!(pushed.operation, "push");
         assert_eq!(pushed.status.ahead, 0);
-        assert!(pushed.status.upstream.as_deref().unwrap_or("").contains("origin"));
+        assert!(pushed
+            .status
+            .upstream
+            .as_deref()
+            .unwrap_or("")
+            .contains("origin"));
 
         let remote_head = std::process::Command::new("git")
             .arg("-C")
@@ -10857,7 +11662,11 @@ mod tests {
             return;
         };
         let remote = init_bare_git_remote();
-        run_git(&paths.root, &["remote", "add", "origin", &git_path_arg(remote.path())]).unwrap();
+        run_git(
+            &paths.root,
+            &["remote", "add", "origin", &git_path_arg(remote.path())],
+        )
+        .unwrap();
         vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
         vault_git_push(&paths).unwrap();
 
@@ -10874,11 +11683,19 @@ mod tests {
             String::from_utf8_lossy(&clone_output.stderr)
         );
         run_git(clone.path(), &["config", "user.name", "Buddy Test"]).unwrap();
-        run_git(clone.path(), &["config", "user.email", "buddy-test@example.local"]).unwrap();
+        run_git(
+            clone.path(),
+            &["config", "user.email", "buddy-test@example.local"],
+        )
+        .unwrap();
         let remote_schema = format!("{}\n\n## Remote fast-forward\n", CLAUDE_MD_TEMPLATE);
         fs::write(clone.path().join("schema").join("CLAUDE.md"), remote_schema).unwrap();
         run_git(clone.path(), &["add", "schema/CLAUDE.md"]).unwrap();
-        run_git(clone.path(), &["commit", "--no-gpg-sign", "-m", "Remote update"]).unwrap();
+        run_git(
+            clone.path(),
+            &["commit", "--no-gpg-sign", "-m", "Remote update"],
+        )
+        .unwrap();
         run_git(clone.path(), &["push"]).unwrap();
 
         let pulled = vault_git_pull(&paths).unwrap();
@@ -10896,7 +11713,11 @@ mod tests {
             return;
         };
         let remote = init_bare_git_remote();
-        run_git(&paths.root, &["remote", "add", "origin", &git_path_arg(remote.path())]).unwrap();
+        run_git(
+            &paths.root,
+            &["remote", "add", "origin", &git_path_arg(remote.path())],
+        )
+        .unwrap();
         vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
         vault_git_push(&paths).unwrap();
 
@@ -10929,8 +11750,8 @@ mod tests {
             Some("https://***@example.com/acme/buddy-vault.git")
         );
 
-        let second = vault_git_set_remote(&paths, "origin", "git@example.com:acme/next.git")
-            .unwrap();
+        let second =
+            vault_git_set_remote(&paths, "origin", "git@example.com:acme/next.git").unwrap();
         assert_eq!(second.remote_url_redacted, "git@example.com:acme/next.git");
         assert_eq!(
             remote_url(&paths.root, "origin").as_deref(),
@@ -10969,8 +11790,7 @@ mod tests {
         );
         let audit = vault_git_audit_log(&paths, 10).unwrap();
         assert!(audit.entries.iter().any(|entry| {
-            entry.operation == "discard-path"
-                && entry.path.as_deref() == Some("schema/CLAUDE.md")
+            entry.operation == "discard-path" && entry.path.as_deref() == Some("schema/CLAUDE.md")
         }));
         assert!(!vault_git_status(&paths).unwrap().dirty);
     }
@@ -11017,11 +11837,7 @@ mod tests {
         fs::write(&page, hunk_test_body("line 02", "line 70")).unwrap();
         vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
 
-        fs::write(
-            &page,
-            hunk_test_body("line 02 changed", "line 70 changed"),
-        )
-        .unwrap();
+        fs::write(&page, hunk_test_body("line 02 changed", "line 70 changed")).unwrap();
         let diff = vault_git_diff(&paths, false).unwrap();
         let section = diff
             .sections
@@ -11035,13 +11851,9 @@ mod tests {
         );
         let first_header = section.hunks[0].header.clone();
 
-        let discarded = vault_git_discard_hunk(
-            &paths,
-            "wiki/concepts/hunked.md",
-            0,
-            Some(&first_header),
-        )
-        .unwrap();
+        let discarded =
+            vault_git_discard_hunk(&paths, "wiki/concepts/hunked.md", 0, Some(&first_header))
+                .unwrap();
         assert!(discarded.ok);
         assert_eq!(discarded.mode, "hunk");
         assert!(discarded.status.dirty);
@@ -11111,13 +11923,8 @@ mod tests {
         assert!(staged.staged);
         assert!(staged.diff.contains("line 02 staged"));
 
-        let err = vault_git_discard_hunk(
-            &paths,
-            "wiki/concepts/staged-hunk.md",
-            0,
-            None,
-        )
-        .unwrap_err();
+        let err =
+            vault_git_discard_hunk(&paths, "wiki/concepts/staged-hunk.md", 0, None).unwrap_err();
         assert!(err
             .to_string()
             .contains("hunk discard only supports tracked unstaged changes"));
@@ -11240,11 +12047,7 @@ mod tests {
         fs::write(&page, hunk_test_body("line 02", "line 70")).unwrap();
         vault_git_commit(&paths, "Initial Buddy Vault checkpoint").unwrap();
 
-        fs::write(
-            &page,
-            hunk_test_body("line 02 changed", "line 70 changed"),
-        )
-        .unwrap();
+        fs::write(&page, hunk_test_body("line 02 changed", "line 70 changed")).unwrap();
         let diff = vault_git_diff(&paths, false).unwrap();
         let section = diff
             .sections
@@ -11453,6 +12256,55 @@ mod tests {
             .contains("Suggested action: Add a backlink or deprecate the page."));
         assert_eq!(entries[1].kind, InboxKind::Stale);
         assert_eq!(entries[1].title, "Patrol: Schema violation - schema-page");
+    }
+
+    #[test]
+    fn lifecycle_patrol_issues_map_to_reviewable_inbox_actions() {
+        let tmp = tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let issues = vec![
+            PatrolIssue {
+                kind: PatrolIssueKind::StaleSpark,
+                page_slug: "old-spark".to_string(),
+                description: "Spark stayed unexpressed.".to_string(),
+                suggested_action: "Review the lifecycle state; do not delete evidence.".to_string(),
+            },
+            PatrolIssue {
+                kind: PatrolIssueKind::CoolingPage,
+                page_slug: "cooling".to_string(),
+                description: "Cooling attention state.".to_string(),
+                suggested_action: "Archive or merge with Git trace.".to_string(),
+            },
+            PatrolIssue {
+                kind: PatrolIssueKind::UnexpressedHighPriority,
+                page_slug: "high-unused".to_string(),
+                description: "High priority but unused.".to_string(),
+                suggested_action: "Express or down-rank with reason.".to_string(),
+            },
+            PatrolIssue {
+                kind: PatrolIssueKind::NoiseCandidate,
+                page_slug: "noise".to_string(),
+                description: "Weak signal.".to_string(),
+                suggested_action: "Merge or archive without deleting raw evidence.".to_string(),
+            },
+        ];
+
+        assert_eq!(append_patrol_issue_inbox_tasks(&paths, &issues).unwrap(), 4);
+
+        let entries = list_inbox_entries(&paths).unwrap();
+        assert_eq!(entries[0].kind, InboxKind::Stale);
+        assert_eq!(entries[0].title, "Patrol: Stale spark - old-spark");
+        assert!(entries[0].description.contains("Patrol issue: stale-spark"));
+        assert_eq!(entries[1].kind, InboxKind::Deprecate);
+        assert_eq!(entries[1].title, "Patrol: Cooling page - cooling");
+        assert_eq!(entries[2].kind, InboxKind::Stale);
+        assert_eq!(
+            entries[2].title,
+            "Patrol: Unexpressed high priority - high-unused"
+        );
+        assert_eq!(entries[3].kind, InboxKind::Deprecate);
+        assert_eq!(entries[3].title, "Patrol: Noise candidate - noise");
     }
 
     #[test]
@@ -12063,6 +12915,12 @@ mod tests {
     }
 
     #[test]
+    fn validate_wiki_page_markdown_accepts_inspiration_type() {
+        let content = "---\ntype: inspiration\nstatus: active\ntitle: Moodboard\nsummary: Design cues\ncreated_at: 2026-05-07T00:00:00Z\n---\n# Body";
+        validate_wiki_page_markdown_content(content).unwrap();
+    }
+
+    #[test]
     fn validate_frontmatter_missing_required_field() {
         let content = "---\ntype: concept\n---\n# Body";
         let template = SchemaTemplate {
@@ -12102,8 +12960,18 @@ mod tests {
         assert!(categories.contains(&"people"), "expected people template");
         assert!(categories.contains(&"topic"), "expected topic template");
         assert!(categories.contains(&"compare"), "expected compare template");
-        assert!(categories.contains(&"personal"), "expected personal template");
-        assert!(categories.contains(&"research"), "expected research template");
+        assert!(
+            categories.contains(&"inspiration"),
+            "expected inspiration template"
+        );
+        assert!(
+            categories.contains(&"personal"),
+            "expected personal template"
+        );
+        assert!(
+            categories.contains(&"research"),
+            "expected research template"
+        );
 
         // Display-name mapping
         let concept = infos.iter().find(|t| t.category == "concept").unwrap();
@@ -12148,14 +13016,20 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         let infos = load_guidance_file_infos(&paths).unwrap();
-        assert_eq!(infos.files.len(), 4);
+        assert_eq!(infos.files.len(), 5);
 
         let by_path: HashMap<&str, &GuidanceFileInfo> = infos
             .files
             .iter()
             .map(|file| (file.relative_path.as_str(), file))
             .collect();
-        for relative in ["AGENTS.md", "CLAUDE.md", "schema/AGENTS.md", "schema/CLAUDE.md"] {
+        for relative in [
+            "AGENTS.md",
+            "CLAUDE.md",
+            "schema/curation-preferences.yml",
+            "schema/AGENTS.md",
+            "schema/CLAUDE.md",
+        ] {
             let file = by_path
                 .get(relative)
                 .unwrap_or_else(|| panic!("missing guidance file {relative}"));

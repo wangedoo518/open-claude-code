@@ -79,6 +79,18 @@ const ALLOWED_PAGE_STATUSES = new Set([
   "archived",
 ]);
 
+const ALLOWED_PAGE_PRIORITIES = new Set(["low", "medium", "high"]);
+
+const ALLOWED_PAGE_VITALITIES = new Set([
+  "spark",
+  "seed",
+  "growing",
+  "stable",
+  "cooling",
+  "archived",
+  "noise",
+]);
+
 const FRONTMATTER_REF_PATTERN = /^[A-Za-z0-9:_./-]+$/;
 
 function formatShortDate(value?: string | null): string | null {
@@ -116,7 +128,18 @@ function buildEditableMarkdown(summary: WikiPageSummary, body: string): string {
     typeof summary.source_raw_id === "number"
       ? `source_raw_id: ${summary.source_raw_id}\n`
       : "";
-  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${expressedInBlock}${sourceRefsBlock}${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
+  const priority = summary.priority ? `priority: ${summary.priority}\n` : "";
+  const vitality = summary.vitality ? `vitality: ${summary.vitality}\n` : "";
+  const priorityReason = summary.priority_reason
+    ? `priority_reason: ${summary.priority_reason}\n`
+    : "";
+  const lastRevisitedAt = summary.last_revisited_at
+    ? `last_revisited_at: ${summary.last_revisited_at}\n`
+    : "";
+  const nextReviewAt = summary.next_review_at
+    ? `next_review_at: ${summary.next_review_at}\n`
+    : "";
+  return `---\ntype: ${summary.category ?? "concept"}\nstatus: active\nowner: human\nschema: v1\ntitle: ${summary.title || summary.slug}\nsummary: ${summary.summary ?? ""}\npurpose:\n${purposeBlock}\n${expressedInBlock}${sourceRefsBlock}${priority}${vitality}${priorityReason}${lastRevisitedAt}${nextReviewAt}${sourceRaw}created_at: ${summary.created_at || new Date().toISOString()}\n---\n\n${body}`;
 }
 
 interface DraftValidation {
@@ -251,6 +274,14 @@ function validateWikiDraft(content: string): DraftValidation {
   const schema = frontmatterScalar(frontmatter, "schema")?.toLowerCase();
   if (schema && schema !== "v1") {
     errors.push(`schema 暂不支持：${schema}`);
+  }
+  const priority = frontmatterScalar(frontmatter, "priority")?.toLowerCase();
+  if (priority && !ALLOWED_PAGE_PRIORITIES.has(priority)) {
+    errors.push(`priority value is not allowed: ${priority}`);
+  }
+  const vitality = frontmatterScalar(frontmatter, "vitality")?.toLowerCase();
+  if (vitality && !ALLOWED_PAGE_VITALITIES.has(vitality)) {
+    errors.push(`vitality value is not allowed: ${vitality}`);
   }
   const sourceRawId = frontmatterScalar(frontmatter, "source_raw_id");
   if (sourceRawId && !/^\d+$/.test(sourceRawId)) {
