@@ -2044,6 +2044,45 @@ fn build_absorb_system_prompt(paths: &wiki_store::WikiPaths, index_content: &str
         prompt.push_str("\n\n## Curation Preferences\n\n");
         prompt.push_str(curation_preferences.trim());
     }
+
+    // Slice E17.5 — per-purpose verdict counts. Lets the LLM bias
+    // proposals toward purposes the user has confirmed pay off and
+    // away from purposes they've explicitly let go of. Aggregates
+    // across all wiki pages once per absorb call (cheap O(n) read).
+    if let Ok(pages) = wiki_store::list_all_wiki_pages(paths) {
+        use std::collections::BTreeMap;
+        // BTreeMap so the prompt is deterministic across runs.
+        let mut counts: BTreeMap<String, [u32; 3]> = BTreeMap::new(); // [continue, let_go, inconclusive]
+        for page in &pages {
+            let Some(verdict) = page.verdict.as_deref() else {
+                continue;
+            };
+            let idx = match verdict {
+                "should_continue" => 0,
+                "should_let_go" => 1,
+                "inconclusive" => 2,
+                _ => continue,
+            };
+            for purpose in &page.purpose {
+                let entry = counts.entry(purpose.clone()).or_default();
+                entry[idx] = entry[idx].saturating_add(1);
+            }
+        }
+        if !counts.is_empty() {
+            prompt.push_str("\n\n## 历史决策回顾 (verdict signals)\n\n");
+            prompt.push_str(
+                "用户对已存在 wiki 页面的事后判断分布。high should_let_go \
+                 占比的 purpose 应当克制建议；high should_continue 占比的 \
+                 purpose 可以更主动地建议结晶。\n\n",
+            );
+            for (purpose, [cont, lg, inc]) in counts {
+                prompt.push_str(&format!(
+                    "- {purpose}: should_continue={cont} should_let_go={lg} inconclusive={inc}\n"
+                ));
+            }
+        }
+    }
+
     prompt
 }
 
@@ -4191,6 +4230,49 @@ mod tests {
         assert!(prompt.contains("cooling:"));
         assert!(prompt.contains("archive:"));
         assert!(prompt.contains("source_filters:"));
+    }
+
+    // ── E17.5: per-purpose verdict counts in absorb prompt ─────────
+    #[test]
+    fn absorb_prompt_includes_verdict_counts_per_purpose() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        let cat_dir = paths.wiki.join(wiki_store::WIKI_CONCEPTS_SUBDIR);
+        std::fs::create_dir_all(&cat_dir).unwrap();
+        std::fs::write(
+            cat_dir.join("a.md"),
+            "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: A\nsummary: x\npurpose:\n  - learning\nverdict: should_continue\ncreated_at: 2026-04-01T00:00:00Z\n---\n\n# body\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cat_dir.join("b.md"),
+            "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: B\nsummary: x\npurpose:\n  - building\nverdict: should_let_go\ncreated_at: 2026-04-01T00:00:00Z\n---\n\n# body\n",
+        )
+        .unwrap();
+
+        let prompt = build_absorb_system_prompt(&paths, "# Index");
+        assert!(
+            prompt.contains("## 历史决策回顾"),
+            "prompt missing verdict section header: {prompt}"
+        );
+        assert!(prompt.contains("should_continue=1"), "learning continue count missing: {prompt}");
+        assert!(prompt.contains("should_let_go=1"), "building let_go count missing: {prompt}");
+        assert!(prompt.contains("learning"));
+        assert!(prompt.contains("building"));
+    }
+
+    #[test]
+    fn absorb_prompt_omits_verdict_section_when_no_pages_have_verdict() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+
+        let prompt = build_absorb_system_prompt(&paths, "# Index");
+        assert!(
+            !prompt.contains("## 历史决策回顾"),
+            "verdict section should not appear when no pages have verdicts"
+        );
     }
 
     #[test]
