@@ -6695,7 +6695,85 @@ pub fn resolve_inbox_entry(paths: &WikiPaths, id: u32, action: &str) -> Result<I
     found.resolved_at = Some(now_iso8601());
     let updated = found.clone();
     save_inbox_file(paths, &entries)?;
+
+    // Slice E15: Resurface tasks carry a side effect on the target
+    // wiki page. Approve → flip vitality back to `growing` + stamp
+    // `last_revisited_at`; Reject → append a "[date] explicitly kept
+    // cooling" line to `priority_reason` so future Patrol runs see
+    // the user's explicit decision and don't re-propose Resurface.
+    // We run this AFTER the inbox row save so a crash here still
+    // leaves the inbox in a consistent state.
+    drop(_guard);
+    if updated.kind == InboxKind::Resurface {
+        if let Some(slug) = updated.target_page_slug.as_deref() {
+            match new_status {
+                InboxStatus::Approved => apply_resurface_accept(paths, slug)?,
+                InboxStatus::Rejected => apply_resurface_reject(paths, slug)?,
+                InboxStatus::Pending => {}
+            }
+        }
+    }
     Ok(updated)
+}
+
+/// Slice E15: flip a cooling/archived page back to `vitality: growing`
+/// and stamp `last_revisited_at`. Preserves every other lifecycle
+/// field — the page just becomes attention-worthy again.
+fn apply_resurface_accept(paths: &WikiPaths, slug: &str) -> Result<()> {
+    let (summary, body) = read_wiki_page(paths, slug)?;
+    let mut lifecycle = WikiPageLifecycleMetadata::from(&summary);
+    lifecycle.vitality = Some("growing".to_string());
+    lifecycle.last_revisited_at = Some(now_iso8601());
+    write_wiki_page_in_category_with_lifecycle_metadata(
+        paths,
+        &summary.category,
+        &summary.slug,
+        &summary.title,
+        &summary.summary,
+        &body,
+        summary.source_raw_id,
+        &summary.purpose,
+        &summary.expressed_in,
+        &lifecycle,
+    )?;
+    Ok(())
+}
+
+/// Slice E15: append a "[YYYY-MM-DD] explicitly kept cooling" line to
+/// `priority_reason` so the user's explicit reject decision is visible
+/// next time a Patrol pass evaluates this page. Page vitality stays
+/// `cooling`/`archived`; we only annotate the reason field.
+fn apply_resurface_reject(paths: &WikiPaths, slug: &str) -> Result<()> {
+    let (summary, body) = read_wiki_page(paths, slug)?;
+    let mut lifecycle = WikiPageLifecycleMetadata::from(&summary);
+    let today = now_iso8601()
+        .split('T')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let suffix = format!("[{today}] explicitly kept cooling");
+    // The YAML serializer writes `priority_reason: <value>\n` as a
+    // single line, so embedded `\n` would corrupt frontmatter on
+    // read-back. Use ` · ` as a flat-line separator and let the UI
+    // split if it wants multi-line display.
+    let new_reason = match lifecycle.priority_reason.as_deref() {
+        Some(prev) if !prev.is_empty() => format!("{prev} · {suffix}"),
+        _ => suffix,
+    };
+    lifecycle.priority_reason = Some(new_reason);
+    write_wiki_page_in_category_with_lifecycle_metadata(
+        paths,
+        &summary.category,
+        &summary.slug,
+        &summary.title,
+        &summary.summary,
+        &body,
+        summary.source_raw_id,
+        &summary.purpose,
+        &summary.expressed_in,
+        &lifecycle,
+    )?;
+    Ok(())
 }
 
 /// Count pending inbox entries. Used by the Dashboard and Sidebar
@@ -13412,6 +13490,116 @@ mod tests {
         assert_eq!(json, r#""resurface""#);
         let parsed: InboxKind = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, InboxKind::Resurface);
+    }
+
+    // ── E15.3: Resurface accept / reject side effects ──────────────
+    fn seed_cooling_page(paths: &WikiPaths, slug: &str) {
+        let lifecycle = WikiPageLifecycleMetadata {
+            priority: Some("low".to_string()),
+            vitality: Some("cooling".to_string()),
+            priority_reason: Some("dormant since last sprint".to_string()),
+            ..Default::default()
+        };
+        write_wiki_page_in_category_with_lifecycle_metadata(
+            paths,
+            "concept",
+            slug,
+            "Cooling Page",
+            "Cooling summary",
+            "# body",
+            None,
+            &["learning".to_string()],
+            &[],
+            &lifecycle,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn resolve_inbox_resurface_approve_flips_vitality_to_growing() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        seed_cooling_page(&paths, "api-design");
+        let task = append_inbox_resurface_pending(
+            &paths,
+            "api-design",
+            None,
+            "matched by raw:00012",
+        )
+        .unwrap();
+        assert_eq!(task.kind, InboxKind::Resurface);
+
+        resolve_inbox_entry(&paths, task.id, "approve").unwrap();
+
+        let (summary, _) = read_wiki_page(&paths, "api-design").unwrap();
+        assert_eq!(summary.vitality.as_deref(), Some("growing"));
+        assert!(summary.last_revisited_at.is_some(), "last_revisited_at stamped");
+    }
+
+    #[test]
+    fn resolve_inbox_resurface_reject_appends_kept_cooling_annotation() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        seed_cooling_page(&paths, "old-notes");
+        let task = append_inbox_resurface_pending(
+            &paths,
+            "old-notes",
+            None,
+            "matched again",
+        )
+        .unwrap();
+
+        resolve_inbox_entry(&paths, task.id, "reject").unwrap();
+
+        let (summary, _) = read_wiki_page(&paths, "old-notes").unwrap();
+        assert_eq!(
+            summary.vitality.as_deref(),
+            Some("cooling"),
+            "vitality unchanged on reject"
+        );
+        let reason = summary.priority_reason.unwrap_or_default();
+        assert!(
+            reason.contains("explicitly kept cooling"),
+            "priority_reason should carry the user's keep-cooling decision: {reason}"
+        );
+        assert!(
+            reason.contains("dormant since last sprint"),
+            "previous priority_reason content preserved: {reason}"
+        );
+    }
+
+    #[test]
+    fn resolve_inbox_non_resurface_kinds_have_no_wiki_side_effect() {
+        // Regression guard: only Resurface tasks touch wiki page
+        // metadata on resolve. NewRaw and the other kinds keep the
+        // historical behavior of "just flip status".
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        seed_cooling_page(&paths, "shared-slug");
+        let task =
+            append_inbox_pending(&paths, InboxKind::NewRaw, "title", "desc", None).unwrap();
+        // Even if we somehow set target_page_slug on a NewRaw entry,
+        // resolving it must NOT mutate the wiki page.
+        let mut entries = load_inbox_file(&paths).unwrap();
+        if let Some(e) = entries.iter_mut().find(|e| e.id == task.id) {
+            e.target_page_slug = Some("shared-slug".to_string());
+        }
+        save_inbox_file(&paths, &entries).unwrap();
+
+        resolve_inbox_entry(&paths, task.id, "approve").unwrap();
+
+        let (summary, _) = read_wiki_page(&paths, "shared-slug").unwrap();
+        assert_eq!(
+            summary.vitality.as_deref(),
+            Some("cooling"),
+            "non-Resurface resolve must leave vitality unchanged"
+        );
     }
 
     #[test]
