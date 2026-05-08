@@ -21,6 +21,15 @@ use tower_http::cors::{Any, CorsLayer};
 
 mod handlers;
 mod routes;
+
+/// Shared env-var serialization guard used by every test in this crate
+/// that mutates `CLAWWIKI_HOME` (or the process CWD). Tests set the
+/// env globally so they MUST serialize across module boundaries — both
+/// `lib.rs::tests::WikiSandbox` and
+/// `handlers::wiki_crud::verdict_tests` lock this same mutex so they
+/// can never race.
+#[cfg(test)]
+pub(crate) static WIKI_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub(crate) use handlers::desktop_sessions::{
     append_message, bind_source_handler, cancel_session, cleanup_empty_sessions_handler,
     clear_source_binding_handler, compact_session, create_session, delete_session_handler,
@@ -1119,17 +1128,16 @@ mod tests {
     // (absorb-log / backlinks / stats) in one combined test.
     //
     // Sandbox strategy: each test sets `CLAWWIKI_HOME` to a fresh
-    // tempdir. Env vars are process-global, so the `ABSORB_TEST_GUARD`
-    // mutex serialises the sandbox-touching tests (cannot run parallel
-    // with each other). Other tests in this mod that don't touch
-    // `CLAWWIKI_HOME` are unaffected.
+    // tempdir. Env vars are process-global, so the shared
+    // `crate::WIKI_ENV_GUARD` mutex (defined at lib root) serialises
+    // the sandbox-touching tests across every module — including
+    // `handlers::wiki_crud::verdict_tests`. Other tests in this mod
+    // that don't touch `CLAWWIKI_HOME` are unaffected.
 
-    use std::sync::Mutex as StdMutex;
-
-    static ABSORB_TEST_GUARD: StdMutex<()> = StdMutex::new(());
+    use crate::WIKI_ENV_GUARD;
 
     /// RAII sandbox for the `CLAWWIKI_HOME` env var. On construction
-    /// acquires `ABSORB_TEST_GUARD` + points `CLAWWIKI_HOME` at a
+    /// acquires `WIKI_ENV_GUARD` + points `CLAWWIKI_HOME` at a
     /// fresh tempdir; on `Drop` restores the prior value (if any),
     /// lets the tempdir delete itself, and releases the mutex.
     struct WikiSandbox {
@@ -1140,7 +1148,7 @@ mod tests {
 
     impl WikiSandbox {
         fn new() -> Self {
-            let lock = ABSORB_TEST_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+            let lock = WIKI_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
             let tempdir = tempfile::tempdir().expect("tempdir");
             let prev = std::env::var_os("CLAWWIKI_HOME");
             std::env::set_var("CLAWWIKI_HOME", tempdir.path());
@@ -1175,7 +1183,7 @@ mod tests {
 
     impl WikiProviderSandbox {
         fn new(provider_base_url: &str) -> Self {
-            let lock = ABSORB_TEST_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+            let lock = WIKI_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
             let tempdir = tempfile::tempdir().expect("tempdir");
             let prev_clawwiki_home = env::var_os("CLAWWIKI_HOME");
             let prev_cwd = env::current_dir().expect("current dir");
@@ -1236,7 +1244,7 @@ mod tests {
 
     impl WikiNoProviderSandbox {
         fn new() -> Self {
-            let lock = ABSORB_TEST_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+            let lock = WIKI_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
             let tempdir = tempfile::tempdir().expect("tempdir");
             let prev_clawwiki_home = env::var_os("CLAWWIKI_HOME");
             let prev_cwd = env::current_dir().expect("current dir");

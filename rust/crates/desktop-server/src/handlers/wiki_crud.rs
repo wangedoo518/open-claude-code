@@ -2250,12 +2250,13 @@ pub(crate) async fn post_wiki_page_verdict_handler(
 #[cfg(test)]
 mod verdict_tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::WIKI_ENV_GUARD;
 
-    // Env-var serialization across the verdict tests. CLAWWIKI_HOME is
-    // process-global; without a guard, parallel tests race on it and
-    // corrupt each other's Vault paths.
-    static ENV_GUARD: Mutex<()> = Mutex::new(());
+    // Env-var serialization across the verdict tests AND the lib.rs
+    // sandbox tests. CLAWWIKI_HOME is process-global; without a single
+    // shared guard, parallel tests race across module boundaries and
+    // clobber each other's Vault paths. `WIKI_ENV_GUARD` is the shared
+    // crate-level mutex (see lib.rs for the rationale).
 
     fn seed_concept(paths: &wiki_store::WikiPaths, slug: &str, frontmatter: &str) {
         let cat_dir = paths.wiki.join(wiki_store::WIKI_CONCEPTS_SUBDIR);
@@ -2265,7 +2266,7 @@ mod verdict_tests {
 
     #[tokio::test]
     async fn put_verdict_writes_three_fields_and_preserves_unrelated() {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_var("CLAWWIKI_HOME", tmp.path());
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
@@ -2325,7 +2326,7 @@ mod verdict_tests {
 
     #[tokio::test]
     async fn put_verdict_rejects_unknown_value() {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_var("CLAWWIKI_HOME", tmp.path());
         let paths = wiki_store::WikiPaths::resolve(tmp.path());
