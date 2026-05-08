@@ -640,14 +640,35 @@ export function AccountModelSettings({
               {busyAction === "codex-import" ? <Loader2 className="size-3.5 animate-spin" /> : <UserRound className="size-3.5" />}
               导入 Codex 登录态
             </button>
-            <button type="button" onClick={() => void openDashboardUrl("https://platform.openai.com")}>
+            <a
+              href="https://platform.openai.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => {
+                // Plain click: route through Tauri IPC so the URL
+                // opens in the user's default browser instead of a
+                // new tab inside the desktop shell. Middle-click /
+                // Ctrl+click / right-click "open in new tab" still
+                // work because the anchor exposes a real href.
+                event.preventDefault();
+                void openDashboardUrl("https://platform.openai.com");
+              }}
+            >
               <ExternalLink className="size-3.5" />
               OpenAI 官网
-            </button>
-            <button type="button" onClick={() => void openDashboardUrl("https://chat.qwen.ai")}>
+            </a>
+            <a
+              href="https://chat.qwen.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => {
+                event.preventDefault();
+                void openDashboardUrl("https://chat.qwen.ai");
+              }}
+            >
               <ExternalLink className="size-3.5" />
               Qwen 官网
-            </button>
+            </a>
           </div>
 
           {codexLoginSession ? (

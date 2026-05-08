@@ -259,6 +259,7 @@ export function SettingsPage() {
                   className="ds-settings-nav-item"
                   data-active={g.id === activeGroup || undefined}
                   aria-current={g.id === activeGroup ? "page" : undefined}
+                  aria-label={g.developer ? `${g.label} · 开发者` : g.label}
                 >
                   <Icon
                     className="size-3.5 shrink-0"
@@ -267,7 +268,9 @@ export function SettingsPage() {
                   />
                   <span className="ds-settings-nav-label">{g.label}</span>
                   {g.developer ? (
-                    <span className="ds-settings-nav-pill">开发者</span>
+                    <span className="ds-settings-nav-pill" aria-hidden="true">
+                      开发者
+                    </span>
                   ) : null}
                 </button>
               );

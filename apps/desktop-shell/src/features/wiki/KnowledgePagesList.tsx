@@ -677,27 +677,36 @@ export function KnowledgePagesList() {
             const expanded = !largeList || expandedGroups[key];
             return (
               <section className="ds-kb-group" key={key} aria-label={`${label}页面`}>
-                <button
-                  type="button"
-                  className="ds-kb-group-head"
-                  disabled={!largeList}
-                  onClick={() =>
-                    setExpandedGroups((current) => ({
-                      ...current,
-                      [key]: !current[key],
-                    }))
-                  }
-                >
-                  <span>{label}</span>
-                  <span className="ds-kb-count-badge">{items.length}</span>
-                  {largeList ? (
+                {largeList ? (
+                  <button
+                    type="button"
+                    className="ds-kb-group-head"
+                    aria-expanded={expanded}
+                    onClick={() =>
+                      setExpandedGroups((current) => ({
+                        ...current,
+                        [key]: !current[key],
+                      }))
+                    }
+                  >
+                    <span>{label}</span>
+                    <span className="ds-kb-count-badge">{items.length}</span>
                     <ChevronDown
                       className="size-3"
                       strokeWidth={1.5}
                       data-collapsed={!expanded}
                     />
-                  ) : null}
-                </button>
+                  </button>
+                ) : (
+                  // Small list: section is always expanded, no toggle.
+                  // Render as a semantic heading rather than a disabled
+                  // button so screen readers + assistive tech don't see
+                  // a fake "disabled control".
+                  <div className="ds-kb-group-head" role="heading" aria-level={3}>
+                    <span>{label}</span>
+                    <span className="ds-kb-count-badge">{items.length}</span>
+                  </div>
+                )}
 
                 {expanded ? (
                   <ul className="ds-kb-list">

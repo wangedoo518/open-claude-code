@@ -426,10 +426,20 @@ export function DashboardPage() {
           <div className="rounded-lg border border-border bg-card px-5 py-5">
             <div className="flex items-center gap-2">
               <HeartPulse className="size-4 text-primary" />
-              <h2 className="text-[15px] font-medium">Top 3 建议动作</h2>
+              <h2 className="text-[15px] font-medium">
+                {isFreshVault ? "其它入口" : "Top 3 建议动作"}
+              </h2>
             </div>
             <div className="mt-4 space-y-2">
-              {topActions.map((action, index) => (
+              {/*
+                Slice 51 audit: hero CTA at the top of the page is
+                always `topActions[0]`. Rendering the same item again
+                as Top-3 #1 looked like two competing primary entries
+                on empty Vault. Skip the first row so the "Top 3" list
+                always reads "what else can I do" — never duplicates
+                the hero. Numbering offsets accordingly.
+              */}
+              {topActions.slice(1).map((action, idx) => (
                 <Link
                   key={`${action.href}-${action.label}`}
                   to={action.href}
@@ -440,7 +450,7 @@ export function DashboardPage() {
                       className="grid size-6 shrink-0 place-items-center rounded bg-muted text-[11px] text-muted-foreground"
                       aria-hidden="true"
                     >
-                      {index + 1}
+                      {idx + 2}
                     </span>
                     <span className="truncate">{action.label}</span>
                   </span>

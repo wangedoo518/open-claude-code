@@ -728,20 +728,25 @@ export function InboxPage() {
   }, []);
 
   const handleToggleBatchMode = useCallback(() => {
-    setBatchMode((prev) => {
-      const next = !prev;
-      if (next) {
-        // Entering batch mode: drop the per-entry focus so the detail
-        // pane collapses cleanly into the toolbar surface.
-        setSelectedId(null);
-      } else {
-        // Leaving batch mode: clear the multi-selection so the
-        // checkboxes don't persist silently across the toggle.
-        setSelectedIds(new Set());
-      }
-      return next;
-    });
-  }, [setSelectedId]);
+    // Audit fix: previously the `setBatchMode((prev) => ...)` updater
+    // called `setSelectedId(null)` (which writes to URL search params
+    // via the HashRouter) inline. React 18+ flags that as
+    // `setState in render` — the updater body runs synchronously
+    // during state computation, and a URL write inside it queues a
+    // HashRouter update mid-render. Branch on the current `batchMode`
+    // value (read from closure — safe inside a useCallback) and run
+    // each side effect *outside* the updater function.
+    if (batchMode) {
+      // Leaving batch mode: clear the multi-selection so the
+      // checkboxes don't persist silently across the toggle.
+      setSelectedIds(new Set());
+    } else {
+      // Entering batch mode: drop the per-entry focus so the detail
+      // pane collapses cleanly into the toolbar surface.
+      setSelectedId(null);
+    }
+    setBatchMode((prev) => !prev);
+  }, [batchMode, setSelectedId]);
 
   const clearBatchSelection = useCallback(() => {
     setSelectedIds(new Set());

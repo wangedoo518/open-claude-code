@@ -957,7 +957,7 @@ function AccountList({
             ) : (
               <Trash2 className="size-3" />
             )}
-            Delete
+            删除
           </button>
         </li>
       ))}

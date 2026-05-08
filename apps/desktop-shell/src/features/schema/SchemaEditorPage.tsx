@@ -788,7 +788,7 @@ function SchemaBody({
         ) : (
           <Button variant="default" size="sm" onClick={onEdit}>
             <Pencil className="size-3" />
-            Edit
+            编辑
           </Button>
         )}
       </div>
