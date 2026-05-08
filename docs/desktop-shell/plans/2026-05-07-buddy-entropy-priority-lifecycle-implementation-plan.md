@@ -88,6 +88,24 @@ Done means:
 - Connections does not fetch diff until advanced diff is opened.
 - Architecture/tokens docs match the shell Sidebar behavior.
 
+Implementation note (2026-05-07):
+
+- `.gitignore` now lists `.env.local` and `apps/*/.env.local` so local
+  port/API overrides do not leak into commits.
+- `DashboardPage.tsx` `isFreshVault` guard adds `git?.dirty !== true`
+  so the onboarding override only fires when the Vault is also clean;
+  the dirty path keeps "保存 X 个 Vault 改动" as the leading action.
+- `ConnectionsPage.tsx` `diffQuery.enabled` is gated on
+  `showAdvancedDiff`, so the raw `+`/`-`/`@@`/hunks payload is only
+  fetched when the user explicitly opens advanced diff. Default view
+  shows "X 项改动等待保存" + "查看高级 diff →" instead.
+- Sidebar truth synced into `architecture/overview.md` (Knowledge and
+  Rules no longer get shell-level secondary columns) and
+  `tokens/design-tokens.md` (`.ds-workspace-sidebar` marked legacy with
+  no active mount). Wiki simple-mode body editing, Raw `?add=` deep
+  links, Inbox empty-state capture path, and Palette path-style hints
+  all carry forward as Slice 51 baseline behavior.
+
 ## Slice E1 — Priority / Vitality Data Contract
 
 Scope:
@@ -126,6 +144,31 @@ Done means:
   replacement recommendation.
 - The UI can render missing fields as "unknown" without errors.
 
+Implementation note (2026-05-07):
+
+- The data contract was delivered jointly with E3 (Inbox grouped
+  workbench) and E5 (cross-domain extraction); E1 does not have a
+  separate landing slice. Despite the shared landing, the dependency
+  gate held: every consumer below already expects the optional fields.
+- TypeScript DTOs in `apps/desktop-shell/src/api/wiki/types.ts` add
+  `priority`, `vitality`, `priority_reason`, `last_revisited_at`,
+  `next_review_at`, `source_domain`, `inferred_use_domain`, and
+  `cross_domain_reason` as optional fields on raw entries, wiki page
+  summaries, and inbox proposals (lines 47–51, 188–201, 294–310,
+  745–748).
+- Rust frontmatter parsing/serialization in `wiki_store/src/lib.rs`
+  carries the same optional fields end-to-end; existing pages without
+  them parse and round-trip unchanged.
+- `desktop-server` `wiki_crud.rs` accepts the lifecycle and
+  cross-domain fields on the maintain and proposal-apply endpoints
+  (L1382–1437), forwarding them into the maintainer pipeline.
+- `wiki_store::overwrite_wiki_page_content` is the human edit path and
+  is documented to "deliberately preserve every user-supplied
+  frontmatter field" (L4115–4118), satisfying the
+  user-corrected-fields preservation done-mean.
+- `priority_reason` stays a flat string per the MVP rule; nested
+  schemas remain out of scope until a UI design exists.
+
 ## Slice E2 — Home Entropy Pulse MVP
 
 Scope:
@@ -153,6 +196,28 @@ Done means:
 - `expressed_in` and priority/vitality pages appear in separate, understandable
   Home sections.
 - No Home card implies automatic deletion.
+
+Implementation note (2026-05-07):
+
+- `features/dashboard/entropy-pulse.ts` derives the Pulse summary from
+  wiki page `priority`/`vitality`/`next_review_at`, exposing
+  `reviewToday`, `growing`, and `cooling` lists plus
+  `highPriorityCount`, `dueReviewCount`, `coolingCount`, and a
+  `hasLifecycleSignals` flag for the empty-state copy.
+- `DashboardPage.tsx` renders the "减熵脉冲" section
+  (`id="entropy-pulse"`, L701–751) with three columns: 今天只看这些 /
+  正在增长 / 冷却 / 可归档. The section copy explicitly says
+  "归档是注意力状态，不会删除证据" so no card implies deletion.
+- "最近表达" (L469–472) reuses the existing `expressed_in` ranking from
+  Slice 47 so expressed pages stay in their own section.
+- Fresh empty state behavior is owned jointly with E0: when the Vault
+  is clean and empty, Top 3 swaps to onboarding affordances (连接微信 /
+  粘贴链接 / 上传文件); when the Vault is dirty, "保存 X 个 Vault 改动"
+  takes precedence so checkpoint safety is never hidden.
+- E9 lifecycle suggestions (`stale-spark` / `cooling-page` /
+  `unexpressed-high-priority` / `noise-candidate`) plug into the same
+  Pulse surface through `buildPatrolLifecycleSuggestions`, but the
+  underlying Pulse contract is independent of Patrol availability.
 
 ## Slice E3 — Inbox Grouped Entropy Workbench
 
