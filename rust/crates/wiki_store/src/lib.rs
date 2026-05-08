@@ -6465,6 +6465,52 @@ pub fn append_inbox_pending(
     append_inbox_pending_locked(paths, kind, title, description, source_raw_id)
 }
 
+/// Slice E15: append a Resurface task for a cooling/archived wiki page.
+/// Distinct from `append_inbox_pending` because Resurface tasks must
+/// carry `target_page_slug` from creation (the cooling page being
+/// proposed for re-emergence). Idempotent on `target_page_slug`: if a
+/// pending Resurface for the same slug already exists, returns it
+/// unchanged so a flurry of cooling-match signals does not flood the
+/// inbox with duplicate review tasks.
+pub fn append_inbox_resurface_pending(
+    paths: &WikiPaths,
+    target_page_slug: &str,
+    source_raw_id: Option<u32>,
+    reason: &str,
+) -> Result<InboxEntry> {
+    let _guard = lock_inbox_writes();
+
+    // Dedupe: a pending Resurface for the same slug already covers
+    // this page. Re-emergence triggers should never produce N copies.
+    let existing = load_inbox_file(paths)?;
+    if let Some(entry) = existing.iter().find(|e| {
+        e.kind == InboxKind::Resurface
+            && e.status == InboxStatus::Pending
+            && e.target_page_slug.as_deref() == Some(target_page_slug)
+    }) {
+        return Ok(entry.clone());
+    }
+
+    let title = format!("Resurface: {target_page_slug}");
+    let description = if reason.is_empty() {
+        format!("Cooling page `{target_page_slug}` matched again.")
+    } else {
+        reason.to_string()
+    };
+    let mut entry =
+        append_inbox_pending_locked(paths, InboxKind::Resurface, &title, &description, source_raw_id)?;
+    // Re-load + patch in target_page_slug (the standard append helper
+    // does not take this field). Done inside the same lock so other
+    // readers see the entry only once it's complete.
+    entry.target_page_slug = Some(target_page_slug.to_string());
+    let mut entries = load_inbox_file(paths)?;
+    if let Some(stored) = entries.iter_mut().find(|e| e.id == entry.id) {
+        stored.target_page_slug = entry.target_page_slug.clone();
+    }
+    save_inbox_file(paths, &entries)?;
+    Ok(entry)
+}
+
 /// Internal helper: same as `append_inbox_pending`, but assumes the
 /// caller already holds `INBOX_WRITE_GUARD`. Used by
 /// `append_new_raw_task` so its dedupe check (read) and the append

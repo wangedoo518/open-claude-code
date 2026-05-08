@@ -1206,6 +1206,18 @@ pub(crate) async fn propose_wiki_inbox_handler(
                     error: "absorb cancelled by user".to_string(),
                 }),
             ),
+            // Slice E15: propose_for_raw_entry generates new pages and
+            // never reads a target, so it cannot legitimately return
+            // ResurfaceQueued. Map defensively to a 500 if a future
+            // refactor regresses, rather than panicking.
+            wiki_maintainer::MaintainerError::ResurfaceQueued { target_slug } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!(
+                        "unexpected resurface queued for `{target_slug}` from create-new path"
+                    ),
+                }),
+            ),
         })?;
 
     Ok(Json(serde_json::json!({
@@ -1539,6 +1551,21 @@ pub(crate) async fn inbox_maintain_handler(
             rejection_reason: None,
             error: Some(error),
         },
+        // Slice E15: cooling target → Resurface inbox task queued. The
+        // `outcome` string is distinct from `updated` / `created` so
+        // the frontend can show the right toast ("已 park 成 Resurface
+        // 待审阅" instead of "已合并到 wiki").
+        Ok(wiki_maintainer::MaintainOutcome::ResurfaceQueued {
+            target_page_slug, ..
+        }) => {
+            fire_inbox_notify();
+            InboxMaintainResponse {
+                outcome: "resurface-queued".to_string(),
+                target_page_slug: Some(target_page_slug),
+                rejection_reason: None,
+                error: None,
+            }
+        }
         Err(e) => InboxMaintainResponse {
             outcome: "failed".to_string(),
             target_page_slug: None,

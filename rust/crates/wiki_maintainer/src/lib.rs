@@ -102,6 +102,13 @@ pub enum MaintainerError {
     /// absorb_batch was cancelled by the user via CancellationToken.
     #[error("absorb cancelled by user")]
     Cancelled,
+    /// Slice E15: the maintainer matched a cooling / archived target
+    /// page; instead of running the merge it queued a Resurface review
+    /// task. Distinct error variant so `propose_update` can signal the
+    /// HTTP handler to surface the resurface flow without faking an
+    /// `UpdateProposal` payload.
+    #[error("resurface queued for cooling page `{target_slug}`")]
+    ResurfaceQueued { target_slug: String },
 }
 
 pub type Result<T> = std::result::Result<T, MaintainerError>;
@@ -477,6 +484,67 @@ pub enum MaintainOutcome {
     Rejected { reason: String },
     /// Something went wrong — `error` is a user-visible string.
     Failed { error: String },
+    /// Slice E15: the maintainer matched a cooling / archived target
+    /// page. The wiki page is NOT modified; instead a Resurface inbox
+    /// task is queued so the user explicitly decides whether to wake
+    /// the page back up. The original inbox entry that triggered the
+    /// match is resolved as Approved with `maintain_action="resurface-queued"`
+    /// so it does not stick around as pending.
+    ResurfaceQueued {
+        target_page_slug: String,
+        source_raw_id: Option<u32>,
+    },
+}
+
+/// Slice E15: shared helper used by every absorb path (`update_existing`
+/// deterministic v1, `propose_update` two-phase) to bail out before
+/// touching a cooling / archived wiki page.
+///
+/// Returns `Some(MaintainOutcome::ResurfaceQueued{..})` when the target
+/// summary's `vitality` is `cooling` or `archived`, after queuing the
+/// Resurface inbox task and resolving the source inbox entry as
+/// Approved. Returns `None` when the page is in a normal vitality
+/// state and the caller should proceed with its existing logic.
+fn route_cooling_target_to_resurface(
+    paths: &wiki_store::WikiPaths,
+    summary: &wiki_store::WikiPageSummary,
+    source_inbox_id: u32,
+    raw_id: Option<u32>,
+) -> Result<Option<MaintainOutcome>> {
+    let needs_resurface = matches!(
+        summary.vitality.as_deref(),
+        Some("cooling") | Some("archived")
+    );
+    if !needs_resurface {
+        return Ok(None);
+    }
+    let reason = if let Some(rid) = raw_id {
+        format!("Cooling page `{}` matched again by raw:{:05}.", summary.slug, rid)
+    } else {
+        format!("Cooling page `{}` matched again.", summary.slug)
+    };
+    wiki_store::append_inbox_resurface_pending(paths, &summary.slug, raw_id, &reason)
+        .map_err(|e| MaintainerError::Store(e.to_string()))?;
+
+    // Resolve the original inbox entry so it does not stay pending
+    // forever — the user has effectively "decided" by triggering the
+    // match; their actual confirmation belongs to the Resurface task.
+    patch_inbox_after_maintain(
+        paths,
+        source_inbox_id,
+        InboxMaintainPatch {
+            status: wiki_store::InboxStatus::Approved,
+            maintain_action: Some("resurface-queued"),
+            proposed_wiki_slug: None,
+            target_page_slug: Some(summary.slug.clone()),
+            rejection_reason: None,
+        },
+    )?;
+
+    Ok(Some(MaintainOutcome::ResurfaceQueued {
+        target_page_slug: summary.slug.clone(),
+        source_raw_id: raw_id,
+    }))
 }
 
 /// Execute a maintain decision end-to-end.
@@ -743,6 +811,16 @@ pub fn update_existing(
         wiki_store::read_wiki_page(paths, target_page_slug).map_err(|e| {
             MaintainerError::Store(format!("target page `{target_page_slug}` not found: {e}"))
         })?;
+
+    // Slice E15: if the target page is cooling / archived, queue a
+    // Resurface review task instead of silently writing the merge.
+    // The user must explicitly accept resurface before vitality flips
+    // back to growing (T15.3 wires the accept handler).
+    if let Some(outcome) =
+        route_cooling_target_to_resurface(paths, &summary, inbox_id, Some(raw_id))?
+    {
+        return Ok(outcome);
+    }
 
     // Step 3: append strategy — dated heading + raw body under it.
     // The date is ISO `YYYY-MM-DD` per the existing log format.
@@ -1030,6 +1108,26 @@ pub async fn propose_update(
         .map_err(|e| {
             MaintainerError::Store(format!("target page `{target_slug}` not found: {e}"))
         })?;
+
+    // Slice E15: short-circuit cooling / archived targets BEFORE the
+    // LLM call so we do not waste a merge generation on a page the
+    // user has not yet agreed to wake. Same routing as the v1 path.
+    if let Some(outcome) =
+        route_cooling_target_to_resurface(paths, &target_summary, inbox_id, Some(raw_id))?
+    {
+        // propose_update returns UpdateProposal, not MaintainOutcome.
+        // Convert by raising a dedicated error that the HTTP handler
+        // surfaces as "Resurface queued" — the normal LLM merge flow
+        // is skipped entirely.
+        return Err(MaintainerError::ResurfaceQueued {
+            target_slug: match outcome {
+                MaintainOutcome::ResurfaceQueued {
+                    target_page_slug, ..
+                } => target_page_slug,
+                _ => target_slug.to_string(),
+            },
+        });
+    }
 
     // Step 3 — read raw body.
     let (_raw_entry, raw_body) = wiki_store::read_raw_entry(paths, raw_id)
@@ -4569,6 +4667,154 @@ mod tests {
         assert_eq!(entry.status, wiki_store::InboxStatus::Approved);
         assert_eq!(entry.maintain_action.as_deref(), Some("update_existing"));
         assert_eq!(entry.target_page_slug.as_deref(), Some("attention"));
+    }
+
+    // ── E15.2: cooling target routes to Resurface ───────────────────
+    #[tokio::test]
+    async fn update_existing_routes_cooling_target_to_resurface() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+
+        // Seed a wiki page that is explicitly cooling.
+        let cooling = wiki_store::WikiPageLifecycleMetadata {
+            priority: Some("low".to_string()),
+            vitality: Some("cooling".to_string()),
+            priority_reason: Some("Quiet for several weeks".to_string()),
+            ..Default::default()
+        };
+        wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
+            &paths,
+            "concept",
+            "api-design",
+            "API Design Notes",
+            "Old notes.",
+            "# Original body that should not be touched.",
+            None,
+            &["learning".to_string()],
+            &[],
+            &cooling,
+        )
+        .unwrap();
+
+        let (inbox_id, _raw_id) = seed_raw_with_inbox(&paths, "fresh take on api design");
+        let broker = MockBrokerSender {
+            canned: "unused".to_string(),
+        };
+
+        let outcome = execute_maintain(
+            &paths,
+            inbox_id,
+            MaintainAction::UpdateExisting {
+                target_page_slug: "api-design".to_string(),
+                purpose_lenses: vec!["building".to_string()],
+                lifecycle: wiki_store::WikiPageLifecycleMetadata::default(),
+            },
+            &broker,
+        )
+        .await
+        .unwrap();
+
+        // Outcome is ResurfaceQueued, NOT Updated.
+        match outcome {
+            MaintainOutcome::ResurfaceQueued {
+                target_page_slug, ..
+            } => assert_eq!(target_page_slug, "api-design"),
+            other => panic!("expected ResurfaceQueued, got {other:?}"),
+        }
+
+        // The cooling page MUST NOT have been mutated.
+        let (_summary, body) = wiki_store::read_wiki_page(&paths, "api-design").unwrap();
+        assert!(
+            body.contains("Original body that should not be touched."),
+            "body must be untouched: {body}"
+        );
+        assert!(
+            !body.contains("## 更新 ["),
+            "no dated update heading should have been appended"
+        );
+
+        // A Resurface inbox task must now exist, pointing at the cooling slug.
+        let entries = wiki_store::list_inbox_entries(&paths).unwrap();
+        let resurface = entries
+            .iter()
+            .find(|e| e.kind == wiki_store::InboxKind::Resurface)
+            .expect("Resurface inbox entry should be queued");
+        assert_eq!(resurface.target_page_slug.as_deref(), Some("api-design"));
+        assert_eq!(resurface.status, wiki_store::InboxStatus::Pending);
+
+        // The original NewRaw inbox entry was resolved as Approved with
+        // maintain_action = "resurface-queued" so it does not block the
+        // user's queue.
+        let original = entries
+            .iter()
+            .find(|e| e.id == inbox_id)
+            .expect("original inbox entry should still exist");
+        assert_eq!(original.status, wiki_store::InboxStatus::Approved);
+        assert_eq!(
+            original.maintain_action.as_deref(),
+            Some("resurface-queued")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_existing_dedupes_resurface_for_same_cooling_slug() {
+        let tmp = tempdir().unwrap();
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+
+        let cooling = wiki_store::WikiPageLifecycleMetadata {
+            vitality: Some("cooling".to_string()),
+            ..Default::default()
+        };
+        wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
+            &paths,
+            "concept",
+            "api-design",
+            "API",
+            "Old.",
+            "# body",
+            None,
+            &["learning".to_string()],
+            &[],
+            &cooling,
+        )
+        .unwrap();
+
+        let (inbox_a, _) = seed_raw_with_inbox(&paths, "first match");
+        let (inbox_b, _) = seed_raw_with_inbox(&paths, "second match");
+        let broker = MockBrokerSender {
+            canned: "unused".to_string(),
+        };
+
+        for id in [inbox_a, inbox_b] {
+            let _ = execute_maintain(
+                &paths,
+                id,
+                MaintainAction::UpdateExisting {
+                    target_page_slug: "api-design".to_string(),
+                    purpose_lenses: vec!["learning".to_string()],
+                    lifecycle: wiki_store::WikiPageLifecycleMetadata::default(),
+                },
+                &broker,
+            )
+            .await
+            .unwrap();
+        }
+
+        let entries = wiki_store::list_inbox_entries(&paths).unwrap();
+        let resurface_count = entries
+            .iter()
+            .filter(|e| {
+                e.kind == wiki_store::InboxKind::Resurface
+                    && e.target_page_slug.as_deref() == Some("api-design")
+                    && e.status == wiki_store::InboxStatus::Pending
+            })
+            .count();
+        assert_eq!(
+            resurface_count, 1,
+            "two cooling matches must dedupe to one Resurface task"
+        );
     }
 
     #[tokio::test]
