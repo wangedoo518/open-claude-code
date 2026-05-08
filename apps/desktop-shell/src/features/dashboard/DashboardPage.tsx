@@ -43,6 +43,8 @@ import {
   type EntropyPulseSummary,
   type PatrolLifecycleSuggestion,
 } from "./entropy-pulse";
+import { RoiPulsePanel } from "./RoiPulsePanel";
+import type { RoiPageSummary } from "./roi-pulse";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const EXPRESSIBLE_CATEGORIES = new Set(["concept", "people", "topic", "compare"]);
@@ -323,6 +325,21 @@ export function DashboardPage() {
   // dirty-only → calm → small queue → big queue.
   const totalPages = pagesQuery.data?.pages?.length ?? 0;
   const totalRaw = statsQuery.data?.raw_count ?? 0;
+
+  // Slice E18.3 — derive RoiPageSummary inputs once per pages refresh
+  // so RoiPulsePanel doesn't have to know the full WikiPageSummary
+  // shape. Keeps the panel pure-data and easy to test.
+  const roiPages = useMemo<ReadonlyArray<RoiPageSummary>>(() => {
+    const pages = pagesQuery.data?.pages ?? [];
+    return pages.map((p) => ({
+      slug: p.slug,
+      purpose: p.purpose ?? [],
+      expressed_in: p.expressed_in ?? [],
+      verdict: p.verdict ?? null,
+      vitality: p.vitality ?? null,
+      created_at_ms: Date.parse(p.created_at) || 0,
+    }));
+  }, [pagesQuery.data?.pages]);
   const headline = derivePulseHeadline({
     totalRisks,
     totalPages,
@@ -421,6 +438,8 @@ export function DashboardPage() {
           patrolSuggestions={lifecyclePatrolSuggestions}
           loading={pagesQuery.isLoading}
         />
+
+        <RoiPulsePanel pages={roiPages} rawCount={totalRaw} />
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="rounded-lg border border-border bg-card px-5 py-5">
