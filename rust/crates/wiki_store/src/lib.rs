@@ -6717,63 +6717,135 @@ pub fn resolve_inbox_entry(paths: &WikiPaths, id: u32, action: &str) -> Result<I
 }
 
 /// Slice E15: flip a cooling/archived page back to `vitality: growing`
-/// and stamp `last_revisited_at`. Preserves every other lifecycle
-/// field — the page just becomes attention-worthy again.
+/// and stamp `last_revisited_at`. Preserves every other frontmatter
+/// field literally (status, owner, schema, created_at, custom keys)
+/// because the page is only being annotated, not rewritten.
 fn apply_resurface_accept(paths: &WikiPaths, slug: &str) -> Result<()> {
-    let (summary, body) = read_wiki_page(paths, slug)?;
-    let mut lifecycle = WikiPageLifecycleMetadata::from(&summary);
-    lifecycle.vitality = Some("growing".to_string());
-    lifecycle.last_revisited_at = Some(now_iso8601());
-    write_wiki_page_in_category_with_lifecycle_metadata(
-        paths,
-        &summary.category,
-        &summary.slug,
-        &summary.title,
-        &summary.summary,
-        &body,
-        summary.source_raw_id,
-        &summary.purpose,
-        &summary.expressed_in,
-        &lifecycle,
-    )?;
+    let content = read_wiki_page_content(paths, slug)?;
+    let mut updated = patch_frontmatter_field(&content, "vitality", Some("growing"));
+    updated = patch_frontmatter_field(&updated, "last_revisited_at", Some(&now_iso8601()));
+    overwrite_wiki_page_content(paths, slug, &updated)?;
     Ok(())
 }
 
-/// Slice E15: append a "[YYYY-MM-DD] explicitly kept cooling" line to
-/// `priority_reason` so the user's explicit reject decision is visible
-/// next time a Patrol pass evaluates this page. Page vitality stays
-/// `cooling`/`archived`; we only annotate the reason field.
+/// Slice E15: append a "[YYYY-MM-DD] explicitly kept cooling" annotation
+/// to `priority_reason` so the user's explicit reject decision is
+/// visible next time a Patrol pass evaluates this page. Page vitality
+/// stays `cooling`/`archived`; we only annotate the reason field.
+/// All other frontmatter is preserved literally.
 fn apply_resurface_reject(paths: &WikiPaths, slug: &str) -> Result<()> {
-    let (summary, body) = read_wiki_page(paths, slug)?;
-    let mut lifecycle = WikiPageLifecycleMetadata::from(&summary);
+    let content = read_wiki_page_content(paths, slug)?;
     let today = now_iso8601()
         .split('T')
         .next()
         .unwrap_or("")
         .to_string();
     let suffix = format!("[{today}] explicitly kept cooling");
+    let existing_reason = read_frontmatter_field(&content, "priority_reason");
     // The YAML serializer writes `priority_reason: <value>\n` as a
     // single line, so embedded `\n` would corrupt frontmatter on
     // read-back. Use ` · ` as a flat-line separator and let the UI
     // split if it wants multi-line display.
-    let new_reason = match lifecycle.priority_reason.as_deref() {
+    let new_reason = match existing_reason {
         Some(prev) if !prev.is_empty() => format!("{prev} · {suffix}"),
         _ => suffix,
     };
-    lifecycle.priority_reason = Some(new_reason);
-    write_wiki_page_in_category_with_lifecycle_metadata(
-        paths,
-        &summary.category,
-        &summary.slug,
-        &summary.title,
-        &summary.summary,
-        &body,
-        summary.source_raw_id,
-        &summary.purpose,
-        &summary.expressed_in,
-        &lifecycle,
-    )?;
+    let updated = patch_frontmatter_field(&content, "priority_reason", Some(&new_reason));
+    overwrite_wiki_page_content(paths, slug, &updated)?;
     Ok(())
+}
+
+/// Slice E15 helper: minimally surgical frontmatter edit. Reads the
+/// scalar value of a top-level key inside the leading `---` / `---`
+/// fence. Returns `None` if the file has no frontmatter, no fence, or
+/// the key is absent. Indented (nested) keys with the same name are
+/// ignored — only top-level keys count, matching the rest of
+/// wiki_store's frontmatter handling.
+fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    if lines.first().copied() != Some("---") {
+        return None;
+    }
+    let prefix = format!("{key}:");
+    for line in lines.iter().skip(1) {
+        if *line == "---" {
+            break;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(&prefix) {
+            let value = rest.trim().trim_matches(|c| c == '\'' || c == '"');
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// Slice E15 helper: surgically rewrite a single top-level scalar key
+/// inside the leading frontmatter fence without touching any other
+/// field. Behavior:
+///
+/// - If the key exists at the top level, its line is replaced with
+///   `key: value` (or removed entirely when `value` is `None`).
+/// - If the key is missing and `value` is `Some`, a new line
+///   `key: value` is inserted just before the closing `---`.
+/// - If the file has no frontmatter, the content is returned
+///   unchanged (defensive — caller is expected to operate on
+///   schema-validated wiki pages).
+///
+/// Indented (nested) lines with the same name are left alone. This
+/// keeps wiki page edits diff-friendly even when several writers
+/// touch the same file.
+fn patch_frontmatter_field(content: &str, key: &str, value: Option<&str>) -> String {
+    let lines: Vec<&str> = content.split('\n').collect();
+    if lines.first().copied() != Some("---") {
+        return content.to_string();
+    }
+    let closing_idx = match lines
+        .iter()
+        .skip(1)
+        .position(|l| *l == "---")
+        .map(|i| i + 1)
+    {
+        Some(idx) => idx,
+        None => return content.to_string(),
+    };
+
+    let prefix = format!("{key}:");
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
+    let mut replaced = false;
+    for (idx, line) in lines.iter().enumerate() {
+        let is_top_level_target = idx > 0
+            && idx < closing_idx
+            && !line.starts_with(' ')
+            && !line.starts_with('\t')
+            && line.starts_with(&prefix);
+        if is_top_level_target {
+            replaced = true;
+            if let Some(v) = value {
+                out.push(format!("{key}: {v}"));
+            }
+            // None → drop the line entirely.
+        } else {
+            out.push(line.to_string());
+        }
+    }
+
+    if !replaced {
+        if let Some(v) = value {
+            // Insert before the closing fence.
+            let insert_at = out
+                .iter()
+                .skip(1)
+                .position(|l| l == "---")
+                .map(|i| i + 1)
+                .unwrap_or(out.len());
+            out.insert(insert_at, format!("{key}: {v}"));
+        }
+    }
+
+    out.join("\n")
 }
 
 /// Count pending inbox entries. Used by the Dashboard and Sidebar
@@ -13493,26 +13565,24 @@ mod tests {
     }
 
     // ── E15.3: Resurface accept / reject side effects ──────────────
+    /// Seeds a cooling wiki page by writing the full markdown directly
+    /// to disk. This keeps the seeded frontmatter under our control
+    /// (including `status`, `owner`, `schema`, `created_at`) so the
+    /// regression test for E15.3 can assert that approve / reject
+    /// preserve every field that is not part of the lifecycle update.
     fn seed_cooling_page(paths: &WikiPaths, slug: &str) {
-        let lifecycle = WikiPageLifecycleMetadata {
-            priority: Some("low".to_string()),
-            vitality: Some("cooling".to_string()),
-            priority_reason: Some("dormant since last sprint".to_string()),
-            ..Default::default()
-        };
-        write_wiki_page_in_category_with_lifecycle_metadata(
-            paths,
-            "concept",
-            slug,
-            "Cooling Page",
-            "Cooling summary",
-            "# body",
-            None,
-            &["learning".to_string()],
-            &[],
-            &lifecycle,
-        )
-        .unwrap();
+        let cat_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+        fs::create_dir_all(&cat_dir).unwrap();
+        let path = cat_dir.join(format!("{slug}.md"));
+        let content = format!(
+            "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\n\
+             title: Cooling Page\nsummary: Cooling summary\n\
+             purpose:\n  - learning\n\
+             priority: low\nvitality: cooling\n\
+             priority_reason: dormant since last sprint\n\
+             created_at: 2026-04-01T00:00:00Z\n---\n\n# body\n"
+        );
+        fs::write(&path, content).unwrap();
     }
 
     #[test]
@@ -13522,6 +13592,14 @@ mod tests {
         let paths = WikiPaths::resolve(tmp.path());
 
         seed_cooling_page(&paths, "api-design");
+        // Capture the as-seeded raw markdown so we can assert that the
+        // approve path only touches `vitality` + `last_revisited_at`
+        // and leaves everything else (status, owner, schema, body) on
+        // disk verbatim.
+        let before = read_wiki_page_content(&paths, "api-design").unwrap();
+        assert!(before.contains("status: active"));
+        assert!(before.contains("owner: human"));
+
         let task = append_inbox_resurface_pending(
             &paths,
             "api-design",
@@ -13536,6 +13614,28 @@ mod tests {
         let (summary, _) = read_wiki_page(&paths, "api-design").unwrap();
         assert_eq!(summary.vitality.as_deref(), Some("growing"));
         assert!(summary.last_revisited_at.is_some(), "last_revisited_at stamped");
+
+        // Regression guard from the smoke run: status / owner / schema /
+        // created_at must be byte-for-byte preserved.
+        let after = read_wiki_page_content(&paths, "api-design").unwrap();
+        assert!(
+            after.contains("status: active"),
+            "status must stay active, not be regenerated as draft: {after}"
+        );
+        assert!(
+            after.contains("owner: human"),
+            "owner must stay as the seeded human value: {after}"
+        );
+        assert!(
+            after.contains("schema: v1"),
+            "schema must remain v1: {after}"
+        );
+        // created_at is whatever the seed wrote; assert it's NOT the
+        // flip-time stamp by checking the seed prefix is still present.
+        assert!(
+            after.contains("created_at: 2026"),
+            "created_at must not be rewritten to flip time: {after}"
+        );
     }
 
     #[test]
