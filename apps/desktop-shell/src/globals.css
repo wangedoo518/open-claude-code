@@ -7934,3 +7934,80 @@ a.ds-status-item:hover {
     transition: none;
   }
 }
+
+/* ── Slice E17.4 — VerdictPicker ─────────────────────────────────── */
+
+.ds-verdict-picker {
+  position: relative;
+  display: inline-block;
+}
+.ds-verdict-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  color: var(--color-foreground);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 120ms;
+}
+.ds-verdict-trigger:hover,
+.ds-verdict-trigger[data-active] {
+  border-color: var(--color-primary);
+}
+.ds-verdict-popover {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 280px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-popover);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ds-verdict-help {
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+.ds-verdict-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ds-verdict-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-foreground);
+}
+.ds-verdict-option:hover {
+  background: var(--color-muted);
+}
+.ds-verdict-option[data-active] {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+.ds-verdict-reason {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-background);
+  font-size: 11px;
+  padding: 6px 8px;
+  resize: vertical;
+}

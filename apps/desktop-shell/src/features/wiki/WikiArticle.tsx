@@ -18,8 +18,14 @@ import {
   X,
 } from "lucide-react";
 
-import { getVaultGitStatus, getWikiPage, putWikiPage } from "@/api/wiki/repository";
+import {
+  getVaultGitStatus,
+  getWikiPage,
+  putWikiPage,
+  setWikiPageVerdict,
+} from "@/api/wiki/repository";
 import type { WikiPageSummary } from "@/api/wiki/types";
+import { VerdictPicker, type Verdict } from "./VerdictPicker";
 import { CodeMirrorEditor } from "@/components/CodeMirrorEditor";
 import {
   preprocessWikilinks,
@@ -638,10 +644,25 @@ export function WikiArticle({ slug }: WikiArticleProps) {
             <span className="text-[var(--color-success)]">已保存</span>
           </>
         )}
+        <div className="ml-auto">
+          <VerdictPicker
+            currentVerdict={summary.verdict as Verdict | null | undefined}
+            reason={summary.verdict_reason ?? ""}
+            onChange={async (verdict, reason) => {
+              await setWikiPageVerdict(slug, { verdict, reason });
+              await queryClient.invalidateQueries({
+                queryKey: ["wiki", "pages", "detail", slug],
+              });
+              await queryClient.invalidateQueries({
+                queryKey: ["wiki", "pages", "list"],
+              });
+            }}
+          />
+        </div>
         <button
           type="button"
           onClick={handleAsk}
-          className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+          className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
           title="用此页提问"
           aria-label="Ask with this page"
         >

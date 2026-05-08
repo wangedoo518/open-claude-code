@@ -794,3 +794,28 @@ export async function listCrossDomainFeedback(): Promise<
     "/api/wiki/cross-domain/feedback",
   );
 }
+
+// ── E17.4 — Decision Retrospective ────────────────────────────────
+// Slice E17 — POST a verdict ("should_continue" / "should_let_go" /
+// "inconclusive") on a wiki page so it feeds the maintainer absorb
+// prompt for future proposals. Server stamps verdict_at and patches
+// the wiki page frontmatter in place (other fields untouched).
+
+export type WikiPageVerdict =
+  | "should_continue"
+  | "should_let_go"
+  | "inconclusive";
+
+export async function setWikiPageVerdict(
+  slug: string,
+  payload: { verdict: WikiPageVerdict; reason?: string },
+): Promise<{ ok: boolean; verdict_at: string }> {
+  return fetchJson<{ ok: boolean; verdict_at: string }>(
+    `/api/wiki/pages/${encodeURIComponent(slug)}/verdict`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
