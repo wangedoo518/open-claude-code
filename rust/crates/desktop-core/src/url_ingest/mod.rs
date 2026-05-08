@@ -1078,6 +1078,9 @@ mod tests {
             byte_size: 10,
             content_hash: None,
             original_url: None,
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
         };
         let out = IngestOutcome::ReusedExisting {
             entry,

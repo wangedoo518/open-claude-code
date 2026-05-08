@@ -1214,6 +1214,10 @@ mod tests {
             title: "Transformer Architecture".to_string(),
             relevance_score: 0.91,
             snippet: "self-attention".to_string(),
+            source_domain: None,
+            inferred_use_domain: None,
+            cross_domain_reason: None,
+            priority_reason: None,
         }];
 
         let section = format_query_sources_section(&sources);
@@ -1366,6 +1370,9 @@ mod tests {
                 byte_size: 1234,
                 content_hash: None,
                 original_url: None,
+                source_domain: None,
+                inferred_use_domain: None,
+                cross_domain_reason: None,
             },
             wiki_store::RawEntry {
                 id: 2,
@@ -1378,6 +1385,9 @@ mod tests {
                 byte_size: 567,
                 content_hash: None,
                 original_url: None,
+                source_domain: None,
+                inferred_use_domain: None,
+                cross_domain_reason: None,
             },
         ];
         let recent: Vec<_> = entries.iter().rev().take(10).collect();
