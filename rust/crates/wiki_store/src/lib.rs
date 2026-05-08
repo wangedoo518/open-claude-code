@@ -1153,6 +1153,102 @@ pub fn vault_git_audit_log(paths: &WikiPaths, limit: usize) -> Result<VaultGitAu
     })
 }
 
+// ── E13: cross-domain feedback log ────────────────────────────────
+//
+// Slice E13 (entropy tension resolutions): every Inbox accept / correct /
+// ignore decision on a cross-domain inference is appended to
+// `.clawwiki/cross-domain-feedback.jsonl`. The log is intentionally
+// append-only and local-only — no PII leaves the device. Frontend reads
+// it via `GET /api/wiki/cross-domain/feedback` to compute rolling
+// 30-day accept rates and decide when to auto-degrade an inference
+// branch back to `unknown`.
+
+/// Filename for the JSONL feedback log. Append-only, never rotated by
+/// the store itself; future slices may add rotation.
+pub const CROSS_DOMAIN_FEEDBACK_FILENAME: &str = "cross-domain-feedback.jsonl";
+
+/// Process-global guard for `.clawwiki/cross-domain-feedback.jsonl`.
+/// Inbox row clicks can fire-and-forget multiple feedback writes per
+/// batch accept; we serialize append calls to keep line boundaries
+/// intact. Mirrors `VAULT_GIT_AUDIT_GUARD` (L123).
+static CROSS_DOMAIN_FEEDBACK_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn lock_cross_domain_feedback_writes() -> MutexGuard<'static, ()> {
+    CROSS_DOMAIN_FEEDBACK_GUARD
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn cross_domain_feedback_path(paths: &WikiPaths) -> PathBuf {
+    paths.meta.join(CROSS_DOMAIN_FEEDBACK_FILENAME)
+}
+
+/// One row in the feedback log. Decision is the user's action on the
+/// Inbox row's cross-domain inference; `correction` is set only when
+/// `decision == "correct"` and carries the user-supplied
+/// `inferred_use_domain` override.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CrossDomainFeedback {
+    pub timestamp_ms: i64,
+    /// One of `"accept"`, `"correct"`, `"ignore"`. String over enum
+    /// keeps the JSONL forward-compatible if a future slice adds new
+    /// decision kinds.
+    pub decision: String,
+    pub source_domain: String,
+    pub inferred_use_domain: String,
+    /// Set when `decision == "correct"`; user's replacement for
+    /// `inferred_use_domain`. None for accept / ignore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correction: Option<String>,
+}
+
+/// Append a single feedback event. Creates `.clawwiki/` if missing.
+/// Best-effort: serialize errors fall back to `Invalid` so callers can
+/// log + continue without losing the user's actual Inbox decision.
+pub fn append_cross_domain_feedback(
+    paths: &WikiPaths,
+    event: &CrossDomainFeedback,
+) -> Result<()> {
+    let _guard = lock_cross_domain_feedback_writes();
+    fs::create_dir_all(&paths.meta).map_err(|e| WikiStoreError::io(paths.meta.clone(), e))?;
+
+    use std::io::Write;
+    let path = cross_domain_feedback_path(paths);
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let line = serde_json::to_string(event).map_err(|e| {
+        WikiStoreError::Invalid(format!("cross-domain feedback serialize error: {e}"))
+    })?;
+    file.write_all(line.as_bytes())
+        .map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    file.write_all(b"\n")
+        .map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(())
+}
+
+/// Read every well-formed JSONL line, in append order. Malformed lines
+/// are skipped with an `eprintln!` so a single bad row never blocks the
+/// Connections panel from rendering.
+pub fn read_cross_domain_feedback(paths: &WikiPaths) -> Result<Vec<CrossDomainFeedback>> {
+    let path = cross_domain_feedback_path(paths);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let mut events = Vec::new();
+    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<CrossDomainFeedback>(line) {
+            Ok(event) => events.push(event),
+            Err(e) => eprintln!("[cross-domain-feedback] skipped malformed line: {e}"),
+        }
+    }
+    Ok(events)
+}
+
 fn parse_hunk_range(range: &str) -> (Option<u32>, Option<u32>) {
     let (start, lines) = range.split_once(',').unwrap_or((range, "1"));
     (start.parse::<u32>().ok(), lines.parse::<u32>().ok())
@@ -13205,5 +13301,80 @@ mod tests {
         let back = serde_json::to_string(&parsed).unwrap();
         let reparse: Vec<InboxEntry> = serde_json::from_str(&back).unwrap();
         assert_eq!(reparse, parsed);
+    }
+
+    // ── E13.1: cross-domain feedback JSONL log ─────────────────────
+    #[test]
+    fn cross_domain_feedback_appends_jsonl_and_reads_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        append_cross_domain_feedback(
+            &paths,
+            &CrossDomainFeedback {
+                timestamp_ms: 1_700_000_000_000,
+                decision: "accept".into(),
+                source_domain: "shopping".into(),
+                inferred_use_domain: "design-reference".into(),
+                correction: None,
+            },
+        )
+        .unwrap();
+        append_cross_domain_feedback(
+            &paths,
+            &CrossDomainFeedback {
+                timestamp_ms: 1_700_000_001_000,
+                decision: "correct".into(),
+                source_domain: "shopping".into(),
+                inferred_use_domain: "design-reference".into(),
+                correction: Some("personal-archive".into()),
+            },
+        )
+        .unwrap();
+
+        let events = read_cross_domain_feedback(&paths).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].decision, "accept");
+        assert_eq!(events[0].correction, None);
+        assert_eq!(events[1].decision, "correct");
+        assert_eq!(events[1].correction.as_deref(), Some("personal-archive"));
+    }
+
+    #[test]
+    fn cross_domain_feedback_returns_empty_when_log_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let events = read_cross_domain_feedback(&paths).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn cross_domain_feedback_skips_malformed_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+
+        // Append one good event, then one corrupt line.
+        append_cross_domain_feedback(
+            &paths,
+            &CrossDomainFeedback {
+                timestamp_ms: 1,
+                decision: "accept".into(),
+                source_domain: "music".into(),
+                inferred_use_domain: "social".into(),
+                correction: None,
+            },
+        )
+        .unwrap();
+        let path = cross_domain_feedback_path(&paths);
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        file.write_all(b"this is not json\n").unwrap();
+
+        let events = read_cross_domain_feedback(&paths).unwrap();
+        assert_eq!(events.len(), 1, "malformed line skipped, good event kept");
+        assert_eq!(events[0].source_domain, "music");
     }
 }
