@@ -100,7 +100,11 @@ import {
   type QueueIntelligence,
 } from "@/features/inbox/queue-intelligence";
 import type { TargetCandidate } from "@/lib/tauri";
-import { fetchInboxCandidates, refetchWechatArticle } from "@/api/wiki/repository";
+import {
+  fetchInboxCandidates,
+  postCrossDomainFeedback,
+  refetchWechatArticle,
+} from "@/api/wiki/repository";
 
 /** Q2 — Layer 1 duplicate-guard trigger threshold (inclusive). */
 const DUPLICATE_GUARD_SCORE_THRESHOLD = 75;
@@ -787,6 +791,35 @@ export function InboxPage() {
     [crossDomainByEntryId],
   );
 
+  // Slice E13.4 — fire-and-forget telemetry on the final cross-domain
+  // disposition once an Inbox proposal is accepted. We deliberately
+  // emit a single event reflecting the *final* state instead of one
+  // event per UI mutation: intermediate state changes (correct → undo →
+  // correct) should not double-count. Telemetry never blocks a real
+  // Inbox decision; failures fall through silently.
+  const trackCrossDomainDecision = useCallback(
+    (entry: IntelligentEntry) => {
+      const final = crossDomainForEntry(entry);
+      const original = entry.crossDomain;
+      if (!original.source_domain || original.source_domain === "unknown") return;
+      const decision: "accept" | "correct" | "ignore" = final.ignored
+        ? "ignore"
+        : final.inferred_use_domain !== original.inferred_use_domain
+          ? "correct"
+          : "accept";
+      postCrossDomainFeedback({
+        decision,
+        source_domain: original.source_domain,
+        inferred_use_domain: original.inferred_use_domain,
+        correction:
+          decision === "correct" ? final.inferred_use_domain : undefined,
+      }).catch(() => {
+        /* telemetry is best-effort */
+      });
+    },
+    [crossDomainForEntry],
+  );
+
   const setEntryCrossDomainUse = useCallback(
     (entry: IntelligentEntry, inferredUse: InferredUseDomain) => {
       setCrossDomainByEntryId((prev) => ({
@@ -947,6 +980,7 @@ export function InboxPage() {
 
     if (action === "open_diff_preview" && entry.proposal_status === "pending") {
       await applyProposal(entry.id, reviewedMetadata);
+      trackCrossDomainDecision(entry);
       return;
     }
 
@@ -957,6 +991,7 @@ export function InboxPage() {
         purpose_lenses: purposeLenses,
         ...reviewedMetadata,
       });
+      trackCrossDomainDecision(entry);
       return;
     }
 
@@ -965,7 +1000,8 @@ export function InboxPage() {
       purpose_lenses: purposeLenses,
       ...reviewedMetadata,
     });
-  }, [crossDomainForEntry]);
+    trackCrossDomainDecision(entry);
+  }, [crossDomainForEntry, trackCrossDomainDecision]);
 
   const handleQuickAccept = useCallback(
     async (entry: IntelligentEntry) => {

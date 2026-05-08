@@ -755,3 +755,42 @@ export async function fetchInboxCandidates(
   }
   throw new Error(message);
 }
+
+// ── E13.4: cross-domain feedback API ──────────────────────────────
+// Slice E13 wires Inbox accept/correct/ignore decisions into a local
+// JSONL log so the Connections panel can show per-source-domain
+// hit rates. Telemetry is fire-and-forget — never block a real Inbox
+// decision on a feedback POST.
+
+export interface CrossDomainFeedbackEvent {
+  decision: "accept" | "correct" | "ignore";
+  source_domain: string;
+  inferred_use_domain: string;
+  correction?: string;
+}
+
+export async function postCrossDomainFeedback(
+  event: CrossDomainFeedbackEvent,
+): Promise<void> {
+  await fetchJson("/api/wiki/cross-domain/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+  });
+}
+
+export interface CrossDomainFeedbackEventDto {
+  timestamp_ms: number;
+  decision: string;
+  source_domain: string;
+  inferred_use_domain: string;
+  correction?: string | null;
+}
+
+export async function listCrossDomainFeedback(): Promise<
+  CrossDomainFeedbackEventDto[]
+> {
+  return fetchJson<CrossDomainFeedbackEventDto[]>(
+    "/api/wiki/cross-domain/feedback",
+  );
+}

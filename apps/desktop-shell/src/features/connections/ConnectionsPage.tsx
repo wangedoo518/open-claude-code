@@ -1,4 +1,5 @@
 import {
+  Activity,
   AlertTriangle,
   Bot,
   CheckCircle2,
@@ -45,6 +46,12 @@ import {
   evaluateHighVolumeSourcePlans,
   type SourceReadinessEvaluation,
 } from "./source-readiness";
+import {
+  computeAcceptRate,
+  shouldDegradeInference,
+  type FeedbackEvent,
+} from "@/features/cross-domain/cross-domain";
+import { listCrossDomainFeedback } from "@/api/wiki/repository";
 
 const CONNECTIONS = [
   {
@@ -559,6 +566,8 @@ export function ConnectionsPage() {
           sources={sourceReadiness}
           readyCount={readySourceCount}
         />
+
+        <CrossDomainQualityPanel />
 
         <section
           id="git"
@@ -1218,6 +1227,101 @@ function SourceReadinessGate({
       <div className="mt-4 grid gap-3 xl:grid-cols-4">
         {sources.map((source) => (
           <SourceReadinessRow key={source.id} source={source} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ── E13.4: Cross-domain inference quality panel ───────────────────
+//
+// Reads `.clawwiki/cross-domain-feedback.jsonl` (via the new GET
+// endpoint), computes a 30-day rolling accept rate per native source
+// domain, and shows when an inference branch has been auto-degraded
+// to `unknown` because users have been correcting / ignoring it more
+// than half the time over a healthy sample. Manual override is
+// implicit — running the maintainer with a positive correction rate
+// will reset the gate within the rolling window.
+
+const CROSS_DOMAIN_TRACKED_SOURCES = [
+  { id: "shopping", label: "购物 / 商品" },
+  { id: "music", label: "音乐 / 收听" },
+  { id: "article", label: "文章 / 链接" },
+  { id: "image", label: "图片 / 截图" },
+] as const;
+
+function CrossDomainQualityPanel() {
+  const feedbackQuery = useQuery({
+    queryKey: ["wiki", "cross-domain", "feedback"],
+    queryFn: () => listCrossDomainFeedback(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const events: FeedbackEvent[] = useMemo(
+    () =>
+      (feedbackQuery.data ?? []).map((e) => ({
+        decision: e.decision,
+        source_domain: e.source_domain,
+        inferred_use_domain: e.inferred_use_domain,
+        timestamp_ms: e.timestamp_ms,
+        correction: e.correction,
+      })),
+    [feedbackQuery.data],
+  );
+  const now = Date.now();
+  const rows = CROSS_DOMAIN_TRACKED_SOURCES.map((src) => {
+    const sample = events.filter((e) => e.source_domain === src.id);
+    const rate = computeAcceptRate(events, src.id, 30, now);
+    const degraded = shouldDegradeInference(events, src.id, now);
+    return { ...src, sample: sample.length, rate, degraded };
+  });
+
+  return (
+    <section className="rounded-lg border border-border bg-card px-5 py-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <Activity className="size-4 text-primary" />
+            <h2 className="text-[15px] font-medium">跨界推断质量</h2>
+            <span className="text-[11px] text-muted-foreground">
+              (近 30 天)
+            </span>
+          </div>
+          <p className="mt-2 max-w-2xl text-[12px] leading-5 text-muted-foreground">
+            accept_rate &lt; 50% 且样本 ≥ 20 时，对应来源会自动暂停推断、回到
+            <code className="mx-1 rounded bg-muted px-1">unknown</code>。
+            数据来自 <code className="mx-0.5 rounded bg-muted px-1">.clawwiki/cross-domain-feedback.jsonl</code>
+            ，仅本机存储。
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {rows.map((row) => (
+          <div
+            key={row.id}
+            className="rounded-md border border-border/70 bg-background px-3 py-3 text-[12px]"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-[13px] font-medium">{row.label}</div>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] ${
+                  row.degraded
+                    ? "bg-[var(--color-warning)]/15 text-[var(--color-warning)]"
+                    : "bg-[var(--color-success)]/15 text-[var(--color-success)]"
+                }`}
+              >
+                {row.degraded ? "已暂停" : "活跃"}
+              </span>
+            </div>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              accept_rate {(row.rate * 100).toFixed(0)}% · 样本 {row.sample}
+            </div>
+            {row.sample < 20 ? (
+              <div className="mt-1.5 text-[10px] text-muted-foreground">
+                样本不足，gate 不会触发（需 ≥ 20 条）。
+              </div>
+            ) : null}
+          </div>
         ))}
       </div>
     </section>
