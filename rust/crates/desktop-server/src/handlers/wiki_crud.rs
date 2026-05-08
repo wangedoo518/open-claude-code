@@ -2214,6 +2214,75 @@ pub(crate) async fn get_vault_git_audit_handler(
     ))
 }
 
+// ── E13.2: cross-domain feedback endpoints ────────────────────────
+//
+// `GET` returns every well-formed event in the local JSONL log so the
+// frontend can compute rolling 30-day accept rates per source domain.
+// `POST` appends a single event. We accept the body as a flat struct
+// rather than reusing `wiki_store::CrossDomainFeedback` so the API
+// contract stays decoupled from internal storage shape.
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct CrossDomainFeedbackBody {
+    pub decision: String,
+    pub source_domain: String,
+    pub inferred_use_domain: String,
+    #[serde(default)]
+    pub correction: Option<String>,
+}
+
+pub(crate) async fn get_cross_domain_feedback_handler(
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let events = wiki_store::read_cross_domain_feedback(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("cross-domain feedback read failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(
+        serde_json::to_value(events).unwrap_or(serde_json::Value::Array(Vec::new())),
+    ))
+}
+
+pub(crate) async fn post_cross_domain_feedback_handler(
+    Json(body): Json<CrossDomainFeedbackBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Accept-list: keep the API explicit so a future contract drift
+    // does not silently log unexpected decision strings.
+    let allowed = ["accept", "correct", "ignore"];
+    if !allowed.contains(&body.decision.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "decision must be one of {:?}, got {}",
+                    allowed, body.decision
+                ),
+            }),
+        ));
+    }
+    let paths = resolve_wiki_root_for_handler()?;
+    let event = wiki_store::CrossDomainFeedback {
+        timestamp_ms: wiki_store::provenance::now_unix_ms(),
+        decision: body.decision,
+        source_domain: body.source_domain,
+        inferred_use_domain: body.inferred_use_domain,
+        correction: body.correction,
+    };
+    wiki_store::append_cross_domain_feedback(&paths, &event).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("cross-domain feedback append failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct GitCommitRequest {
     message: String,
