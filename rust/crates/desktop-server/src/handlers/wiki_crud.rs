@@ -2247,6 +2247,111 @@ pub(crate) async fn post_wiki_page_verdict_handler(
     Ok(Json(serde_json::json!({ "ok": true, "verdict_at": now_iso })))
 }
 
+#[cfg(test)]
+mod verdict_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Env-var serialization across the verdict tests. CLAWWIKI_HOME is
+    // process-global; without a guard, parallel tests race on it and
+    // corrupt each other's Vault paths.
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
+
+    fn seed_concept(paths: &wiki_store::WikiPaths, slug: &str, frontmatter: &str) {
+        let cat_dir = paths.wiki.join(wiki_store::WIKI_CONCEPTS_SUBDIR);
+        std::fs::create_dir_all(&cat_dir).unwrap();
+        std::fs::write(cat_dir.join(format!("{slug}.md")), frontmatter).unwrap();
+    }
+
+    #[tokio::test]
+    async fn put_verdict_writes_three_fields_and_preserves_unrelated() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+
+        let original = "---\n\
+                        type: concept\n\
+                        status: active\n\
+                        owner: human\n\
+                        schema: v1\n\
+                        title: Pay\n\
+                        summary: x\n\
+                        purpose:\n  - learning\n\
+                        created_at: 2026-04-01T00:00:00Z\n\
+                        ---\n\n# body\n";
+        seed_concept(&paths, "pay", original);
+
+        let body = VerdictBody {
+            verdict: "should_let_go".to_string(),
+            reason: Some("30 days, no follow-up".to_string()),
+        };
+        let response = post_wiki_page_verdict_handler(
+            axum::extract::Path("pay".to_string()),
+            Json(body),
+        )
+        .await
+        .expect("handler should succeed");
+        let payload = response.0;
+        assert_eq!(payload["ok"], serde_json::Value::Bool(true));
+        assert!(payload["verdict_at"].is_string(), "verdict_at stamped");
+
+        let (summary, _body) = wiki_store::read_wiki_page(&paths, "pay").unwrap();
+        assert_eq!(summary.verdict.as_deref(), Some("should_let_go"));
+        assert_eq!(
+            summary.verdict_reason.as_deref(),
+            Some("30 days, no follow-up")
+        );
+        assert!(summary.verdict_at.is_some(), "verdict_at field set");
+
+        // Body + status / owner / schema / created_at must be byte-
+        // preserved (E15.3 contract — patch_frontmatter_field only
+        // touches one line at a time).
+        let raw =
+            std::fs::read_to_string(paths.wiki.join(wiki_store::WIKI_CONCEPTS_SUBDIR).join("pay.md"))
+                .unwrap();
+        assert!(raw.contains("status: active"), "status preserved: {raw}");
+        assert!(raw.contains("owner: human"), "owner preserved: {raw}");
+        assert!(raw.contains("schema: v1"), "schema preserved: {raw}");
+        assert!(
+            raw.contains("created_at: 2026-04-01T00:00:00Z"),
+            "created_at preserved: {raw}"
+        );
+        assert!(raw.contains("# body"), "body preserved: {raw}");
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn put_verdict_rejects_unknown_value() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        seed_concept(
+            &paths,
+            "p",
+            "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: P\nsummary: x\npurpose:\n  - learning\ncreated_at: 2026-04-01T00:00:00Z\n---\n\n# body\n",
+        );
+
+        let body = VerdictBody {
+            verdict: "lolwut".to_string(),
+            reason: None,
+        };
+        let result = post_wiki_page_verdict_handler(
+            axum::extract::Path("p".to_string()),
+            Json(body),
+        )
+        .await;
+        let err = result.expect_err("unknown verdict should be rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+}
+
 pub(crate) async fn get_vault_git_status_handler() -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
     let status = wiki_store::vault_git_status(&paths).map_err(|e| {
