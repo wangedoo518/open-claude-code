@@ -3640,6 +3640,18 @@ pub struct WikiFrontmatter {
     /// Evidence string for the cross-domain inference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_domain_reason: Option<String>,
+    /// Slice E17 — user's post-hoc verdict on whether this page was
+    /// worth investing in. One of `should_continue` / `should_let_go`
+    /// / `inconclusive`. Optional so legacy pages remain valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    /// ISO-8601 timestamp the verdict was last set/updated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_at: Option<String>,
+    /// Free-form reason (≤ 200 chars by convention) explaining the
+    /// verdict — feeds back into the maintainer absorb prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_reason: Option<String>,
     /// The raw/ entry id that seeded this proposal. `None` when the
     /// page was hand-written outside the maintainer flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3677,6 +3689,9 @@ impl WikiFrontmatter {
             source_domain: None,
             inferred_use_domain: None,
             cross_domain_reason: None,
+            verdict: None,
+            verdict_at: None,
+            verdict_reason: None,
             source_raw_id,
             created_at: now_iso8601(),
             confidence: 0.0,
@@ -3734,6 +3749,15 @@ impl WikiFrontmatter {
         }
         if let Some(reason) = &self.cross_domain_reason {
             s.push_str(&format!("cross_domain_reason: {reason}\n"));
+        }
+        if let Some(verdict) = &self.verdict {
+            s.push_str(&format!("verdict: {verdict}\n"));
+        }
+        if let Some(verdict_at) = &self.verdict_at {
+            s.push_str(&format!("verdict_at: {verdict_at}\n"));
+        }
+        if let Some(verdict_reason) = &self.verdict_reason {
+            s.push_str(&format!("verdict_reason: {verdict_reason}\n"));
         }
         if let Some(raw_id) = self.source_raw_id {
             s.push_str(&format!("source_raw_id: {raw_id}\n"));
@@ -3793,6 +3817,14 @@ pub struct WikiPageSummary {
     /// Evidence string for the cross-domain inference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_domain_reason: Option<String>,
+    /// Slice E17 — post-hoc user verdict on whether this page paid off.
+    /// One of `should_continue` / `should_let_go` / `inconclusive`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_reason: Option<String>,
     /// Optional raw/ entry id that seeded this page.
     pub source_raw_id: Option<u32>,
     /// ISO-8601 datetime from the frontmatter.
@@ -3822,6 +3854,13 @@ pub struct WikiPageLifecycleMetadata {
     pub source_domain: Option<String>,
     pub inferred_use_domain: Option<String>,
     pub cross_domain_reason: Option<String>,
+    /// Slice E17 — verdict travels with lifecycle metadata so any
+    /// rewrite path that calls `write_wiki_page_in_category_with_lifecycle_metadata`
+    /// preserves it. New pages start without a verdict; users set it
+    /// via the dedicated POST endpoint.
+    pub verdict: Option<String>,
+    pub verdict_at: Option<String>,
+    pub verdict_reason: Option<String>,
 }
 
 impl From<&WikiPageSummary> for WikiPageLifecycleMetadata {
@@ -3835,6 +3874,9 @@ impl From<&WikiPageSummary> for WikiPageLifecycleMetadata {
             source_domain: summary.source_domain.clone(),
             inferred_use_domain: summary.inferred_use_domain.clone(),
             cross_domain_reason: summary.cross_domain_reason.clone(),
+            verdict: summary.verdict.clone(),
+            verdict_at: summary.verdict_at.clone(),
+            verdict_reason: summary.verdict_reason.clone(),
         }
     }
 }
@@ -4063,6 +4105,10 @@ pub fn write_wiki_page_in_category_with_lifecycle_metadata(
         normalize_optional_frontmatter_text(lifecycle.inferred_use_domain.as_deref());
     fm.cross_domain_reason =
         normalize_optional_frontmatter_text(lifecycle.cross_domain_reason.as_deref());
+    fm.verdict = normalize_optional_frontmatter_text(lifecycle.verdict.as_deref());
+    fm.verdict_at = normalize_optional_frontmatter_text(lifecycle.verdict_at.as_deref());
+    fm.verdict_reason =
+        normalize_optional_frontmatter_text(lifecycle.verdict_reason.as_deref());
     let mut content = fm.to_yaml_block();
     content.push('\n');
     content.push_str(body);
@@ -4982,6 +5028,9 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 source_domain,
                 inferred_use_domain,
                 cross_domain_reason,
+                verdict,
+                verdict_at,
+                verdict_reason,
                 source_raw_id,
                 created_at,
                 last_verified,
@@ -5008,6 +5057,9 @@ pub fn list_backlinks(paths: &WikiPaths, target_slug: &str) -> Result<Vec<WikiPa
                 source_domain,
                 inferred_use_domain,
                 cross_domain_reason,
+                verdict,
+                verdict_at,
+                verdict_reason,
                 source_raw_id,
                 created_at,
                 byte_size: metadata.len(),
@@ -5195,6 +5247,9 @@ pub fn compute_related_pages(paths: &WikiPaths, target_slug: &str) -> Result<Vec
         _t_source_domain,
         _t_inferred_use_domain,
         _t_cross_domain_reason,
+        _t_verdict,
+        _t_verdict_at,
+        _t_verdict_reason,
         target_source_raw,
         _t_created,
         _t_last_verified,
@@ -5350,6 +5405,9 @@ pub fn get_page_graph(paths: &WikiPaths, target_slug: &str) -> Result<PageGraph>
         _source_domain,
         _inferred_use_domain,
         _cross_domain_reason,
+        _verdict,
+        _verdict_at,
+        _verdict_reason,
         _source_raw,
         _created_at,
         _last_verified,
@@ -5513,6 +5571,9 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
             source_domain,
             inferred_use_domain,
             cross_domain_reason,
+            verdict,
+            verdict_at,
+            verdict_reason,
             source_raw_id,
             created_at,
             last_verified,
@@ -5565,6 +5626,9 @@ pub fn search_wiki_pages(paths: &WikiPaths, query: &str) -> Result<Vec<WikiSearc
                 source_domain,
                 inferred_use_domain,
                 cross_domain_reason,
+                verdict,
+                verdict_at,
+                verdict_reason,
                 source_raw_id,
                 created_at,
                 byte_size: metadata.len(),
@@ -5688,6 +5752,9 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         source_domain,
         inferred_use_domain,
         cross_domain_reason,
+        verdict,
+        verdict_at,
+        verdict_reason,
         source_raw_id,
         created_at,
         last_verified,
@@ -5712,6 +5779,9 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
         source_domain,
         inferred_use_domain,
         cross_domain_reason,
+        verdict,
+        verdict_at,
+        verdict_reason,
         source_raw_id,
         created_at,
         byte_size: metadata.len(),
@@ -5725,6 +5795,7 @@ fn parse_wiki_file(path: &Path, slug: &str) -> Result<WikiPageSummary> {
 /// YAML frontmatter of a wiki page. Tolerant of missing fields —
 /// returns empty strings / empty vectors / `None` rather than erroring.
 /// Same defensive posture as `parse_frontmatter_fields` for raw entries.
+#[allow(clippy::type_complexity)]
 fn parse_wiki_frontmatter_fields(
     content: &str,
 ) -> (
@@ -5741,6 +5812,9 @@ fn parse_wiki_frontmatter_fields(
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>, // verdict
+    Option<String>, // verdict_at
+    Option<String>, // verdict_reason
     Option<u32>,
     String,
     Option<String>,
@@ -5758,6 +5832,9 @@ fn parse_wiki_frontmatter_fields(
     let mut source_domain: Option<String> = None;
     let mut inferred_use_domain: Option<String> = None;
     let mut cross_domain_reason: Option<String> = None;
+    let mut verdict: Option<String> = None;
+    let mut verdict_at: Option<String> = None;
+    let mut verdict_reason: Option<String> = None;
     let mut source_raw_id: Option<u32> = None;
     let mut created_at = String::new();
     let mut last_verified: Option<String> = None;
@@ -5857,6 +5934,21 @@ fn parse_wiki_frontmatter_fields(
             if !value.is_empty() {
                 cross_domain_reason = Some(value);
             }
+        } else if let Some(rest) = line.strip_prefix("verdict: ") {
+            let value = normalize_frontmatter_scalar(rest);
+            if !value.is_empty() {
+                verdict = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("verdict_at: ") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                verdict_at = Some(value);
+            }
+        } else if let Some(rest) = line.strip_prefix("verdict_reason: ") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                verdict_reason = Some(value);
+            }
         } else if let Some(rest) = line.strip_prefix("source_raw_id: ") {
             source_raw_id = rest.trim().parse().ok();
         } else if let Some(rest) = line.strip_prefix("created_at: ") {
@@ -5879,6 +5971,9 @@ fn parse_wiki_frontmatter_fields(
         source_domain,
         inferred_use_domain,
         cross_domain_reason,
+        verdict,
+        verdict_at,
+        verdict_reason,
         source_raw_id,
         created_at,
         last_verified,
@@ -9616,6 +9711,7 @@ mod tests {
             source_domain: Some("shopping".to_string()),
             inferred_use_domain: Some("aesthetic".to_string()),
             cross_domain_reason: Some("source:shopping -> use:aesthetic".to_string()),
+            ..Default::default()
         };
 
         write_wiki_page_in_category_with_lifecycle_metadata(
@@ -9706,6 +9802,9 @@ mod tests {
             _source_domain,
             _inferred_use_domain,
             _cross_domain_reason,
+            _verdict,
+            _verdict_at,
+            _verdict_reason,
             _raw,
             _created,
             _verified,
@@ -9730,6 +9829,9 @@ mod tests {
             _source_domain,
             _inferred_use_domain,
             _cross_domain_reason,
+            _verdict,
+            _verdict_at,
+            _verdict_reason,
             _raw,
             _created,
             _verified,
@@ -9754,6 +9856,9 @@ mod tests {
             _source_domain,
             _inferred_use_domain,
             _cross_domain_reason,
+            _verdict,
+            _verdict_at,
+            _verdict_reason,
             _raw,
             _created,
             _verified,
@@ -9778,6 +9883,9 @@ mod tests {
             _source_domain,
             _inferred_use_domain,
             _cross_domain_reason,
+            _verdict,
+            _verdict_at,
+            _verdict_reason,
             _raw,
             _created,
             _verified,
@@ -9809,6 +9917,9 @@ mod tests {
             source_domain,
             inferred_use_domain,
             cross_domain_reason,
+            _verdict,
+            _verdict_at,
+            _verdict_reason,
             _raw,
             _created,
             _verified,
@@ -13728,5 +13839,64 @@ mod tests {
         let events = read_cross_domain_feedback(&paths).unwrap();
         assert_eq!(events.len(), 1, "malformed line skipped, good event kept");
         assert_eq!(events[0].source_domain, "music");
+    }
+
+    // ── E17.1: verdict frontmatter round-trip ──────────────────────
+    #[test]
+    fn verdict_fields_round_trip_through_yaml_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let cat_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+        fs::create_dir_all(&cat_dir).unwrap();
+        let path = cat_dir.join("payoff-test.md");
+        let content = "---\n\
+                       type: concept\n\
+                       status: active\n\
+                       owner: human\n\
+                       schema: v1\n\
+                       title: Payoff Test\n\
+                       summary: Round-trip test for verdict fields.\n\
+                       purpose:\n  - learning\n\
+                       verdict: should_continue\n\
+                       verdict_at: 2026-05-08T10:30:00Z\n\
+                       verdict_reason: Two follow-up notes within a week.\n\
+                       created_at: 2026-04-01T00:00:00Z\n\
+                       ---\n\n# body\n";
+        fs::write(&path, content).unwrap();
+
+        let (summary, _body) = read_wiki_page(&paths, "payoff-test").unwrap();
+        assert_eq!(summary.verdict.as_deref(), Some("should_continue"));
+        assert_eq!(summary.verdict_at.as_deref(), Some("2026-05-08T10:30:00Z"));
+        assert_eq!(
+            summary.verdict_reason.as_deref(),
+            Some("Two follow-up notes within a week.")
+        );
+    }
+
+    #[test]
+    fn verdict_fields_default_to_none_for_legacy_pages() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let cat_dir = paths.wiki.join(WIKI_CONCEPTS_SUBDIR);
+        fs::create_dir_all(&cat_dir).unwrap();
+        let path = cat_dir.join("legacy.md");
+        let content = "---\n\
+                       type: concept\n\
+                       status: active\n\
+                       owner: human\n\
+                       schema: v1\n\
+                       title: Legacy\n\
+                       summary: No verdict yet.\n\
+                       purpose:\n  - learning\n\
+                       created_at: 2026-04-01T00:00:00Z\n\
+                       ---\n\n# body\n";
+        fs::write(&path, content).unwrap();
+
+        let (summary, _) = read_wiki_page(&paths, "legacy").unwrap();
+        assert_eq!(summary.verdict, None);
+        assert_eq!(summary.verdict_at, None);
+        assert_eq!(summary.verdict_reason, None);
     }
 }

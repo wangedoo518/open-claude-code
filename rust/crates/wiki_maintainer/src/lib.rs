@@ -4082,6 +4082,7 @@ mod tests {
             source_domain: Some("shopping".to_string()),
             inferred_use_domain: Some("aesthetic".to_string()),
             cross_domain_reason: Some("source:shopping -> use:aesthetic".to_string()),
+            ..Default::default()
         };
         wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
             &paths,
@@ -4223,6 +4224,9 @@ mod tests {
             source_domain: None,
             inferred_use_domain: None,
             cross_domain_reason: None,
+            verdict: None,
+            verdict_at: None,
+            verdict_reason: None,
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -4256,6 +4260,9 @@ mod tests {
             source_domain: None,
             inferred_use_domain: None,
             cross_domain_reason: None,
+            verdict: None,
+            verdict_at: None,
+            verdict_reason: None,
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -4287,6 +4294,9 @@ mod tests {
             source_domain: None,
             inferred_use_domain: None,
             cross_domain_reason: None,
+            verdict: None,
+            verdict_at: None,
+            verdict_reason: None,
             source_raw_id: None,
             created_at: "2026-04-14T00:00:00Z".to_string(),
             byte_size: 500,
@@ -4538,6 +4548,7 @@ mod tests {
             source_domain: Some("shopping".to_string()),
             inferred_use_domain: Some("aesthetic".to_string()),
             cross_domain_reason: Some("source:shopping -> use:aesthetic".to_string()),
+            ..Default::default()
         };
         let outcome = execute_maintain(
             &paths,
@@ -4598,6 +4609,7 @@ mod tests {
             source_domain: Some("article".to_string()),
             inferred_use_domain: Some("research".to_string()),
             cross_domain_reason: Some("source:article -> use:research".to_string()),
+            ..Default::default()
         };
         wiki_store::write_wiki_page_in_category_with_lifecycle_metadata(
             &paths,
@@ -5009,6 +5021,7 @@ mod tests {
             source_domain: Some("article".to_string()),
             inferred_use_domain: Some("research".to_string()),
             cross_domain_reason: Some("source:article -> use:research".to_string()),
+            ..Default::default()
         };
         let outcome = apply_update_proposal_with_lifecycle(&paths, inbox_id, &lifecycle).unwrap();
         match outcome {
