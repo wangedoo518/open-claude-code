@@ -273,3 +273,67 @@ export function toCrossDomainMaintainFields(
     cross_domain_reason: inference.reason,
   };
 }
+
+// ── E13.3: rolling accept-rate + degrade gate ─────────────────────
+//
+// Slice E13 (entropy tension resolutions) wires `cross-domain-feedback.jsonl`
+// into a quality monitor. `computeAcceptRate` returns the share of `accept`
+// decisions for a given source domain in the last `windowDays` days.
+// `shouldDegradeInference` enforces the 20-event minimum sample size and
+// the 0.5 accept-rate floor before pausing a branch — small samples never
+// degrade so a few corrections from a curious user do not silence
+// inference for everyone.
+
+export interface FeedbackEvent {
+  /** "accept" | "correct" | "ignore" — string, not union, to match the
+   * forward-compatible contract written by `wiki_store::CrossDomainFeedback`. */
+  decision: string;
+  source_domain: string;
+  inferred_use_domain?: string;
+  timestamp_ms: number;
+  correction?: string | null;
+}
+
+const FEEDBACK_DEGRADE_MIN_SAMPLE = 20;
+const FEEDBACK_DEGRADE_RATE_THRESHOLD = 0.5;
+const FEEDBACK_DEFAULT_WINDOW_DAYS = 30;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Share of `accept` decisions for `sourceDomain` within the rolling
+ * `windowDays` window ending at `now`. Returns 0 when there are no
+ * events in the window so callers do not have to special-case empty
+ * domains. */
+export function computeAcceptRate(
+  events: ReadonlyArray<FeedbackEvent>,
+  sourceDomain: string,
+  windowDays: number,
+  now: number,
+): number {
+  const cutoff = now - windowDays * MS_PER_DAY;
+  const filtered = events.filter(
+    (e) => e.source_domain === sourceDomain && e.timestamp_ms >= cutoff,
+  );
+  if (filtered.length === 0) return 0;
+  const accepts = filtered.filter((e) => e.decision === "accept").length;
+  return accepts / filtered.length;
+}
+
+/** Returns true when the `sourceDomain` branch should pre-populate
+ * `unknown` instead of its rule-based inference, because users have
+ * been correcting / ignoring it more than half the time over a healthy
+ * sample size. */
+export function shouldDegradeInference(
+  events: ReadonlyArray<FeedbackEvent>,
+  sourceDomain: string,
+  now: number,
+): boolean {
+  const cutoff = now - FEEDBACK_DEFAULT_WINDOW_DAYS * MS_PER_DAY;
+  const sample = events.filter(
+    (e) => e.source_domain === sourceDomain && e.timestamp_ms >= cutoff,
+  );
+  if (sample.length < FEEDBACK_DEGRADE_MIN_SAMPLE) return false;
+  return (
+    computeAcceptRate(events, sourceDomain, FEEDBACK_DEFAULT_WINDOW_DAYS, now) <
+    FEEDBACK_DEGRADE_RATE_THRESHOLD
+  );
+}
