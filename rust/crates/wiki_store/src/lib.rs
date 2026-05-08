@@ -6856,7 +6856,7 @@ fn apply_resurface_reject(paths: &WikiPaths, slug: &str) -> Result<()> {
 /// the key is absent. Indented (nested) keys with the same name are
 /// ignored — only top-level keys count, matching the rest of
 /// wiki_store's frontmatter handling.
-fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
+pub fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
     let lines: Vec<&str> = content.split('\n').collect();
     if lines.first().copied() != Some("---") {
         return None;
@@ -6892,7 +6892,7 @@ fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
 /// Indented (nested) lines with the same name are left alone. This
 /// keeps wiki page edits diff-friendly even when several writers
 /// touch the same file.
-fn patch_frontmatter_field(content: &str, key: &str, value: Option<&str>) -> String {
+pub fn patch_frontmatter_field(content: &str, key: &str, value: Option<&str>) -> String {
     let lines: Vec<&str> = content.split('\n').collect();
     if lines.first().copied() != Some("---") {
         return content.to_string();

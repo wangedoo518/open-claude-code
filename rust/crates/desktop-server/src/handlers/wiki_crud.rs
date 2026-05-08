@@ -1449,6 +1449,7 @@ pub(crate) async fn inbox_maintain_handler(
         source_domain: body.source_domain.clone(),
         inferred_use_domain: body.inferred_use_domain.clone(),
         cross_domain_reason: body.cross_domain_reason.clone(),
+        ..Default::default()
     };
 
     // Step 1: translate the flat action into the tagged enum, with
@@ -1730,6 +1731,7 @@ pub(crate) async fn apply_proposal_handler(
         source_domain: body.source_domain,
         inferred_use_domain: body.inferred_use_domain,
         cross_domain_reason: body.cross_domain_reason,
+        ..Default::default()
     };
     match wiki_maintainer::apply_update_proposal_with_lifecycle(&paths, id, &lifecycle) {
         Ok(wiki_maintainer::MaintainOutcome::Updated { target_page_slug }) => {
@@ -2173,6 +2175,76 @@ pub(crate) async fn put_wiki_page_handler(
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct PutWikiPageRequest {
     content: String,
+}
+
+// ── E17.3: post-hoc verdict on a wiki page ────────────────────────
+//
+// Slice E17 (decision curation) — users attach a verdict
+// (`should_continue` / `should_let_go` / `inconclusive`) and an
+// optional reason to a wiki page after the fact. The verdict feeds
+// the maintainer absorb prompt so future proposals factor in past
+// keep/let-go decisions.
+//
+// The handler does a surgical frontmatter edit via
+// `patch_frontmatter_field` (E15.3 audit fix path) so status / owner
+// / created_at / body / custom keys stay byte-preserved.
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct VerdictBody {
+    pub verdict: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+pub(crate) async fn post_wiki_page_verdict_handler(
+    Path(slug): Path<String>,
+    Json(body): Json<VerdictBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Accept-list keeps the wire contract narrow. New verdict values
+    // get added here only after a UI surface ships for them.
+    let allowed = ["should_continue", "should_let_go", "inconclusive"];
+    if !allowed.contains(&body.verdict.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "verdict must be one of {:?}, got {}",
+                    allowed, body.verdict
+                ),
+            }),
+        ));
+    }
+
+    let paths = resolve_wiki_root_for_handler()?;
+    let content =
+        wiki_store::read_wiki_page_content(&paths, &slug).map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("wiki page not found: {e}"),
+                }),
+            )
+        })?;
+    let now_iso = wiki_store::now_iso8601();
+    let mut updated =
+        wiki_store::patch_frontmatter_field(&content, "verdict", Some(&body.verdict));
+    updated = wiki_store::patch_frontmatter_field(&updated, "verdict_at", Some(&now_iso));
+    updated = wiki_store::patch_frontmatter_field(
+        &updated,
+        "verdict_reason",
+        body.reason.as_deref(),
+    );
+
+    wiki_store::overwrite_wiki_page_content(&paths, &slug, &updated).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("verdict write failed: {e}"),
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "verdict_at": now_iso })))
 }
 
 pub(crate) async fn get_vault_git_status_handler() -> Result<Json<serde_json::Value>, ApiError> {
