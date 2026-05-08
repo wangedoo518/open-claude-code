@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { registerPageVitality } from "@/features/ask/citation-tracker";
 import {
   AlertTriangle,
   Archive,
@@ -140,6 +141,17 @@ export function DashboardPage() {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+
+  // Slice E15.4: feed page vitality into the Ask citation tracker
+  // registry so any wiki citation rendered in UsedSourcesBar can
+  // resolve its current vitality (cooling/archived) without a
+  // separate fetch. Mirrors Home's existing data dependency.
+  useEffect(() => {
+    const pages = pagesQuery.data?.pages ?? [];
+    for (const page of pages) {
+      registerPageVitality(page.slug, { vitality: page.vitality });
+    }
+  }, [pagesQuery.data?.pages]);
 
   const pendingInbox = inboxQuery.data?.pending_count ?? 0;
   const stats = statsQuery.data;

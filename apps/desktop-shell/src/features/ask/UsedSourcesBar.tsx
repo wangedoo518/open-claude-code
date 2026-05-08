@@ -31,10 +31,12 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
+import { useEffect } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import type { ContextBasis, SourceRef } from "@/lib/tauri";
 import { formatSourceRefLabel, sourceRefKey } from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
+import { askCitationTracker } from "./citation-tracker";
 
 /**
  * Slice 43 — Citation first / Open in Knowledge.
@@ -182,6 +184,17 @@ export function UsedSourcesBar({
   onPromoteToSession,
   className,
 }: UsedSourcesBarProps) {
+  // Slice E15.4: feed every wiki-kind citation to the rolling
+  // 7-day tracker. The hook sits ABOVE the early `if (!basis) return
+  // null` so React's hook order stays stable across renders. The
+  // tracker no-ops gracefully when boundSource is missing or non-wiki.
+  const wikiSlug =
+    basis?.bound_source?.kind === "wiki" ? basis.bound_source.slug : null;
+  useEffect(() => {
+    if (!wikiSlug) return;
+    askCitationTracker.recordCitation(wikiSlug, Date.now());
+  }, [wikiSlug]);
+
   if (!basis) return null;
 
   const boundSource = basis.bound_source ?? null;
