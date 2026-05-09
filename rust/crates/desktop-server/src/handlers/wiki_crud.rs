@@ -2196,28 +2196,78 @@ pub(crate) struct VerdictBody {
     pub reason: Option<String>,
 }
 
+/// Cap on the optional free-form `verdict_reason` field. Matches the
+/// "≤ 200 字" hint shown in VerdictPicker. 600 bytes is enough for
+/// 200 BMP CJK chars (3 bytes each in UTF-8) with slack.
+const VERDICT_REASON_MAX_BYTES: usize = 600;
+
+/// Serialise verdict POSTs across the whole server. Verdicts are
+/// rare (one per page edit) so a global mutex is fine; per-slug
+/// granularity would be over-engineering. Without this, two
+/// concurrent POSTs to the same slug perform read-modify-write with
+/// no isolation and one verdict is silently lost (review C2).
+static VERDICT_WRITE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub(crate) async fn post_wiki_page_verdict_handler(
     Path(slug): Path<String>,
     Json(body): Json<VerdictBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Accept-list keeps the wire contract narrow. New verdict values
-    // get added here only after a UI surface ships for them.
-    let allowed = ["should_continue", "should_let_go", "inconclusive"];
-    if !allowed.contains(&body.verdict.as_str()) {
+    // Accept-list lives in wiki_store (review I9) so handler,
+    // maintainer prompt aggregator, and the on-disk frontmatter
+    // contract all reference one source of truth.
+    if !wiki_store::VERDICT_VALUES.contains(&body.verdict.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: format!(
                     "verdict must be one of {:?}, got {}",
-                    allowed, body.verdict
+                    wiki_store::VERDICT_VALUES,
+                    body.verdict
                 ),
             }),
         ));
     }
 
+    // Reason validation (review C1). Newlines would split the value
+    // across lines and either become a bogus YAML key or terminate
+    // the frontmatter early; over-length values balloon the file +
+    // inflate the maintainer absorb prompt.
+    if let Some(reason) = body.reason.as_deref() {
+        if reason.len() > VERDICT_REASON_MAX_BYTES {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!(
+                        "verdict_reason too long: {} bytes (max {VERDICT_REASON_MAX_BYTES})",
+                        reason.len()
+                    ),
+                }),
+            ));
+        }
+        if reason.contains('\n') || reason.contains('\r') {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "verdict_reason must not contain newlines".to_string(),
+                }),
+            ));
+        }
+    }
+
     let paths = resolve_wiki_root_for_handler()?;
-    let content =
-        wiki_store::read_wiki_page_content(&paths, &slug).map_err(|e| {
+    let now_iso = wiki_store::now_iso8601();
+
+    // Atomic read-modify-write under VERDICT_WRITE_GUARD (review C2).
+    // The lock body is sync (no .await), so std::sync::Mutex is
+    // appropriate — holding a sync mutex across an .await would be a
+    // deadlock hazard, so we deliberately do the entire critical
+    // section within an immediately-invoked closure that returns
+    // before the next await point in the outer fn.
+    let write_result: Result<(), ApiError> = (|| {
+        let _guard = VERDICT_WRITE_GUARD
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let content = wiki_store::read_wiki_page_content(&paths, &slug).map_err(|e| {
             (
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
@@ -2225,24 +2275,29 @@ pub(crate) async fn post_wiki_page_verdict_handler(
                 }),
             )
         })?;
-    let now_iso = wiki_store::now_iso8601();
-    let mut updated =
-        wiki_store::patch_frontmatter_field(&content, "verdict", Some(&body.verdict));
-    updated = wiki_store::patch_frontmatter_field(&updated, "verdict_at", Some(&now_iso));
-    updated = wiki_store::patch_frontmatter_field(
-        &updated,
-        "verdict_reason",
-        body.reason.as_deref(),
-    );
-
-    wiki_store::overwrite_wiki_page_content(&paths, &slug, &updated).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("verdict write failed: {e}"),
-            }),
-        )
-    })?;
+        let mut updated = wiki_store::patch_frontmatter_field(
+            &content,
+            "verdict",
+            Some(&body.verdict),
+        );
+        updated =
+            wiki_store::patch_frontmatter_field(&updated, "verdict_at", Some(&now_iso));
+        updated = wiki_store::patch_frontmatter_field(
+            &updated,
+            "verdict_reason",
+            body.reason.as_deref(),
+        );
+        wiki_store::overwrite_wiki_page_content(&paths, &slug, &updated).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("verdict write failed: {e}"),
+                }),
+            )
+        })?;
+        Ok(())
+    })();
+    write_result?;
 
     Ok(Json(serde_json::json!({ "ok": true, "verdict_at": now_iso })))
 }
@@ -2347,6 +2402,79 @@ mod verdict_tests {
         )
         .await;
         let err = result.expect_err("unknown verdict should be rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn put_verdict_rejects_reason_with_newlines() {
+        // Review C1: a multi-line reason would split into multiple
+        // YAML lines and corrupt the frontmatter. Handler must reject
+        // BEFORE write.
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        seed_concept(
+            &paths,
+            "p",
+            "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: P\nsummary: x\npurpose:\n  - learning\ncreated_at: 2026-04-01T00:00:00Z\n---\n\n# body\n",
+        );
+
+        let body = VerdictBody {
+            verdict: "should_continue".to_string(),
+            reason: Some("first line\nsecond line".to_string()),
+        };
+        let result = post_wiki_page_verdict_handler(
+            axum::extract::Path("p".to_string()),
+            Json(body),
+        )
+        .await;
+        let err = result.expect_err("multi-line reason should be rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        // File untouched — verdict not written when reason invalid.
+        let raw = std::fs::read_to_string(
+            paths
+                .wiki
+                .join(wiki_store::WIKI_CONCEPTS_SUBDIR)
+                .join("p.md"),
+        )
+        .unwrap();
+        assert!(!raw.contains("verdict:"), "verdict must not be written");
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn put_verdict_rejects_oversized_reason() {
+        // Review C1 partner test: 10MB reason would balloon the
+        // file and inflate the maintainer absorb prompt. Handler
+        // must cap.
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        seed_concept(
+            &paths,
+            "p",
+            "---\ntype: concept\nstatus: active\nowner: human\nschema: v1\ntitle: P\nsummary: x\npurpose:\n  - learning\ncreated_at: 2026-04-01T00:00:00Z\n---\n\n# body\n",
+        );
+
+        // 1000 bytes — well over the 600-byte cap.
+        let body = VerdictBody {
+            verdict: "should_continue".to_string(),
+            reason: Some("a".repeat(1000)),
+        };
+        let result = post_wiki_page_verdict_handler(
+            axum::extract::Path("p".to_string()),
+            Json(body),
+        )
+        .await;
+        let err = result.expect_err("oversized reason should be rejected");
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
 
         std::env::remove_var("CLAWWIKI_HOME");

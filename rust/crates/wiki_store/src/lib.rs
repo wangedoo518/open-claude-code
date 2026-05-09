@@ -6850,12 +6850,25 @@ fn apply_resurface_reject(paths: &WikiPaths, slug: &str) -> Result<()> {
     Ok(())
 }
 
+/// Slice E17 — canonical list of accepted `verdict` values. Lives
+/// in `wiki_store` so handler, maintainer prompt aggregator, and any
+/// future consumer all reference one source of truth instead of
+/// hardcoding the triple themselves (drift hazard — see review I9).
+pub const VERDICT_VALUES: &[&str] =
+    &["should_continue", "should_let_go", "inconclusive"];
+
 /// Slice E15 helper: minimally surgical frontmatter edit. Reads the
 /// scalar value of a top-level key inside the leading `---` / `---`
 /// fence. Returns `None` if the file has no frontmatter, no fence, or
 /// the key is absent. Indented (nested) keys with the same name are
 /// ignored — only top-level keys count, matching the rest of
 /// wiki_store's frontmatter handling.
+///
+/// Quote handling: strips MATCHING outer single- or double-quote
+/// pairs (e.g. `"foo"` → `foo`). Mixed or unbalanced quotes are
+/// returned verbatim — previous `trim_matches` blew off both ends
+/// independently and corrupted values like `"she said \"yes\""`
+/// (review I7).
 pub fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
     let lines: Vec<&str> = content.split('\n').collect();
     if lines.first().copied() != Some("---") {
@@ -6870,11 +6883,37 @@ pub fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
             continue;
         }
         if let Some(rest) = line.strip_prefix(&prefix) {
-            let value = rest.trim().trim_matches(|c| c == '\'' || c == '"');
-            return Some(value.to_string());
+            let trimmed = rest.trim();
+            let unquoted = trimmed
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .or_else(|| {
+                    trimmed
+                        .strip_prefix('\'')
+                        .and_then(|s| s.strip_suffix('\''))
+                })
+                .unwrap_or(trimmed);
+            return Some(unquoted.to_string());
         }
     }
     None
+}
+
+/// Defensive sanitiser for `patch_frontmatter_field` values. The
+/// frontmatter fence relies on lines that EQUAL `---` to terminate;
+/// a value containing `\n` would split into two lines and the second
+/// line would either become a bogus top-level key or accidentally
+/// match the closing fence. Replace CR/LF with a single space so the
+/// emitted line stays single-line no matter what the caller passes.
+/// Strip leading whitespace too — YAML treats it as nested-key
+/// continuation. Callers SHOULD validate upstream (handler-level
+/// rejection); this is defence-in-depth so the pure helper can never
+/// produce broken frontmatter.
+fn sanitise_frontmatter_value(value: &str) -> String {
+    value
+        .replace(['\n', '\r'], " ")
+        .trim_start()
+        .to_string()
 }
 
 /// Slice E15 helper: surgically rewrite a single top-level scalar key
@@ -6892,6 +6931,14 @@ pub fn read_frontmatter_field(content: &str, key: &str) -> Option<String> {
 /// Indented (nested) lines with the same name are left alone. This
 /// keeps wiki page edits diff-friendly even when several writers
 /// touch the same file.
+///
+/// Value sanitisation (review I1): newlines in `value` are replaced
+/// with spaces so the emitted YAML stays single-line, and leading
+/// whitespace is trimmed so the line isn't interpreted as a nested
+/// continuation. Callers SHOULD reject invalid values up-front (e.g.
+/// the verdict POST handler returns 400 for newlines / over-length
+/// reasons); this layer guarantees the pure helper never produces
+/// structurally broken frontmatter regardless.
 pub fn patch_frontmatter_field(content: &str, key: &str, value: Option<&str>) -> String {
     let lines: Vec<&str> = content.split('\n').collect();
     if lines.first().copied() != Some("---") {
@@ -6919,7 +6966,8 @@ pub fn patch_frontmatter_field(content: &str, key: &str, value: Option<&str>) ->
         if is_top_level_target {
             replaced = true;
             if let Some(v) = value {
-                out.push(format!("{key}: {v}"));
+                let safe = sanitise_frontmatter_value(v);
+                out.push(format!("{key}: {safe}"));
             }
             // None → drop the line entirely.
         } else {
@@ -6936,7 +6984,8 @@ pub fn patch_frontmatter_field(content: &str, key: &str, value: Option<&str>) ->
                 .position(|l| l == "---")
                 .map(|i| i + 1)
                 .unwrap_or(out.len());
-            out.insert(insert_at, format!("{key}: {v}"));
+            let safe = sanitise_frontmatter_value(v);
+            out.insert(insert_at, format!("{key}: {safe}"));
         }
     }
 
@@ -13871,6 +13920,71 @@ mod tests {
         assert_eq!(
             summary.verdict_reason.as_deref(),
             Some("Two follow-up notes within a week.")
+        );
+    }
+
+    #[test]
+    fn read_frontmatter_field_strips_only_matching_quote_pairs() {
+        // Review I7: previous trim_matches blew off both ends
+        // independently — `"she said \"yes\""` lost a tail quote.
+        let content = "---\ntitle: Pay\n\
+                       verdict_reason: \"she said \\\"yes\\\"\"\n\
+                       owner: human\n---\n\nbody\n";
+        let v = read_frontmatter_field(content, "verdict_reason").unwrap();
+        // Outer matched pair stripped; inner escaped quotes survive.
+        assert_eq!(v, "she said \\\"yes\\\"");
+    }
+
+    #[test]
+    fn read_frontmatter_field_handles_unbalanced_or_missing_quotes() {
+        let content = "---\nplain: hello\n\
+                       starts_only: \"oops\n\
+                       single: 'foo'\n---\n\nbody\n";
+        assert_eq!(read_frontmatter_field(content, "plain").as_deref(), Some("hello"));
+        // `"oops` is unbalanced — return verbatim, do not silently
+        // chew the leading quote.
+        assert_eq!(
+            read_frontmatter_field(content, "starts_only").as_deref(),
+            Some("\"oops"),
+        );
+        assert_eq!(read_frontmatter_field(content, "single").as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn patch_frontmatter_field_sanitises_newlines_in_value() {
+        // Review I1: a newline in `value` would split into two lines
+        // and either become a bogus key or terminate the fence.
+        let content = "---\ntitle: Pay\n---\n\nbody\n";
+        let out = patch_frontmatter_field(content, "verdict_reason", Some("a\nb\nc"));
+        // Value collapsed to single line with spaces.
+        assert!(
+            out.contains("verdict_reason: a b c"),
+            "expected sanitised value, got:\n{out}",
+        );
+        // Closing fence still intact at exactly one position.
+        let fences: usize = out.lines().filter(|l| *l == "---").count();
+        assert_eq!(fences, 2, "expected exactly 2 fences, got {fences}:\n{out}");
+        // Body preserved.
+        assert!(out.contains("\nbody\n"));
+    }
+
+    #[test]
+    fn patch_frontmatter_field_strips_leading_whitespace_in_value() {
+        // Otherwise YAML treats the line as a nested continuation of
+        // the previous key.
+        let content = "---\ntitle: Pay\n---\n\nbody\n";
+        let out = patch_frontmatter_field(content, "x", Some("   leading space"));
+        assert!(out.contains("\nx: leading space"), "got:\n{out}");
+    }
+
+    #[test]
+    fn verdict_values_constant_matches_handler_allowlist() {
+        // Review I9: this triple is also hardcoded in the handler
+        // and the maintainer aggregator. They MUST agree — promote
+        // any new value through this constant only.
+        assert_eq!(
+            VERDICT_VALUES,
+            &["should_continue", "should_let_go", "inconclusive"],
         );
     }
 
