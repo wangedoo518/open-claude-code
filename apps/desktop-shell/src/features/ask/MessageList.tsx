@@ -178,18 +178,36 @@ export const MessageList = memo(function MessageList({
   // key === msg.id; tool groups don't carry user messages so they're
   // not navigation targets). The navigator only ever asks to jump to
   // user-text messages, which always render as `single` items.
+  //
+  // Review I3 — items / virtualizer change on every streaming token
+  // (items.length stable but reference fresh; virtualizer is also
+  // re-created when scrollElement flips). If we put either in the
+  // useEffect dep list directly, the registration thrashes (cleanup
+  // → register) on every poll/token, and a navigator click that
+  // lands in the cleanup-then-register window finds null and is
+  // dropped. Instead: register once, close over refs that always
+  // point at the latest values.
   const navigator = useConversationNavigator();
+  const itemsRef = useRef(items);
+  const virtualizerRef = useRef(virtualizer);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  useEffect(() => {
+    virtualizerRef.current = virtualizer;
+  }, [virtualizer]);
   useEffect(() => {
     if (!navigator) return;
     navigator.registerScroller((messageId) => {
-      const idx = items.findIndex(
+      const currentItems = itemsRef.current;
+      const idx = currentItems.findIndex(
         (it) => it.kind === "single" && it.message.id === messageId,
       );
       if (idx < 0) return;
-      virtualizer.scrollToIndex(idx, { align: "start" });
+      virtualizerRef.current.scrollToIndex(idx, { align: "start" });
     });
     return () => navigator.registerScroller(null);
-  }, [navigator, items, virtualizer]);
+  }, [navigator]);
 
   // When the user switches to a different session, clear any stale
   // height cache and reset the scroll position so a previous thread's

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sparkle, ArrowDownToLine, HelpCircle } from "lucide-react";
 
 /**
@@ -56,6 +56,22 @@ export function VerdictPicker({
   const [open, setOpen] = useState(false);
   const [draftReason, setDraftReason] = useState(reason ?? "");
   const [saving, setSaving] = useState<Verdict | null>(null);
+
+  // Review I2 — re-init the textarea from the latest server-side
+  // reason every time the popover transitions closed→open, so the
+  // user can't accidentally save a stale draft over a newer
+  // persisted value (e.g. another tab edited the page, then this
+  // tab refetched). Tracking the previous-open state via ref keeps
+  // mid-edit typing intact while the popover is open — we only
+  // reset on the open transition itself, not on every reason
+  // refetch.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      setDraftReason(reason ?? "");
+    }
+    wasOpenRef.current = open;
+  }, [open, reason]);
 
   const current = CHOICES.find((c) => c.id === currentVerdict);
 

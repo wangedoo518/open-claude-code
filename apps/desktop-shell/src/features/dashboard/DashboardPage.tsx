@@ -329,16 +329,27 @@ export function DashboardPage() {
   // Slice E18.3 — derive RoiPageSummary inputs once per pages refresh
   // so RoiPulsePanel doesn't have to know the full WikiPageSummary
   // shape. Keeps the panel pure-data and easy to test.
+  //
+  // Review I6 — `Date.parse("") || 0` silently substituted epoch 0
+  // for malformed dates, which then fell outside every 30/90-day
+  // window with no signal. Skip pages with un-parseable timestamps
+  // entirely so the funnel reflects real data, not zeroed phantoms.
   const roiPages = useMemo<ReadonlyArray<RoiPageSummary>>(() => {
     const pages = pagesQuery.data?.pages ?? [];
-    return pages.map((p) => ({
-      slug: p.slug,
-      purpose: p.purpose ?? [],
-      expressed_in: p.expressed_in ?? [],
-      verdict: p.verdict ?? null,
-      vitality: p.vitality ?? null,
-      created_at_ms: Date.parse(p.created_at) || 0,
-    }));
+    const out: RoiPageSummary[] = [];
+    for (const p of pages) {
+      const t = Date.parse(p.created_at);
+      if (!Number.isFinite(t)) continue;
+      out.push({
+        slug: p.slug,
+        purpose: p.purpose ?? [],
+        expressed_in: p.expressed_in ?? [],
+        verdict: p.verdict ?? null,
+        vitality: p.vitality ?? null,
+        created_at_ms: t,
+      });
+    }
+    return out;
   }, [pagesQuery.data?.pages]);
   const headline = derivePulseHeadline({
     totalRisks,

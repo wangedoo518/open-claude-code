@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   extractNavigatorTurns,
   findActiveTurnIndex,
@@ -46,53 +46,72 @@ export function ConversationNavigator({ messages }: ConversationNavigatorProps) 
   const navApi = useConversationNavigator();
   const [activeTurnIdx, setActiveTurnIdx] = useState<number>(-1);
   const rafRef = useRef<number | null>(null);
-  const navRef = useRef<HTMLElement | null>(null);
 
-  // Scroll-spy: find the topmost visible message-row inside the
-  // ask-conversation-scroll element and map its data-message-index to
-  // an active turn.
+  // Review I5 — callback ref instead of useRef so the scroll-spy
+  // effect re-runs the moment the <nav> attaches to the DOM. With
+  // a plain useRef + useEffect deps `[turns]`, the FIRST render
+  // could miss attaching the listener if `navRef.current` was still
+  // null when the effect fired (and then never re-fire on a stable
+  // turns array, leaving the navigator permanently inert).
+  const [navEl, setNavEl] = useState<HTMLElement | null>(null);
+  const navCallbackRef = useCallback((el: HTMLElement | null) => {
+    setNavEl(el);
+  }, []);
+
+  // Review I4 — turnsRef so the scroll listener can read the latest
+  // turns without re-attaching every time a streaming token mutates
+  // the messages array. Without this, every poll/token tore down
+  // and re-added the listener (and re-walked parentElement to find
+  // the scroller) — wasted work + potential miss window.
+  const turnsRef = useRef(turns);
   useEffect(() => {
-    if (turns.length === 0) return;
-    // Scope the scroll-element lookup to OUR own subtree (review N3).
-    // `document.querySelector` would pick the first .ask-conversation-
-    // scroll in the document, which may belong to a sibling
-    // ChatSidePanel when both panels are mounted with content. Walk
-    // up to the nearest relative wrapper that contains both us and
-    // the scroller, then query down — guaranteed to land on the
-    // scroller this navigator is anchored to.
-    const root = navRef.current?.parentElement ?? null;
+    turnsRef.current = turns;
+  }, [turns]);
+
+  const recompute = useCallback(() => {
+    const currentTurns = turnsRef.current;
+    if (currentTurns.length === 0) {
+      setActiveTurnIdx((prev) => (prev === -1 ? prev : -1));
+      return;
+    }
+    const root = navEl?.parentElement ?? null;
     const scrollEl =
       root?.querySelector<HTMLDivElement>(SCROLL_CONTAINER_SELECTOR) ?? null;
     if (!scrollEl) return;
+    const scrollTop = scrollEl.scrollTop;
+    const rows = scrollEl.querySelectorAll<HTMLElement>("[data-message-index]");
+    let topVisibleIdx = -1;
+    // Pick the LARGEST message-index whose row top is at or above
+    // the viewport top (with 8px jitter slack). Defensive `Math.max`
+    // instead of break-on-first-overflow (review N1) so the spy
+    // still works if virtualizer ever renders rows out of DOM-doc
+    // order.
+    for (const row of rows) {
+      const rowTop = row.offsetTop;
+      if (rowTop > scrollTop + 8) continue;
+      const idxAttr = row.getAttribute("data-message-index");
+      if (idxAttr === null) continue;
+      const parsed = Number.parseInt(idxAttr, 10);
+      if (!Number.isFinite(parsed)) continue;
+      if (parsed > topVisibleIdx) topVisibleIdx = parsed;
+    }
+    if (topVisibleIdx < 0) {
+      setActiveTurnIdx((prev) => (prev === -1 ? prev : -1));
+      return;
+    }
+    const next = findActiveTurnIndex(currentTurns, topVisibleIdx);
+    setActiveTurnIdx((prev) => (prev === next ? prev : next));
+  }, [navEl]);
 
-    const recompute = () => {
-      const scrollTop = scrollEl.scrollTop;
-      const rows = scrollEl.querySelectorAll<HTMLElement>(
-        "[data-message-index]",
-      );
-      let topVisibleIdx = -1;
-      // Pick the LARGEST message-index whose row top is at or above
-      // the viewport top (with 8px jitter slack). Defensive
-      // `Math.max` instead of break-on-first-overflow (review N1) so
-      // the spy still works if virtualizer ever renders rows out of
-      // DOM-document order.
-      for (const row of rows) {
-        const rowTop = row.offsetTop;
-        if (rowTop > scrollTop + 8) continue;
-        const idxAttr = row.getAttribute("data-message-index");
-        if (idxAttr === null) continue;
-        const parsed = Number.parseInt(idxAttr, 10);
-        if (!Number.isFinite(parsed)) continue;
-        if (parsed > topVisibleIdx) topVisibleIdx = parsed;
-      }
-      if (topVisibleIdx < 0) {
-        setActiveTurnIdx((prev) => (prev === -1 ? prev : -1));
-        return;
-      }
-      const next = findActiveTurnIndex(turns, topVisibleIdx);
-      setActiveTurnIdx((prev) => (prev === next ? prev : next));
-    };
-
+  // Attach the scroll listener once per navEl mount. Effect re-runs
+  // only when navEl identity changes (i.e. mount / remount), NOT on
+  // every streaming snapshot.
+  useEffect(() => {
+    if (!navEl) return;
+    const root = navEl.parentElement;
+    const scrollEl =
+      root?.querySelector<HTMLDivElement>(SCROLL_CONTAINER_SELECTOR) ?? null;
+    if (!scrollEl) return;
     const onScroll = () => {
       if (rafRef.current !== null) return;
       rafRef.current = requestAnimationFrame(() => {
@@ -100,9 +119,8 @@ export function ConversationNavigator({ messages }: ConversationNavigatorProps) 
         recompute();
       });
     };
-
-    // Run once on mount so the initial active state matches the
-    // current scroll position (e.g. session resume below the top).
+    // Initial paint sync — match active state to the current
+    // scrollTop (e.g. session resume below the top).
     recompute();
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
     return () => {
@@ -112,13 +130,19 @@ export function ConversationNavigator({ messages }: ConversationNavigatorProps) 
         rafRef.current = null;
       }
     };
-  }, [turns]);
+  }, [navEl, recompute]);
+
+  // Re-run recompute (without re-attaching the listener) when turns
+  // change — keeps the active dot fresh after a new turn appends.
+  useEffect(() => {
+    recompute();
+  }, [turns, recompute]);
 
   if (turns.length < MIN_TURNS_TO_SHOW || !navApi) return null;
 
   return (
     <nav
-      ref={navRef}
+      ref={navCallbackRef}
       aria-label="对话锚点"
       className="ask-conversation-navigator pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center gap-2 py-2"
     >
