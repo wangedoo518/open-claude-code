@@ -2049,10 +2049,25 @@ fn build_absorb_system_prompt(paths: &wiki_store::WikiPaths, index_content: &str
     // proposals toward purposes the user has confirmed pay off and
     // away from purposes they've explicitly let go of. Aggregates
     // across all wiki pages once per absorb call (cheap O(n) read).
+    //
+    // Review I8 — bounded output. A mature 1000-page vault could
+    // produce hundreds of distinct purpose lines (typos, hallucinated
+    // purposes from prior LLM passes, etc.) and inflate every absorb
+    // prompt by multi-KB. Cap at top-N by total verdict count so the
+    // prompt stays within a few hundred bytes regardless of vault
+    // size, and warn (in-prompt) if the rail was truncated.
+    //
+    // Review I9 — verdict allowlist consulted via wiki_store's
+    // canonical const. If a future verdict value is added, the index
+    // table and match arms below need updating in lock-step;
+    // unknown verdicts hit the explicit `_ => unknown += 1` branch
+    // so drift is visible in the prompt rather than silently dropped.
     if let Ok(pages) = wiki_store::list_all_wiki_pages(paths) {
         use std::collections::BTreeMap;
+        const PURPOSE_PRINT_LIMIT: usize = 20;
         // BTreeMap so the prompt is deterministic across runs.
         let mut counts: BTreeMap<String, [u32; 3]> = BTreeMap::new(); // [continue, let_go, inconclusive]
+        let mut unknown_verdict_count: u32 = 0;
         for page in &pages {
             let Some(verdict) = page.verdict.as_deref() else {
                 continue;
@@ -2061,23 +2076,52 @@ fn build_absorb_system_prompt(paths: &wiki_store::WikiPaths, index_content: &str
                 "should_continue" => 0,
                 "should_let_go" => 1,
                 "inconclusive" => 2,
-                _ => continue,
+                _ => {
+                    unknown_verdict_count = unknown_verdict_count.saturating_add(1);
+                    continue;
+                }
             };
             for purpose in &page.purpose {
+                if purpose.is_empty() {
+                    continue;
+                }
                 let entry = counts.entry(purpose.clone()).or_default();
                 entry[idx] = entry[idx].saturating_add(1);
             }
         }
         if !counts.is_empty() {
+            // Sort by total descending, ties broken by purpose name
+            // ascending for deterministic output.
+            let mut entries: Vec<(String, [u32; 3])> = counts.into_iter().collect();
+            entries.sort_by(|a, b| {
+                let a_total: u32 = a.1.iter().sum();
+                let b_total: u32 = b.1.iter().sum();
+                b_total.cmp(&a_total).then_with(|| a.0.cmp(&b.0))
+            });
+            let total_purposes = entries.len();
+            let truncated = total_purposes > PURPOSE_PRINT_LIMIT;
+
             prompt.push_str("\n\n## 历史决策回顾 (verdict signals)\n\n");
             prompt.push_str(
                 "用户对已存在 wiki 页面的事后判断分布。high should_let_go \
                  占比的 purpose 应当克制建议；high should_continue 占比的 \
                  purpose 可以更主动地建议结晶。\n\n",
             );
-            for (purpose, [cont, lg, inc]) in counts {
+            for (purpose, [cont, lg, inc]) in entries.into_iter().take(PURPOSE_PRINT_LIMIT) {
                 prompt.push_str(&format!(
                     "- {purpose}: should_continue={cont} should_let_go={lg} inconclusive={inc}\n"
+                ));
+            }
+            if truncated {
+                prompt.push_str(&format!(
+                    "- … {} more purpose(s) truncated (showing top {} by verdict count)\n",
+                    total_purposes - PURPOSE_PRINT_LIMIT,
+                    PURPOSE_PRINT_LIMIT
+                ));
+            }
+            if unknown_verdict_count > 0 {
+                prompt.push_str(&format!(
+                    "- (note: {unknown_verdict_count} page(s) had an unrecognised verdict value and were skipped)\n"
                 ));
             }
         }
