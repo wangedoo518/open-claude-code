@@ -11,6 +11,7 @@ import { Message } from "./Message";
 import { ToolActionsGroup } from "./ToolActionsGroup";
 import { StreamingMessage } from "./StreamingMessage";
 import { useStickToBottomContext } from "./ConversationScroller";
+import { useConversationNavigator } from "./ConversationNavigatorContext";
 import type { ConversationMessage } from "@/features/common/message-types";
 import type { SourceRef } from "@/lib/tauri";
 import type { ConversationTurnStatus } from "./useConversationTurnState";
@@ -154,6 +155,15 @@ export const MessageList = memo(function MessageList({
     [messages, streamingContent, streamingThinking, isStreaming, isStartingTurn],
   );
 
+  // E19.2 — message-id → index lookup for the navigator scroll-spy
+  // attributes. Memoised so the map isn't rebuilt on every virtualItem
+  // render pass.
+  const messageIndexById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < messages.length; i += 1) m.set(messages[i].id, i);
+    return m;
+  }, [messages]);
+
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollElement,
@@ -161,6 +171,25 @@ export const MessageList = memo(function MessageList({
     estimateSize: () => 96,
     overscan: 5,
   });
+
+  // E19.2 — registry: expose a scrollToMessageId entry point to the
+  // sibling ConversationNavigator. Resolves the message-id to the
+  // render-item index via the buildItems mapping (single rows have
+  // key === msg.id; tool groups don't carry user messages so they're
+  // not navigation targets). The navigator only ever asks to jump to
+  // user-text messages, which always render as `single` items.
+  const navigator = useConversationNavigator();
+  useEffect(() => {
+    if (!navigator) return;
+    navigator.registerScroller((messageId) => {
+      const idx = items.findIndex(
+        (it) => it.kind === "single" && it.message.id === messageId,
+      );
+      if (idx < 0) return;
+      virtualizer.scrollToIndex(idx, { align: "start" });
+    });
+    return () => navigator.registerScroller(null);
+  }, [navigator, items, virtualizer]);
 
   // When the user switches to a different session, clear any stale
   // height cache and reset the scroll position so a previous thread's
@@ -218,6 +247,22 @@ export const MessageList = memo(function MessageList({
         const item = items[virtualItem.index];
         if (!item) return null;
 
+        // E19.2 — nav scroll-spy reads these to map "topmost visible
+        // row" → message index → active turn. `data-message-id` is set
+        // on single rows only (the navigator only targets user-text
+        // messages, which never group with tool blocks). `data-message-
+        // index` is the position in the original messages array — for
+        // tool groups, we report the *first* member's index so spy
+        // mapping stays monotonic.
+        const dataMessageId =
+          item.kind === "single" ? item.message.id : undefined;
+        const dataMessageIndex =
+          item.kind === "single"
+            ? messageIndexById.get(item.message.id)
+            : item.kind === "tool-group"
+              ? messageIndexById.get(item.messages[0].id)
+              : undefined;
+
         return (
           <div
             key={item.key}
@@ -225,6 +270,8 @@ export const MessageList = memo(function MessageList({
             data-index={virtualItem.index}
             data-kind={item.kind}
             data-tail={virtualItem.index === items.length - 1 ? "true" : "false"}
+            data-message-id={dataMessageId}
+            data-message-index={dataMessageIndex}
             ref={virtualizer.measureElement}
             style={{
               position: "absolute",

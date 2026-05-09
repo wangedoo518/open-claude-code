@@ -8011,3 +8011,46 @@ a.ds-status-item:hover {
   padding: 6px 8px;
   resize: vertical;
 }
+
+/* E19.3 — ConversationNavigator dot rail (right edge of Ask chat).
+ * Sized intentionally tiny so the rail reads as a sidebar minimap,
+ * not as primary chrome. */
+.ask-conversation-navigator {
+  /* Bare nav uses pointer-events:none so messages remain selectable
+   * around the rail; the inner <ol> opts back in for the dots only. */
+}
+.ask-nav-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-muted-foreground) 35%, transparent);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+.ask-nav-dot:hover {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  transform: scale(1.25);
+}
+.ask-nav-dot:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.ask-nav-dot[data-active="true"] {
+  width: 8px;
+  height: 8px;
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ask-nav-dot {
+    transition: none;
+  }
+  .ask-nav-dot:hover {
+    transform: none;
+  }
+}

@@ -66,7 +66,11 @@ export function ConversationScroller({ children }: { children: ReactNode }) {
     <ScrollContext.Provider value={{ isAtBottom, scrollToBottom, scrollElement }}>
       <div
         ref={scrollRef}
-        className="relative flex-1 overflow-y-auto"
+        // E19.2 — `ask-conversation-scroll` is the stable hook the
+        // ConversationNavigator uses to find this element by
+        // querySelector when computing scroll-spy / active turn. Do
+        // not rename without updating the navigator.
+        className="ask-conversation-scroll relative flex-1 overflow-y-auto"
         style={{ minHeight: 0 }}
       >
         {children}

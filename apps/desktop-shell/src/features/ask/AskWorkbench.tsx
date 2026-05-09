@@ -32,6 +32,8 @@ import { WikiQueryMessage } from "./WikiQueryMessage";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { ConversationScroller } from "./ConversationScroller";
+import { ConversationNavigator } from "./ConversationNavigator";
+import { ConversationNavigatorProvider } from "./ConversationNavigatorContext";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { WikiPermissionDialog } from "@/features/permission/WikiPermissionDialog";
 import type { PermissionAction } from "@/features/permission/permission-types";
@@ -943,6 +945,11 @@ export function AskWorkbench({
 
   return (
     <div className={`flex flex-1 overflow-hidden ${compact ? "compact-ask" : ""}`}>
+     {/* E19.4 — ConversationNavigatorProvider sits above both
+        MessageList (it registers virtualizer.scrollToIndex) and
+        <ConversationNavigator /> (it dispatches scroll-to-message
+        clicks). Both must be descendants. */}
+     <ConversationNavigatorProvider>
      <div className="flex flex-1 flex-col overflow-hidden">
       {!hideHeader && (
         <AskHeader
@@ -991,6 +998,11 @@ export function AskWorkbench({
       {displayMessages.length === 0 && !isLoadingSession ? (
         <WelcomeScreen onSelectPrompt={setStarterDraft} />
       ) : (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        {/* E19.4 — relative wrapper so <ConversationNavigator>'s
+            absolute positioning anchors here (and not to some far
+            outer div). The navigator overlays the right edge of the
+            scroll viewport. */}
         <ConversationScroller>
           <div className="flex min-h-full flex-col">
             {showDemo && (
@@ -1120,6 +1132,8 @@ export function AskWorkbench({
           </div>
           <ScrollToBottomButton />
         </ConversationScroller>
+        <ConversationNavigator messages={displayMessages} />
+        </div>
       )}
 
       <Composer
@@ -1144,6 +1158,7 @@ export function AskWorkbench({
 
       {/* StatusLine removed — Composer's inline toolbar now shows model + permission + environment */}
      </div>
+     </ConversationNavigatorProvider>
 
       {/* Maintainer task tree side panel (CCD soul ④) */}
       {showAgentPanel && !compact && (
