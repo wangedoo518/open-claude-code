@@ -15,8 +15,11 @@ name: Build installers
 #
 # Output per platform:
 #   - Windows: .msi + .exe   (Buddy_X.Y.Z_x64_en-US.msi, Buddy_X.Y.Z_x64-setup.exe)
-#   - macOS:   signed + notarized .dmg and .app.zip
-#              (aarch64-apple-darwin / Apple Silicon)
+#   - macOS:   .dmg + .app.zip (aarch64-apple-darwin / Apple Silicon).
+#              Signed + notarized when APPLE_CERTIFICATE_P12_BASE64 +
+#              friends are configured as repo secrets; otherwise an
+#              unsigned tauri-action build (still a downloadable .dmg,
+#              but Gatekeeper requires right-click → Open on first run).
 #
 # Sidecar: Tauri shell is a thin wrapper that spawns desktop-server
 # (the HTTP backend) at runtime. desktop-server lives in the rust/
@@ -89,13 +92,38 @@ jobs:
           workspaces: apps/desktop-shell/src-tauri
           shared-key: tauri-${{ matrix.label }}
 
+      # Detect whether this repo has Apple signing secrets configured.
+      # If yes → run the full signed + notarized macOS path (delegates
+      # to scripts/macos-sign-notarize.sh, which builds desktop-server,
+      # stages sidecar/scripts, signs the .app, builds + signs the .dmg,
+      # submits to notarytool, and staples the ticket).
+      # If no  → fall back to an UNSIGNED tauri-action build so the
+      # workflow still produces a downloadable .dmg + .app.zip. Users
+      # of the unsigned bundle have to right-click Buddy.app → Open
+      # the first time to bypass Gatekeeper (release notes call this
+      # out below).
+      - name: Detect Apple signing secrets
+        if: runner.os == 'macOS'
+        id: apple
+        env:
+          P12: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+        shell: bash
+        run: |
+          if [[ -n "${P12}" ]]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "[apple] APPLE_CERTIFICATE_P12_BASE64 detected — signed + notarized path"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLE_CERTIFICATE_P12_BASE64 not configured; producing UNSIGNED macOS bundle. First launch: right-click Buddy.app → Open."
+          fi
+
       - name: Build desktop-server backend (${{ matrix.target }})
-        if: runner.os != 'macOS'
+        if: runner.os != 'macOS' || steps.apple.outputs.signed == 'false'
         working-directory: rust
         run: cargo build --release --bin desktop-server --target ${{ matrix.target }}
 
       - name: Stage desktop-server as Tauri sidecar
-        if: runner.os != 'macOS'
+        if: runner.os != 'macOS' || steps.apple.outputs.signed == 'false'
         shell: bash
         run: |
           mkdir -p apps/desktop-shell/src-tauri/binaries
@@ -105,13 +133,16 @@ jobs:
           ls -lh apps/desktop-shell/src-tauri/binaries/
 
       - name: Stage ingest scripts as Tauri resources
-        if: runner.os != 'macOS'
+        if: runner.os != 'macOS' || steps.apple.outputs.signed == 'false'
         # wechat_fetcher.py + defuddle_worker.js + markitdown_worker.py
         # + package.json must ride alongside the desktop-server binary so
         # the Python ingest pipeline (wechat fetch / markitdown convert)
         # works after install. Tauri's bundle.resources ["scripts/*"]
         # picks them up from this dir and lays them next to the .exe on
         # Windows (or in .app/Contents/Resources on macOS).
+        # The signed macOS path runs the same staging inside
+        # macos-sign-notarize.sh, so this step is only needed for the
+        # windows + unsigned-macOS branches.
         shell: bash
         run: |
           mkdir -p apps/desktop-shell/src-tauri/scripts
@@ -125,7 +156,7 @@ jobs:
         run: npm ci
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.apple.outputs.signed == 'true'
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -134,15 +165,18 @@ jobs:
         run: bash ./scripts/import-apple-certificate.sh --skip-notary-credentials
 
       - name: Store Apple notary credentials
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.apple.outputs.signed == 'true'
         env:
           APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
           APPLE_NOTARY_APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_PASSWORD }}
           APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
         run: bash ./scripts/store-apple-notary-credentials.sh
 
+      # Windows always uses tauri-action. macOS uses tauri-action ONLY
+      # in the unsigned fallback path (signed macOS goes through
+      # macos-sign-notarize.sh below).
       - name: Build Tauri installer
-        if: runner.os != 'macOS'
+        if: runner.os != 'macOS' || steps.apple.outputs.signed == 'false'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -150,8 +184,29 @@ jobs:
           projectPath: apps/desktop-shell
           args: ${{ matrix.tauri-args }}
 
+      # tauri-action emits a .app + .dmg on macOS but no .app.zip.
+      # Mirror what the signed path does (`ditto -c -k --keepParent`)
+      # so the existing artifact-glob finds both shapes and the upload
+      # step doesn't fail on `if-no-files-found: error`.
+      - name: Zip unsigned macOS .app
+        if: runner.os == 'macOS' && steps.apple.outputs.signed == 'false'
+        shell: bash
+        run: |
+          APP_DIR="apps/desktop-shell/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          APP_PATH="$(find "$APP_DIR" -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "[ERROR] No .app bundle found under $APP_DIR"
+            ls -lh "$APP_DIR" || true
+            exit 1
+          fi
+          VERSION="$(node -e "process.stdout.write(require('./apps/desktop-shell/src-tauri/tauri.conf.json').version)")"
+          ZIP_PATH="$APP_DIR/Buddy_${VERSION}_aarch64.app.zip"
+          rm -f "$ZIP_PATH"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          ls -lh "$APP_DIR"
+
       - name: Build signed notarized macOS bundle
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.apple.outputs.signed == 'true'
         env:
           APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
         run: bash ./scripts/macos-sign-notarize.sh --target "${{ matrix.target }}"
@@ -179,12 +234,14 @@ jobs:
             Installers are attached below. Pick the one for your OS:
 
             - **Windows**: download the `.msi` (or the NSIS `.exe`) and double-click.
-            - **macOS Apple Silicon**: download the signed and notarized `.dmg`,
-              open it, and drag Buddy to Applications.
+            - **macOS Apple Silicon**: download the `.dmg`, open it, and drag Buddy
+              to Applications. If the bundle was built without an Apple Developer
+              ID (no signing secrets configured in the repo), macOS Gatekeeper
+              flags it on first launch — right-click Buddy.app → Open to bypass.
           files: ${{ matrix.artifact-glob }}
 
       - name: Cleanup temporary Apple keychain
-        if: always() && runner.os == 'macOS'
+        if: always() && runner.os == 'macOS' && steps.apple.outputs.signed == 'true'
         run: |
           if [[ -n "${APPLE_KEYCHAIN_PATH:-}" && -f "${APPLE_KEYCHAIN_PATH}" ]]; then
             security delete-keychain "${APPLE_KEYCHAIN_PATH}" || true
