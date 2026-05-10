@@ -71,7 +71,7 @@ export function WikiFileTree({ embedded = false }: { embedded?: boolean }) {
   });
   const { data: pagesData } = useQuery({
     queryKey: treeKeys.pages(),
-    queryFn: listWikiPages,
+    queryFn: () => listWikiPages(),
     staleTime: 10_000,
   });
   const { data: inboxData } = useQuery({

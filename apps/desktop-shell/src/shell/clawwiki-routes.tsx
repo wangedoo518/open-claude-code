@@ -11,6 +11,7 @@ import {
   Cable,
   Eye,
   FileStack,
+  FileText,
   Home,
   Inbox,
   Link2,
@@ -26,6 +27,7 @@ import {
 import { AskPage } from "@/features/ask/AskPage";
 import { ConnectionsPage } from "@/features/connections/ConnectionsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { DraftPage } from "@/features/draft/DraftPage";
 import { GraphPage } from "@/features/graph/GraphPage";
 import { InboxPage } from "@/features/inbox/InboxPage";
 import { BreakdownPage } from "@/features/power/BreakdownPage";
@@ -109,6 +111,16 @@ export const CLAWWIKI_ROUTES: readonly ClawWikiRoute[] = [
     section: "daily",
     sprint: "S4",
     render: () => <KnowledgeHubPage />,
+  },
+  {
+    key: "drafts",
+    path: "/drafts",
+    routePath: "/drafts/*",
+    icon: FileText,
+    label: "草稿",
+    section: "daily",
+    sprint: "E20",
+    render: () => <DraftPage />,
   },
   {
     key: "wechat",

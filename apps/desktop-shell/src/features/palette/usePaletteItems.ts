@@ -647,7 +647,7 @@ export function useGroupedPaletteItems(query: string): PaletteGroup[] {
 
   const pagesQuery = useQuery({
     queryKey: ["wiki", "pages", "list"],
-    queryFn: listWikiPages,
+    queryFn: () => listWikiPages(),
     staleTime: 10_000,
   });
 

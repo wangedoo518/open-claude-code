@@ -42,7 +42,7 @@ export function WebViewerPage() {
 function ViewerHome() {
   const pagesQuery = useQuery({
     queryKey: ["wiki", "pages", "viewer"],
-    queryFn: listWikiPages,
+    queryFn: () => listWikiPages(),
     staleTime: 30_000,
   });
   const pages = pagesQuery.data?.pages ?? [];

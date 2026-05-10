@@ -12,7 +12,7 @@ export function BreakdownPage() {
 
   const pagesQuery = useQuery({
     queryKey: ["wiki", "pages", "breakdown"],
-    queryFn: listWikiPages,
+    queryFn: () => listWikiPages(),
     staleTime: 30_000,
   });
 

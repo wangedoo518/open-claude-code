@@ -296,9 +296,17 @@ export async function approveInboxWithWrite(
   );
 }
 
-/** GET `/api/wiki/pages` — list every concept page (no body text). */
-export async function listWikiPages(): Promise<WikiPagesListResponse> {
-  return fetchJson<WikiPagesListResponse>("/api/wiki/pages");
+/**
+ * GET `/api/wiki/pages` — list concept pages (no body text).
+ * Pass `{ includeAll: true }` to fetch every category (concept +
+ * people + topic + compare + inspiration). Drafts are NEVER
+ * returned by this endpoint regardless of includeAll.
+ */
+export async function listWikiPages(
+  options: { includeAll?: boolean } = {},
+): Promise<WikiPagesListResponse> {
+  const qs = options.includeAll ? "?include_all=true" : "";
+  return fetchJson<WikiPagesListResponse>(`/api/wiki/pages${qs}`);
 }
 
 /** GET `/api/wiki/pages/:slug` — fetch a single concept page. */
@@ -818,4 +826,98 @@ export async function setWikiPageVerdict(
       body: JSON.stringify(payload),
     },
   );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Slice E20 — Draft workspace API.
+//
+// Drafts close the 搜集→整理→表达 loop: derivative content
+// composed from N source wiki pages, exported back to source pages
+// via expressed_in writeback.
+// ──────────────────────────────────────────────────────────────────
+
+/** Mirrored from `wiki_store::DRAFT_TARGETS`. Keep in sync. */
+export const DRAFT_TARGETS = ["xhs", "blog", "wechat", "other"] as const;
+export type DraftTarget = (typeof DRAFT_TARGETS)[number];
+
+/** GET `/api/wiki/drafts` — list all drafts, mtime descending. */
+export async function listDrafts(): Promise<
+  import("./types").DraftsListResponse
+> {
+  return fetchJson<import("./types").DraftsListResponse>("/api/wiki/drafts");
+}
+
+/** GET `/api/wiki/drafts/:slug` — fetch one draft (summary + body). */
+export async function getDraft(
+  slug: string,
+): Promise<import("./types").DraftDetailResponse> {
+  return fetchJson<import("./types").DraftDetailResponse>(
+    `/api/wiki/drafts/${encodeURIComponent(slug)}`,
+  );
+}
+
+/** POST `/api/wiki/drafts` — create a new empty draft. Returns the slug. */
+export async function createDraft(payload: {
+  title: string;
+  target: DraftTarget;
+}): Promise<{ ok: boolean; slug: string }> {
+  return fetchJson<{ ok: boolean; slug: string }>("/api/wiki/drafts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** PUT `/api/wiki/drafts/:slug` — overwrite title / target / body. */
+export async function putDraft(
+  slug: string,
+  payload: { title: string; target: DraftTarget; body: string },
+): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(
+    `/api/wiki/drafts/${encodeURIComponent(slug)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** POST `/api/wiki/drafts/:slug/sources` — replace the pinned source list. */
+export async function setDraftSources(
+  slug: string,
+  sourcePages: string[],
+): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(
+    `/api/wiki/drafts/${encodeURIComponent(slug)}/sources`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_pages: sourcePages }),
+    },
+  );
+}
+
+/**
+ * POST `/api/wiki/drafts/:slug/export` — for each pinned source page,
+ * append `expressed_in: draft:<slug>` (deduped server-side); stamp
+ * `exported_at` on the draft. Returns counts so the UI can confirm
+ * how many sources were touched.
+ */
+export async function exportDraft(slug: string): Promise<{
+  ok: boolean;
+  exported_at: string;
+  source_count: number;
+  written: number;
+  skipped: string[];
+}> {
+  return fetchJson<{
+    ok: boolean;
+    exported_at: string;
+    source_count: number;
+    written: number;
+    skipped: string[];
+  }>(`/api/wiki/drafts/${encodeURIComponent(slug)}/export`, {
+    method: "POST",
+  });
 }

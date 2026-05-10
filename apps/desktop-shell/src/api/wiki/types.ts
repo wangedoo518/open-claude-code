@@ -976,3 +976,34 @@ export interface InboxLineageResponse {
 export interface RawLineageResponse {
   events: LineageEvent[];
 }
+
+/**
+ * Slice E20 — DraftSummary mirrors the Rust struct in
+ * `rust/crates/wiki_store/src/lib.rs` (`pub struct DraftSummary`).
+ * Drafts are derivative content (XHS, blog, 微信, 长文) composed
+ * from N source wiki pages; on export, expressed_in is written
+ * back to each pinned source so the ROI funnel reflects real
+ * expression.
+ */
+export interface DraftSummary {
+  slug: string;
+  title: string;
+  /** "xhs" | "blog" | "wechat" | "other" — see DRAFT_TARGETS in wiki_store. */
+  target: string;
+  source_pages: string[];
+  created_at: string;
+  updated_at: string;
+  /** ISO 8601; null/undefined when the draft has never been exported. */
+  exported_at?: string | null;
+  byte_size: number;
+}
+
+export interface DraftsListResponse {
+  total_count: number;
+  drafts: DraftSummary[];
+}
+
+export interface DraftDetailResponse {
+  summary: DraftSummary;
+  body: string;
+}
