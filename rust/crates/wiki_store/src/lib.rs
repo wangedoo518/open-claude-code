@@ -521,6 +521,27 @@ pub fn init_wiki(root: &Path) -> Result<()> {
         let drafts_dir = paths.wiki.join(WIKI_DRAFTS_SUBDIR);
         fs::create_dir_all(&drafts_dir)
             .map_err(|e| WikiStoreError::io(drafts_dir.clone(), e))?;
+        // Slice E21 — seed `.gitignore` so the LLM-rendered .html
+        // files (regeneratable presentation artifacts) don't pollute
+        // vault_git_status. Idempotent: only write if absent so users
+        // who customise the file aren't clobbered on re-init.
+        let gi_path = drafts_dir.join(".gitignore");
+        if !gi_path.exists() {
+            fs::write(
+                &gi_path,
+                "# E21 — LLM-rendered HTML preview files for drafts.\n\
+                 # Regenerate any time via the 'render HTML preview'\n\
+                 # button in DraftEditor; not worth git-tracking.\n\
+                 #\n\
+                 # If you DO want HTML committed, REMOVE the *.html line\n\
+                 # below (don't delete this whole file — init_wiki will\n\
+                 # only re-seed when this file is missing entirely, and\n\
+                 # would clobber any deletion intent on next desktop-\n\
+                 # server restart).\n\
+                 *.html\n",
+            )
+            .map_err(|e| WikiStoreError::io(gi_path.clone(), e))?;
+        }
     }
 
     // Seed CLAUDE.md only if absent. We deliberately do NOT compare
@@ -4126,6 +4147,28 @@ pub fn write_draft(
 
     let tmp = path.with_extension("md.tmp");
     fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(path)
+}
+
+/// Slice E21 — write the LLM-rendered HTML for a draft. Lives at
+/// `wiki/drafts/<slug>.html` next to the canonical `.md`. Atomic
+/// via `.tmp` + rename so a crashed render doesn't leave a half-
+/// written file. The HTML is intentionally NOT linked to the .md
+/// existence (callers can render before saving the .md), and is
+/// NOT git-tracked by default (init_wiki seeds a `.gitignore`).
+pub fn write_draft_html(
+    paths: &WikiPaths,
+    slug: &str,
+    html: &str,
+) -> Result<PathBuf> {
+    validate_wiki_slug(slug)?;
+    let drafts_dir = paths.wiki.join(WIKI_DRAFTS_SUBDIR);
+    fs::create_dir_all(&drafts_dir)
+        .map_err(|e| WikiStoreError::io(drafts_dir.clone(), e))?;
+    let path = drafts_dir.join(format!("{slug}.html"));
+    let tmp = path.with_extension("html.tmp");
+    fs::write(&tmp, html.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
     fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
     Ok(path)
 }
@@ -12615,11 +12658,24 @@ mod tests {
 
         let page = paths.wiki.join("concepts").join("scratch.md");
         fs::write(&page, "# Scratch\n").unwrap();
-        assert!(vault_git_status(&paths)
-            .unwrap()
-            .changes
-            .iter()
-            .any(|change| change.path == "wiki/concepts/scratch.md" || change.path == "wiki/"));
+        // Git can roll untracked content up to the file, the
+        // immediate dir, or any ancestor — depends on what other
+        // tracked content exists nearby. After E21 init_wiki seeds
+        // wiki/drafts/.gitignore (committed at startup), the
+        // untracked-rollup now stops at `wiki/concepts/` instead of
+        // `wiki/`. Accept all three forms so the test is robust to
+        // future seeded-file additions.
+        let status_before = vault_git_status(&paths).unwrap();
+        assert!(
+            status_before.changes.iter().any(|change| {
+                change.path == "wiki/concepts/scratch.md"
+                    || change.path == "wiki/concepts/"
+                    || change.path == "wiki/"
+            }),
+            "expected wiki/concepts/scratch.md in changes; got dirty={} changes={:?}",
+            status_before.dirty,
+            status_before.changes,
+        );
 
         let discarded = vault_git_discard_path(&paths, "wiki/concepts/scratch.md").unwrap();
         assert!(discarded.ok);
@@ -14462,6 +14518,76 @@ mod tests {
         init_wiki(tmp.path()).unwrap();
         let paths = WikiPaths::resolve(tmp.path());
         assert!(list_drafts(&paths).unwrap().is_empty());
+    }
+
+    // ── Slice E21 — write_draft_html + .gitignore seed tests ──────
+
+    #[test]
+    fn init_wiki_seeds_gitignore_in_drafts_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let gi = paths.wiki.join(WIKI_DRAFTS_SUBDIR).join(".gitignore");
+        assert!(gi.is_file(), "expected wiki/drafts/.gitignore to exist");
+        let content = std::fs::read_to_string(&gi).unwrap();
+        assert!(
+            content.contains("*.html"),
+            "expected *.html ignore pattern, got: {content}",
+        );
+    }
+
+    #[test]
+    fn init_wiki_does_not_overwrite_existing_drafts_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let gi = paths.wiki.join(WIKI_DRAFTS_SUBDIR).join(".gitignore");
+        std::fs::write(&gi, "# my custom ignore\n").unwrap();
+        // Re-init shouldn't clobber.
+        init_wiki(tmp.path()).unwrap();
+        let content = std::fs::read_to_string(&gi).unwrap();
+        assert_eq!(content, "# my custom ignore\n");
+    }
+
+    #[test]
+    fn write_draft_html_creates_sibling_to_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft(&paths, "post", "T", "xhs", "body\n").unwrap();
+        let html = "<!DOCTYPE html><html></html>";
+        let path = write_draft_html(&paths, "post", html).unwrap();
+        assert!(path.is_file());
+        assert_eq!(path.extension().and_then(|s| s.to_str()), Some("html"));
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(on_disk, html);
+    }
+
+    #[test]
+    fn write_draft_html_overwrites_existing_atomically() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft(&paths, "post", "T", "xhs", "body\n").unwrap();
+        write_draft_html(&paths, "post", "<html>v1</html>").unwrap();
+        write_draft_html(&paths, "post", "<html>v2</html>").unwrap();
+        let on_disk = std::fs::read_to_string(
+            paths.wiki.join(WIKI_DRAFTS_SUBDIR).join("post.html"),
+        )
+        .unwrap();
+        assert_eq!(on_disk, "<html>v2</html>");
+    }
+
+    #[test]
+    fn write_draft_html_works_when_md_does_not_exist_yet() {
+        // Defensive: the LLM render handler reads the .md before
+        // calling this fn, but the storage helper itself shouldn't
+        // require a sibling .md. Lets future callers (e.g. a wiki-
+        // page render in E22) reuse the helper.
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft_html(&paths, "p", "<html></html>").unwrap();
     }
 
     #[test]

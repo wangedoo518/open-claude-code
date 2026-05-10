@@ -51,6 +51,23 @@ pub(crate) fn resolve_wiki_root_for_handler() -> Result<wiki_store::WikiPaths, A
     Ok(wiki_store::WikiPaths::resolve(&root))
 }
 
+/// Slice E21 review (E) — shared classifier for
+/// `MaintainerError::Broker` strings. Returns 503 when the broker
+/// reports "no provider configured" (UI prompts the user to open
+/// Settings), 502 otherwise (upstream LLM error). Centralised so
+/// the absorb / merge / render handlers don't drift on the magic
+/// strings.
+pub(crate) fn classify_broker_error_status(msg: &str) -> StatusCode {
+    let no_provider = msg.contains("no codex account")
+        || msg.contains("pool_size")
+        || msg.contains("no providers.json fallback");
+    if no_provider {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::BAD_GATEWAY
+    }
+}
+
 /// `POST /api/wiki/raw`
 ///
 /// Ingest a single raw entry. Body shape:
@@ -1162,26 +1179,12 @@ pub(crate) async fn propose_wiki_inbox_handler(
                     error: format!("raw entry not available: {msg}"),
                 }),
             ),
-            wiki_maintainer::MaintainerError::Broker(msg) => {
-                // Empty-broker / no-provider cases land here via the
-                // adapter's string flattening. Pin the 503 on anything
-                // that looks like "no usable auth source"; everything
-                // else is an upstream LLM error worth a 502.
-                let is_empty_pool = msg.contains("no codex account")
-                    || msg.contains("pool_size")
-                    || msg.contains("no providers.json fallback");
-                let code = if is_empty_pool {
-                    StatusCode::SERVICE_UNAVAILABLE
-                } else {
-                    StatusCode::BAD_GATEWAY
-                };
-                (
-                    code,
-                    Json(ErrorResponse {
-                        error: format!("broker error: {msg}"),
-                    }),
-                )
-            }
+            wiki_maintainer::MaintainerError::Broker(msg) => (
+                classify_broker_error_status(&msg),
+                Json(ErrorResponse {
+                    error: format!("broker error: {msg}"),
+                }),
+            ),
             wiki_maintainer::MaintainerError::BadJson { reason, preview } => (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
@@ -2757,6 +2760,96 @@ pub(crate) async fn post_draft_export_handler(
     })))
 }
 
+/// Slice E21 — render a draft as self-contained HTML via the
+/// maintainer LLM. Single sync request (no SSE — partial HTML
+/// can't render). Persists `wiki/drafts/<slug>.html` AND returns
+/// the HTML string in the JSON response so the frontend can
+/// open-in-new-tab via blob URL without a second roundtrip.
+///
+/// Cost note: each call is one LLM completion (~8K output tokens
+/// cap). Gated behind a deliberate user click in the DraftEditor.
+///
+/// Status codes:
+///   - 200 + html on full success
+///   - 400 if the draft body is empty (don't waste LLM tokens)
+///   - 404 if the draft doesn't exist
+///   - 503 if no LLM provider is configured (UI prompts settings)
+///   - 502 / 500 on LLM or write errors
+pub(crate) async fn post_draft_render_html_handler(
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let (summary, body) = wiki_store::read_draft(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("draft not found: {e}"),
+            }),
+        )
+    })?;
+    if body.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "draft body is empty — write some markdown first".to_string(),
+            }),
+        ));
+    }
+
+    // Same adapter the absorb pipeline uses. `from_global` is sync;
+    // the failure mode (no provider configured) surfaces inside the
+    // maintainer call as MaintainerError::Broker.
+    let adapter = desktop_core::wiki_maintainer_adapter::BrokerAdapter::from_global();
+
+    let html = wiki_maintainer::render_draft_html(
+        &adapter,
+        &slug,
+        &summary.title,
+        &summary.target,
+        &body,
+    )
+    .await
+    .map_err(|e| match e {
+        wiki_maintainer::MaintainerError::Broker(msg) => (
+            classify_broker_error_status(&msg),
+            Json(ErrorResponse {
+                error: format!("html render call failed: {msg}"),
+            }),
+        ),
+        // InvalidProposal here means looks_like_complete_html
+        // rejected the response (truncated by output cap or LLM
+        // drift). 502 surfaces it as an upstream issue so the UI
+        // can suggest "hit regenerate".
+        wiki_maintainer::MaintainerError::InvalidProposal(msg) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: format!("html render incomplete: {msg}"),
+            }),
+        ),
+        other => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("html render failed: {other}"),
+            }),
+        ),
+    })?;
+
+    wiki_store::write_draft_html(&paths, &slug, &html).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("write draft html failed: {e}"),
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "rendered_at": wiki_store::now_iso8601(),
+        "html": html,
+    })))
+}
+
 #[cfg(test)]
 mod draft_tests {
     use super::*;
@@ -3080,6 +3173,71 @@ mod draft_tests {
             "expressed_in dedup; expected exactly 1 entry, got {count}: {:?}",
             summary.expressed_in,
         );
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    // ── Slice E21 — render_html handler tests ─────────────────────
+    //
+    // We don't test the LLM-success path at the handler level — the
+    // maintainer fn covers that with a mock broker. Handler tests
+    // cover the early-exit paths: 404 missing draft, 400 empty body.
+    // The LLM call requires a real provider so a success-path test
+    // here would either need a stubbed adapter or a network round-
+    // trip; both are over-engineering for the slice.
+
+    #[tokio::test]
+    async fn post_draft_render_html_returns_404_for_missing_draft() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+
+        let err = post_draft_render_html_handler(axum::extract::Path(
+            "does-not-exist".to_string(),
+        ))
+        .await
+        .expect_err("missing draft should produce 404");
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_render_html_rejects_empty_body() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        wiki_store::write_draft(&paths, "p", "T", "xhs", "").unwrap();
+
+        let err = post_draft_render_html_handler(axum::extract::Path(
+            "p".to_string(),
+        ))
+        .await
+        .expect_err("empty body must be rejected before LLM call");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_render_html_rejects_whitespace_only_body() {
+        // Whitespace counts as empty — body.trim().is_empty() guard.
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        wiki_store::write_draft(&paths, "p", "T", "blog", "   \n\t\n  ").unwrap();
+
+        let err = post_draft_render_html_handler(axum::extract::Path(
+            "p".to_string(),
+        ))
+        .await
+        .expect_err("whitespace-only body must be rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
 
         std::env::remove_var("CLAWWIKI_HOME");
     }

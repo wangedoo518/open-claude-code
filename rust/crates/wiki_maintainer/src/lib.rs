@@ -196,6 +196,267 @@ fn extract_first_text(response: &MessageResponse) -> Option<String> {
     None
 }
 
+/// Slice E21 — render a draft markdown document into self-contained
+/// HTML via the LLM. The MD stays canonical; the HTML is a
+/// regeneratable presentation artifact (Thariq's "HTML
+/// effectiveness" pattern).
+///
+/// Returns the raw HTML string. Caller is responsible for persisting
+/// via `wiki_store::write_draft_html` and surfacing to the UI.
+///
+/// Cost: one LLM round-trip (~12K output tokens cap). Gated behind
+/// a deliberate user click in the DraftEditor.
+///
+/// Defensive post-processing (review A): the system prompt forbids
+/// markdown code fences but models drift. `strip_html_fences` peels
+/// ```html / ``` wrappers if present so the .html file always opens
+/// as renderable HTML, never as a literal fenced block.
+///
+/// Truncation guard (review G): if the LLM hits the output token
+/// cap mid-document, we end up with a half-written page (no
+/// `</html>` close). Surfaces as `InvalidProposal` so the handler
+/// returns 502 instead of writing garbage to disk.
+pub async fn render_draft_html(
+    broker: &(impl BrokerSender + ?Sized),
+    slug: &str,
+    title: &str,
+    target: &str,
+    body: &str,
+) -> Result<String> {
+    let request = prompt::build_render_html_request(slug, title, target, body);
+    let response = broker.chat_completion(request).await?;
+    let raw = extract_first_text(&response).ok_or_else(|| {
+        MaintainerError::InvalidProposal(
+            "render_draft_html: LLM response had no text block".to_string(),
+        )
+    })?;
+    let stripped = strip_html_fences(&raw);
+    if !looks_like_complete_html(stripped) {
+        return Err(MaintainerError::InvalidProposal(
+            "render_draft_html: response is not a complete HTML document \
+             (likely truncated by output cap or LLM drift). Hit regenerate."
+                .to_string(),
+        ));
+    }
+    Ok(sanitise_rendered_html(stripped))
+}
+
+/// Slice E21 review (E) — defense-in-depth against XSS via prompt
+/// injection. The blob URL the frontend opens is same-origin with
+/// the desktop-shell, so a `<script>` in the rendered HTML would
+/// have access to localStorage + the local desktop-server API. The
+/// system prompt forbids scripts, but a malicious markdown body
+/// (e.g. pasted from an untrusted source) could prompt-inject the
+/// LLM into emitting them anyway. Strip the dangerous shapes here.
+///
+/// This is a multi-pass substring sanitiser. It catches obvious
+/// vectors (script tags, event handlers, javascript: URLs, embedded
+/// frames). Sophisticated obfuscation may evade it — for that the
+/// proper fix is to render inside an `<iframe sandbox>` instead of
+/// a same-origin new tab. Belt-and-suspenders: prompt + strip + the
+/// new-tab opens with `noopener,noreferrer` so it can't reach back
+/// into our window.
+fn sanitise_rendered_html(html: &str) -> String {
+    let mut out = html.to_string();
+    // Pass 1: strip <script>...</script> blocks (case-insensitive,
+    // any whitespace between < and tag-name not handled — that's
+    // not parseable HTML anyway).
+    out = strip_tag_block(&out, "script");
+    // Pass 2: strip dangerous container tags. <embed> is often self-
+    // closing; strip_tag_block handles both forms.
+    for tag in &["iframe", "object", "embed", "form"] {
+        out = strip_tag_block(&out, tag);
+    }
+    // Pass 3: drop on*= event handler attributes.
+    out = strip_event_handler_attrs(&out);
+    // Pass 4: neutralise javascript: URLs in attribute values.
+    out = strip_javascript_urls(&out);
+    out
+}
+
+/// Strip every `<tag ...>...</tag>` block AND every `<tag ... />`
+/// or `<tag>` self-closing form, case-insensitively.
+fn strip_tag_block(html: &str, tag: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let open_pat = format!("<{tag}");
+    let close_pat = format!("</{tag}>");
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0;
+    while i < html.len() {
+        match lower[i..].find(&open_pat) {
+            None => {
+                out.push_str(&html[i..]);
+                break;
+            }
+            Some(rel_open) => {
+                let open_at = i + rel_open;
+                // Validate the char after the tag name is a delimiter
+                // (space, >, /, tab, newline) so `<scripted>` doesn't
+                // match `<script`.
+                let after_tag_idx = open_at + open_pat.len();
+                let next_byte = html.as_bytes().get(after_tag_idx).copied();
+                let is_real_tag = matches!(
+                    next_byte,
+                    Some(b' ' | b'>' | b'/' | b'\t' | b'\n' | b'\r')
+                );
+                if !is_real_tag {
+                    // False alarm — copy through this point and continue.
+                    let safe_end = open_at + 1; // include `<` and re-enter
+                    out.push_str(&html[i..safe_end]);
+                    i = safe_end;
+                    continue;
+                }
+                // Copy the prefix unchanged.
+                out.push_str(&html[i..open_at]);
+                // Find the close tag, OR (for self-closing) the next `>`.
+                if let Some(rel_close) = lower[open_at..].find(&close_pat) {
+                    i = open_at + rel_close + close_pat.len();
+                } else {
+                    // Self-closing or never-closed — skip up to next `>`.
+                    if let Some(rel_gt) = html[open_at..].find('>') {
+                        i = open_at + rel_gt + 1;
+                    } else {
+                        // Unclosed `<tag` — drop the rest. Defensive.
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Drop `on<word>="..."` / `on<word>='...'` / `on<word>=value`
+/// attributes anywhere inside a tag. Whitespace-prefixed only —
+/// matches the realistic browser attribute parse.
+fn strip_event_handler_attrs(html: &str) -> String {
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let is_ws = matches!(b, b' ' | b'\t' | b'\n' | b'\r');
+        if is_ws
+            && i + 3 < bytes.len()
+            && bytes[i + 1].eq_ignore_ascii_case(&b'o')
+            && bytes[i + 2].eq_ignore_ascii_case(&b'n')
+            && bytes[i + 3].is_ascii_alphabetic()
+        {
+            // Walk to `=`. If we hit `>` or whitespace first, it's
+            // not a handler — push and move on.
+            let mut j = i + 3;
+            while j < bytes.len()
+                && bytes[j] != b'='
+                && bytes[j] != b'>'
+                && bytes[j] != b' '
+            {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'=' {
+                j += 1;
+                let quote = if j < bytes.len()
+                    && (bytes[j] == b'"' || bytes[j] == b'\'')
+                {
+                    let q = bytes[j];
+                    j += 1;
+                    Some(q)
+                } else {
+                    None
+                };
+                while j < bytes.len() {
+                    match (quote, bytes[j]) {
+                        (Some(q), c) if c == q => {
+                            j += 1;
+                            break;
+                        }
+                        (None, b' ' | b'>' | b'\t' | b'\n' | b'\r') => break,
+                        _ => j += 1,
+                    }
+                }
+                i = j;
+                continue;
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    out
+}
+
+/// Replace `"javascript:..."` / `'javascript:...'` with the same
+/// quote pair around `#` so href/src links become inert.
+fn strip_javascript_urls(html: &str) -> String {
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if (b == b'"' || b == b'\'')
+            && i + 11 < bytes.len()
+            && bytes[i + 1..]
+                .iter()
+                .zip(b"javascript:".iter())
+                .take(11)
+                .all(|(h, n)| h.eq_ignore_ascii_case(n))
+        {
+            out.push(b as char);
+            out.push('#');
+            // Skip to matching close quote.
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] != b {
+                j += 1;
+            }
+            i = j;
+            continue;
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    out
+}
+
+/// HTML-flavoured cousin of `strip_code_fences`. Peels a leading
+/// ```html or ``` and a trailing ``` if present. Defensive: the
+/// system prompt forbids fences but models drift.
+fn strip_html_fences(raw: &str) -> &str {
+    let mut payload = raw.trim();
+    if let Some(rest) = payload.strip_prefix("```html") {
+        payload = rest.trim_start_matches('\n').trim();
+    } else if let Some(rest) = payload.strip_prefix("```HTML") {
+        payload = rest.trim_start_matches('\n').trim();
+    } else if let Some(rest) = payload.strip_prefix("```") {
+        payload = rest.trim_start_matches('\n').trim();
+    }
+    if let Some(stripped) = payload.strip_suffix("```") {
+        payload = stripped.trim_end();
+    }
+    payload
+}
+
+/// Permissive "is this a complete HTML document?" check. Used to
+/// catch the LLM truncating at the output token cap mid-page. We
+/// accept any document whose trailing non-whitespace bytes match
+/// `</html>` case-insensitively, OR a body fragment that ends with
+/// `</body>` (some LLMs skip the wrapping html/body close tags but
+/// still produce renderable content). Returns false for empty
+/// strings and for strings missing both close tags.
+fn looks_like_complete_html(html: &str) -> bool {
+    let trimmed = html.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let tail_lower = trimmed
+        .chars()
+        .rev()
+        .take(20)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    tail_lower.contains("</html>") || tail_lower.contains("</body>")
+}
+
 /// Parse a raw LLM response into a validated `WikiPageProposal`.
 /// Tolerates leading ```json fences around the object because
 /// models like to add them even when told not to.
@@ -3649,6 +3910,206 @@ mod tests {
         let err = propose_for_raw_entry(&paths, raw_id, &FailingBroker)
             .await
             .unwrap_err();
+        assert!(matches!(err, MaintainerError::Broker(_)));
+    }
+
+    // ── Slice E21 — render_draft_html tests ───────────────────────
+
+    /// Empty-content broker for the no-text-block test path. Returns
+    /// a MessageResponse whose `content: Vec` is empty.
+    struct EmptyContentBroker;
+    #[async_trait]
+    impl BrokerSender for EmptyContentBroker {
+        async fn chat_completion(&self, _request: MessageRequest) -> Result<MessageResponse> {
+            // Reuse sample_response then null out content — this
+            // tracks any future field additions to MessageResponse
+            // (just had to add request_id, will likely happen again).
+            let mut resp = sample_response("");
+            resp.content = vec![];
+            Ok(resp)
+        }
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_returns_text_block_from_broker() {
+        let canned = "<!DOCTYPE html><html><body>hello</body></html>";
+        let broker = MockBrokerSender {
+            canned: canned.to_string(),
+        };
+        let html = render_draft_html(&broker, "post-slug", "Title", "xhs", "# hi\n")
+            .await
+            .expect("render succeeds");
+        assert_eq!(html, canned);
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_strips_markdown_html_fences_when_llm_drifts() {
+        // Review A — system prompt forbids fences but models drift;
+        // the user shouldn't see literal ```html in the .html file.
+        let fenced =
+            "```html\n<!DOCTYPE html><html><body>x</body></html>\n```";
+        let broker = MockBrokerSender {
+            canned: fenced.to_string(),
+        };
+        let html = render_draft_html(&broker, "p", "T", "blog", "# hi\n")
+            .await
+            .expect("render succeeds");
+        assert!(!html.contains("```"));
+        assert!(html.starts_with("<!DOCTYPE html>"));
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_errors_when_response_lacks_close_tag() {
+        // Review G — token cap could truncate mid-page. Surface as
+        // error so handler returns 502 instead of writing garbage.
+        let truncated = "<!DOCTYPE html><html><body><h1>hello\n";
+        let broker = MockBrokerSender {
+            canned: truncated.to_string(),
+        };
+        let result = render_draft_html(&broker, "p", "T", "blog", "# hi\n").await;
+        let err = result.expect_err("truncated response must surface as error");
+        assert!(matches!(err, MaintainerError::InvalidProposal(_)));
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_accepts_body_only_close_tag() {
+        // Some LLMs skip the outer html/body close tags but still
+        // produce a complete body fragment. Be permissive — the
+        // browser will render it fine.
+        let body_only = "<html><body><h1>x</h1></body>";
+        let broker = MockBrokerSender {
+            canned: body_only.to_string(),
+        };
+        let html = render_draft_html(&broker, "p", "T", "blog", "# hi\n")
+            .await
+            .expect("body-only-close should succeed");
+        assert!(html.ends_with("</body>"));
+    }
+
+    // Slice E21 review (E) — sanitiser tests. These are the load-
+    // bearing defenses against XSS via prompt-injection.
+
+    #[test]
+    fn sanitise_strips_script_tags() {
+        let dirty = "<html><body>before<script>alert(1)</script>after</body></html>";
+        let clean = sanitise_rendered_html(dirty);
+        assert!(!clean.contains("<script"), "script tag survived: {clean}");
+        assert!(!clean.contains("alert"), "script content survived: {clean}");
+        assert!(clean.contains("before"));
+        assert!(clean.contains("after"));
+    }
+
+    #[test]
+    fn sanitise_strips_script_tags_case_insensitively() {
+        let dirty = "<html><body><SCRIPT>alert(1)</SCRIPT></body></html>";
+        let clean = sanitise_rendered_html(dirty);
+        assert!(!clean.to_ascii_lowercase().contains("<script"));
+        assert!(!clean.contains("alert"));
+    }
+
+    #[test]
+    fn sanitise_strips_event_handler_attributes() {
+        let dirty = r#"<body onload="alert(1)"><img src="x" onerror='boom()' /></body>"#;
+        let clean = sanitise_rendered_html(dirty);
+        assert!(!clean.contains("onload"), "onload survived: {clean}");
+        assert!(!clean.contains("onerror"), "onerror survived: {clean}");
+        assert!(!clean.contains("alert"));
+        assert!(!clean.contains("boom"));
+        // Tags themselves preserved (defanged but visible).
+        assert!(clean.contains("<body"));
+        assert!(clean.contains("<img"));
+    }
+
+    #[test]
+    fn sanitise_neutralises_javascript_urls() {
+        let dirty = r#"<a href="javascript:steal()">click</a>"#;
+        let clean = sanitise_rendered_html(dirty);
+        assert!(
+            !clean.to_ascii_lowercase().contains("javascript:"),
+            "javascript: URL survived: {clean}"
+        );
+        assert!(clean.contains("href=\"#\""));
+        assert!(clean.contains("click"));
+    }
+
+    #[test]
+    fn sanitise_strips_iframe_object_embed_form() {
+        let dirty = "<body>\
+                     <iframe src='evil.com'></iframe>\
+                     <object data='evil.swf'></object>\
+                     <embed src='evil.svg' />\
+                     <form action='/api/wiki/raw'><input/></form>\
+                     ok</body>";
+        let clean = sanitise_rendered_html(dirty);
+        for tag in &["iframe", "object", "embed", "form"] {
+            let needle = format!("<{tag}");
+            assert!(
+                !clean.to_ascii_lowercase().contains(&needle),
+                "<{tag}> survived: {clean}"
+            );
+        }
+        assert!(clean.contains("ok"));
+    }
+
+    #[test]
+    fn sanitise_does_not_strip_legitimate_content() {
+        let safe = "<!DOCTYPE html><html><head><title>T</title>\
+                    <style>body{color:red}</style></head>\
+                    <body><h1>Hi</h1><p>safe text with <a href='https://example.com'>link</a></p>\
+                    </body></html>";
+        let clean = sanitise_rendered_html(safe);
+        assert_eq!(clean, safe, "no-op on safe HTML");
+    }
+
+    #[test]
+    fn sanitise_does_not_match_substring_tags() {
+        // `<scripted>` is NOT a script tag — sanitiser must not
+        // chew into legit content with names that share the prefix.
+        let safe = "<scripted-element>kept</scripted-element>";
+        let clean = sanitise_rendered_html(safe);
+        assert!(clean.contains("<scripted-element>"));
+        assert!(clean.contains("kept"));
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_sanitises_llm_output() {
+        // End-to-end: even if the LLM emits a script (ignoring the
+        // prompt instructions), the rendered HTML returned to the
+        // handler is clean.
+        let dirty = "<!DOCTYPE html><html><body>safe<script>alert(1)</script>more</body></html>";
+        let broker = MockBrokerSender {
+            canned: dirty.to_string(),
+        };
+        let html = render_draft_html(&broker, "p", "T", "blog", "# hi\n")
+            .await
+            .expect("render succeeds");
+        assert!(!html.contains("<script"));
+        assert!(!html.contains("alert"));
+        assert!(html.contains("safe"));
+        assert!(html.contains("more"));
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_errors_when_broker_returns_no_text() {
+        let broker = EmptyContentBroker;
+        let result = render_draft_html(&broker, "p", "T", "blog", "body").await;
+        let err = result.expect_err("no-text response must surface as error");
+        assert!(matches!(err, MaintainerError::InvalidProposal(_)));
+    }
+
+    #[tokio::test]
+    async fn render_draft_html_surfaces_broker_error() {
+        struct FailingBroker;
+        #[async_trait]
+        impl BrokerSender for FailingBroker {
+            async fn chat_completion(&self, _request: MessageRequest) -> Result<MessageResponse> {
+                Err(MaintainerError::Broker(
+                    "simulated provider down".to_string(),
+                ))
+            }
+        }
+        let result = render_draft_html(&FailingBroker, "p", "T", "blog", "body").await;
+        let err = result.expect_err("broker error propagates");
         assert!(matches!(err, MaintainerError::Broker(_)));
     }
 

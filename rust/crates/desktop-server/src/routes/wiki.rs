@@ -81,6 +81,10 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/wiki/drafts/{slug}/export",
             post(post_draft_export_handler),
         )
+        .route(
+            "/api/wiki/drafts/{slug}/render-html",
+            post(post_draft_render_html_handler),
+        )
         .route("/api/wiki/search", get(search_wiki_pages_handler))
         .route("/api/wiki/index", get(get_wiki_index_handler))
         .route("/api/wiki/log", get(get_wiki_log_handler))

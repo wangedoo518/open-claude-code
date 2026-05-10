@@ -274,6 +274,113 @@ pub fn build_combined_merge_request(
     }
 }
 
+// ── Slice E21 — Draft HTML render prompt ────────────────────────
+//
+// Render a draft markdown document into a single self-contained HTML
+// file via one LLM round-trip. Per Thariq's "HTML effectiveness"
+// pattern: MD is the canonical editable source, HTML is a regen-
+// eratable presentation artifact. The LLM IS the renderer here —
+// no template, no CSS framework, the model picks layout and
+// typography per target.
+
+/// Slice E21 — system prompt for `render_draft_html`. The target-
+/// specific styling sections are non-negotiable contract: handler
+/// passes the draft's `target` field into the user message and the
+/// LLM picks the matching section.
+pub const RENDER_HTML_SYSTEM_PROMPT: &str = r#"You are a presentation renderer. Convert a draft markdown document into a single self-contained HTML file for the user to preview / print / share.
+
+Hard rules (these are non-negotiable):
+1. Output ONLY the HTML. No commentary, no markdown fences, no "here is the HTML:" preface. Your entire response must be parseable as a single HTML document.
+2. The output must be a complete document: <!DOCTYPE html> through </html>.
+3. Use inline <style> tags or style attributes — NO external CSS, NO external JavaScript, NO images from outside the document. The file must work offline.
+4. Preserve the visual hierarchy of the source markdown (headings, lists, code blocks, blockquotes, links, emphasis).
+5. Stay under 30 KB of HTML output total.
+6. Pick reasonable typography, line-height, color contrast — the page must be comfortable to read on a normal monitor.
+7. SECURITY: NEVER emit any of the following — they will be stripped server-side and you'll waste tokens:
+   - <script> tags of any kind (inline or external)
+   - JavaScript event handlers (onclick=, onload=, onerror=, etc.)
+   - javascript: URLs in href or src attributes
+   - <iframe>, <object>, <embed>, <form> tags
+   The output must be 100% static markup + CSS. If the source markdown asks for an interactive element, render it as static text describing the interaction instead.
+
+Target-specific styling:
+
+[xhs] — 小红书 post preview
+Render as a phone-frame mockup. Outer page background neutral (light gray). Inner content max-width 375px, centered, with rounded corners + soft shadow that simulates a phone screen. Large hero title (28-32px). Body text 15-16px with generous line-height. Hashtags (#xxx) styled with a soft brand-colored background pill. Mobile-first spacing. The user will screenshot this preview before pasting into the XHS app.
+
+[blog] — Long-form blog post
+Single readable column, max-width 720px, centered. Generous line-height (1.7+) and clear section spacing. Code blocks with monospace + light background + small padding. Blockquotes with a left-border accent. If there are 3 or more H2 headings, include a small table of contents at the top.
+
+[wechat] — 微信公众号 article
+Max-width 600px. Spacing and font sizing similar to native 公众号 articles. Blockquotes with a left-border accent in a muted color. Add minimal vertical padding between paragraphs (公众号 reads tighter than blog).
+
+[other] — Generic clean document
+Max-width 800px. Sans-serif body, simple navigation, minimal styling. Default to a clean "looks like a Google Doc" feel.
+
+If the target value is unrecognised, fall back to the [other] styling.
+"#;
+
+/// Slice E21 — input character cap for the draft body before it
+/// enters the render prompt. Mirrors the absorb truncation pattern
+/// (oversize bodies → clipped). Drafts ≤ 10 KB cover every realistic
+/// XHS / blog / 微信 / 长文 length.
+pub const RENDER_HTML_MAX_INPUT_BYTES: usize = 10_000;
+
+/// Slice E21 — output token cap. HTML with inline styles is verbose:
+/// a single self-contained doc with body content + a styled phone-
+/// frame template easily reaches 4-8K tokens. 12K gives headroom so
+/// the LLM doesn't truncate mid-`</html>`. Truncation is also
+/// defended against post-render via `looks_like_complete_html` in
+/// the maintainer crate (review G).
+pub const RENDER_HTML_MAX_OUTPUT_TOKENS: u32 = 12_000;
+
+/// Slice E21 — build a render request from a draft's metadata + body.
+/// The user message embeds slug / title / target so the LLM can echo
+/// or namespace if needed; the body is char-clipped to bound cost.
+pub fn build_render_html_request(
+    slug: &str,
+    title: &str,
+    target: &str,
+    body: &str,
+) -> MessageRequest {
+    let truncated_body = if body.len() > RENDER_HTML_MAX_INPUT_BYTES {
+        // Char-boundary safe — find the last char boundary at or
+        // before the cap so we don't slice mid-codepoint on CJK.
+        let mut end = RENDER_HTML_MAX_INPUT_BYTES;
+        while !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        &body[..end]
+    } else {
+        body
+    };
+    let user_text = format!(
+        "Render this draft as a single self-contained HTML document.\n\
+         \n\
+         slug: {slug}\n\
+         title: {title}\n\
+         target: {target}\n\
+         \n\
+         --- markdown body ---\n\
+         {truncated_body}\n\
+         --- end body ---\n\
+         \n\
+         Output ONLY the HTML. Pick the styling section that matches the target.",
+    );
+    MessageRequest {
+        model: MAINTAINER_MODEL.to_string(),
+        max_tokens: RENDER_HTML_MAX_OUTPUT_TOKENS,
+        system: Some(RENDER_HTML_SYSTEM_PROMPT.to_string()),
+        messages: vec![InputMessage {
+            role: "user".to_string(),
+            content: vec![InputContentBlock::Text { text: user_text }],
+        }],
+        tools: None,
+        tool_choice: None,
+        stream: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +543,85 @@ mod tests {
         assert!(text.contains("Body twelve."));
         // Final instruction carries the N.
         assert!(text.contains("请把所有 3 条新素材"));
+    }
+
+    // ── Slice E21 — render_html prompt tests ──────────────────────
+
+    #[test]
+    fn build_render_html_request_picks_correct_target_section_for_xhs() {
+        let req = build_render_html_request(
+            "post-slug",
+            "Title",
+            "xhs",
+            "# hello\n\nbody\n",
+        );
+        let system = req.system.expect("system prompt");
+        // Target-specific section MUST appear so the LLM picks the
+        // right styling — this is the contract we lean on.
+        assert!(system.contains("[xhs]"), "missing xhs section in:\n{system}");
+        assert!(
+            system.contains("phone"),
+            "xhs hint should mention phone-frame"
+        );
+        // Generic rules also present.
+        assert!(system.contains("Output ONLY"));
+        // Other targets are also defined (so the LLM can fall through).
+        assert!(system.contains("[blog]"));
+        assert!(system.contains("[wechat]"));
+        assert!(system.contains("[other]"));
+    }
+
+    #[test]
+    fn build_render_html_request_includes_metadata_in_user_message() {
+        let req = build_render_html_request(
+            "post-slug",
+            "My Title",
+            "blog",
+            "# heading\n\nparagraph text\n",
+        );
+        assert_eq!(req.messages.len(), 1);
+        let user_text: String = req.messages[0]
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                InputContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(user_text.contains("# heading"));
+        assert!(user_text.contains("My Title"));
+        assert!(user_text.contains("blog"));
+        assert!(user_text.contains("post-slug"));
+    }
+
+    #[test]
+    fn build_render_html_request_caps_body_to_max_input_chars() {
+        let huge = "x".repeat(20_000);
+        let req = build_render_html_request("p", "T", "other", &huge);
+        let user_text: String = req.messages[0]
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                InputContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        // The user message includes the body PLUS some boilerplate;
+        // assert the body portion is capped.
+        assert!(
+            user_text.len() < 12_000,
+            "user message should be truncated; got {} chars",
+            user_text.len()
+        );
+    }
+
+    #[test]
+    fn build_render_html_request_does_not_split_codepoints_on_truncation() {
+        // CJK character "诶" is 3 bytes in UTF-8. If we naïvely
+        // slice at exactly 10000 in the middle of one, the &str
+        // slice panics. Build a 12000-char body of mostly CJK.
+        let huge = "诶".repeat(4000); // 12000 bytes
+        // Should NOT panic.
+        let _req = build_render_html_request("p", "T", "blog", &huge);
     }
 }
