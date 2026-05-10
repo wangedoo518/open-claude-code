@@ -921,3 +921,32 @@ export async function exportDraft(slug: string): Promise<{
     method: "POST",
   });
 }
+
+/**
+ * Slice E21 — POST `/api/wiki/drafts/:slug/render-html`. Triggers a
+ * single LLM call to render the draft markdown into a self-contained
+ * HTML document (target-aware: xhs phone-frame, blog long-form,
+ * wechat 公众号, other generic). Persists at `wiki/drafts/<slug>.html`
+ * AND returns the HTML in the response payload so the UI can
+ * open-in-new-tab via blob URL without a second roundtrip.
+ *
+ * Expensive — gate behind a deliberate user click. Server returns:
+ *   - 503 if no LLM provider is configured (UI should prompt settings)
+ *   - 502 if the LLM truncated the response or otherwise produced
+ *     incomplete HTML (UI should suggest 'hit regenerate')
+ *   - 400 if the draft body is empty
+ *   - 404 if the draft doesn't exist
+ */
+export async function renderDraftHtml(slug: string): Promise<{
+  ok: boolean;
+  rendered_at: string;
+  html: string;
+}> {
+  return fetchJson<{
+    ok: boolean;
+    rendered_at: string;
+    html: string;
+  }>(`/api/wiki/drafts/${encodeURIComponent(slug)}/render-html`, {
+    method: "POST",
+  });
+}

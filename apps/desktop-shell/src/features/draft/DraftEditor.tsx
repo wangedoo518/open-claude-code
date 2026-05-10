@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Check, Loader2, Save, Send } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Save, Send, Sparkles } from "lucide-react";
 import {
   DRAFT_TARGETS,
   exportDraft,
   getDraft,
   putDraft,
+  renderDraftHtml,
   setDraftSources,
   type DraftTarget,
 } from "@/api/wiki/repository";
@@ -123,6 +124,25 @@ export function DraftEditor({ slug }: { slug: string }) {
     },
   });
 
+  // Slice E21 — render the draft as a self-contained HTML doc via
+  // the maintainer LLM, then open it in a new tab via blob URL.
+  // Single LLM round-trip, ~10-30 sec; spinner during the wait.
+  // The .html file also persists at wiki/drafts/<slug>.html for
+  // durable preview / print / share (gitignored by default).
+  const renderHtmlMutation = useMutation({
+    mutationFn: () => renderDraftHtml(slug),
+    onSuccess: (data) => {
+      const blob = new Blob([data.html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      // Best-effort cleanup — revoke after the new tab has had a
+      // chance to load. There's no direct "tab loaded" callback
+      // for window.open, so 30s is a safe upper bound for the
+      // browser to have fetched the blob into the new tab.
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    },
+  });
+
   const onSourcesChange = (next: string[]) => {
     setSources(next);
     sourcesMutation.mutate(next);
@@ -212,6 +232,38 @@ export function DraftEditor({ slug }: { slug: string }) {
                 : "已复制"
               : "导出"}
         </button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-[13px] hover:bg-muted/50 disabled:opacity-50"
+          onClick={() => {
+            // Review C — re-entrancy guard. The disabled prop blocks
+            // click-spam on the button, but Enter on a focused button
+            // or programmatic re-trigger could still fire while the
+            // first mutation is in flight, opening a second tab from
+            // a duplicate LLM call. Belt-and-suspenders.
+            if (renderHtmlMutation.isPending) return;
+            renderHtmlMutation.mutate();
+          }}
+          disabled={
+            renderHtmlMutation.isPending ||
+            dirty ||
+            body.trim().length === 0
+          }
+          title={
+            dirty
+              ? "请先保存"
+              : body.trim().length === 0
+                ? "正文为空"
+                : "用 LLM 把当前草稿渲染成自包含 HTML 文件，并在新标签页打开预览（约 15-30 秒）"
+          }
+        >
+          {renderHtmlMutation.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="size-3.5" />
+          )}
+          {renderHtmlMutation.isPending ? "渲染中…" : "渲染 HTML 预览"}
+        </button>
       </header>
 
       {saveMutation.error ? (
@@ -239,6 +291,11 @@ export function DraftEditor({ slug }: { slug: string }) {
             {exportMutation.data.skipped.join("、")}
           </span>
           。请检查这些 wiki 页面是否仍存在，调整后再次导出。
+        </div>
+      ) : null}
+      {renderHtmlMutation.error ? (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+          渲染失败：{(renderHtmlMutation.error as Error).message}
         </div>
       ) : null}
 
