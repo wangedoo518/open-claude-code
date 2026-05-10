@@ -171,6 +171,19 @@ pub const WIKI_COMPARE_SUBDIR: &str = "compare";
 /// Subdirectory under `wiki/` for inspiration pages.
 pub const WIKI_INSPIRATION_SUBDIR: &str = "inspiration";
 
+/// Slice E20 — subdirectory under `wiki/` for derivative drafts
+/// (XHS post, blog draft, 微信, 长文). Drafts are deliberately NOT
+/// in WIKI_CATEGORIES so list_all_wiki_pages / search / dashboard /
+/// maintainer absorb prompt continue to ignore them — the wiki
+/// index stays a "knowledge crystal" index, not a "stuff I wrote"
+/// index.
+pub const WIKI_DRAFTS_SUBDIR: &str = "drafts";
+
+/// Slice E20 — canonical list of accepted `target` values for a
+/// draft. Mirrors the VERDICT_VALUES pattern: handler + TS DTO + UI
+/// all reference one source of truth so the contract can't drift.
+pub const DRAFT_TARGETS: &[&str] = &["xhs", "blog", "wechat", "other"];
+
 /// All wiki page categories, in display order.
 pub const WIKI_CATEGORIES: &[(&str, &str)] = &[
     ("concept", WIKI_CONCEPTS_SUBDIR),
@@ -500,6 +513,14 @@ pub fn init_wiki(root: &Path) -> Result<()> {
     for (_cat_name, subdir) in WIKI_CATEGORIES {
         let cat_dir = paths.wiki.join(subdir);
         fs::create_dir_all(&cat_dir).map_err(|e| WikiStoreError::io(cat_dir.clone(), e))?;
+    }
+    // E20 — drafts subdir lives alongside the canonical categories
+    // but is intentionally NOT in WIKI_CATEGORIES (see the const
+    // doc-comment for rationale).
+    {
+        let drafts_dir = paths.wiki.join(WIKI_DRAFTS_SUBDIR);
+        fs::create_dir_all(&drafts_dir)
+            .map_err(|e| WikiStoreError::io(drafts_dir.clone(), e))?;
     }
 
     // Seed CLAUDE.md only if absent. We deliberately do NOT compare
@@ -3843,6 +3864,109 @@ pub struct WikiPageSummary {
     pub last_verified: Option<String>,
 }
 
+/// Slice E20 — public summary of a draft on disk. Drafts are
+/// derivative content (XHS post, blog draft, 微信, 长文) composed
+/// from N source wiki pages. Lives at `wiki/drafts/<slug>.md` so
+/// it gets git history + atomic-write semantics, but is
+/// intentionally NOT a `WikiPageSummary` — the wiki index treats
+/// drafts as a separate kind so they don't dilute knowledge-crystal
+/// counts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DraftSummary {
+    pub slug: String,
+    pub title: String,
+    /// One of `DRAFT_TARGETS`. Validated at the handler boundary;
+    /// this struct holds whatever was on disk so legacy / hand-
+    /// edited drafts can still be listed (handler can flag invalid
+    /// targets in a follow-up audit).
+    pub target: String,
+    /// Slugs of wiki pages this draft pulls from. Empty until the
+    /// user pins sources in the editor. Source identity drives the
+    /// expressed_in writeback on export (E20.2).
+    #[serde(default)]
+    pub source_pages: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    /// Set on first export; refreshed on every subsequent export.
+    /// `None` means the draft has never been exported.
+    #[serde(default)]
+    pub exported_at: Option<String>,
+    pub byte_size: u64,
+}
+
+/// Slice E20 — parse a single draft markdown file into its summary.
+/// Lighter than `parse_wiki_file` because draft frontmatter is a
+/// much smaller schema (no purpose / verdict / source_refs /
+/// vitality, but adds target + source_pages + exported_at).
+pub fn parse_draft_frontmatter(slug: &str, content: &str) -> Result<DraftSummary> {
+    let mut title = String::new();
+    let mut target = String::new();
+    let mut created_at = String::new();
+    let mut updated_at = String::new();
+    let mut exported_at: Option<String> = None;
+    let mut source_pages: Vec<String> = Vec::new();
+
+    let mut in_source_pages_list = false;
+    let lines: Vec<&str> = content.split('\n').collect();
+    if lines.first().copied() != Some("---") {
+        return Err(WikiStoreError::Invalid(
+            "draft missing leading frontmatter fence".to_string(),
+        ));
+    }
+    for line in lines.iter().skip(1) {
+        if *line == "---" {
+            break;
+        }
+        // List-item continuation lines (YAML "- item" inside source_pages).
+        if in_source_pages_list {
+            if let Some(item) = line.trim_start().strip_prefix("- ") {
+                source_pages.push(item.trim().to_string());
+                continue;
+            }
+            in_source_pages_list = false;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        let strip_q = |s: &str| -> String {
+            // Mirror read_frontmatter_field: only strip a matching
+            // outer quote pair, never blow off both ends blindly.
+            let t = s.trim();
+            t.strip_prefix('"')
+                .and_then(|x| x.strip_suffix('"'))
+                .or_else(|| t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')))
+                .unwrap_or(t)
+                .to_string()
+        };
+        if let Some(rest) = line.strip_prefix("title:") {
+            title = strip_q(rest);
+        } else if let Some(rest) = line.strip_prefix("target:") {
+            target = strip_q(rest);
+        } else if let Some(rest) = line.strip_prefix("created_at:") {
+            created_at = strip_q(rest);
+        } else if let Some(rest) = line.strip_prefix("updated_at:") {
+            updated_at = strip_q(rest);
+        } else if let Some(rest) = line.strip_prefix("exported_at:") {
+            let v = strip_q(rest);
+            if !v.is_empty() && v != "null" {
+                exported_at = Some(v);
+            }
+        } else if line.trim_end() == "source_pages:" {
+            in_source_pages_list = true;
+        }
+    }
+    Ok(DraftSummary {
+        slug: slug.to_string(),
+        title,
+        target,
+        source_pages,
+        created_at,
+        updated_at,
+        exported_at,
+        byte_size: content.len() as u64,
+    })
+}
+
 /// Optional entropy/lifecycle fields that must survive body rewrites.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WikiPageLifecycleMetadata {
@@ -3946,6 +4070,233 @@ pub fn write_wiki_page(
     source_raw_id: Option<u32>,
 ) -> Result<PathBuf> {
     write_wiki_page_with_purpose(paths, slug, title, summary, body, source_raw_id, &[])
+}
+
+// ── Slice E20 — Draft storage helpers ──────────────────────────────
+//
+// Drafts are derivative content (XHS post / blog draft / 微信 / 长文)
+// composed from N source wiki pages. They live at
+// `wiki/drafts/<slug>.md` so they get atomic-write + git-history
+// semantics, but use a simpler frontmatter schema than wiki pages
+// (no purpose / verdict / source_refs; adds target + source_pages +
+// exported_at).
+
+/// Slice E20 — write or overwrite a draft markdown file. Atomic via
+/// `.tmp` + rename so partial writes never corrupt an in-progress
+/// draft. The frontmatter is regenerated from scratch (drafts are
+/// the user's own composed content; we don't need the byte-
+/// preservation contract that wiki pages have).
+///
+/// On subsequent writes, `created_at` + `source_pages` + `exported_at`
+/// are read from the previous on-disk version and preserved — only
+/// `title`, `target`, `body`, and `updated_at` change. Sources are
+/// updated through `set_draft_source_pages`; exported_at via the
+/// export handler's surgical patch.
+pub fn write_draft(
+    paths: &WikiPaths,
+    slug: &str,
+    title: &str,
+    target: &str,
+    body: &str,
+) -> Result<PathBuf> {
+    validate_wiki_slug(slug)?;
+    let drafts_dir = paths.wiki.join(WIKI_DRAFTS_SUBDIR);
+    fs::create_dir_all(&drafts_dir)
+        .map_err(|e| WikiStoreError::io(drafts_dir.clone(), e))?;
+    let path = drafts_dir.join(format!("{slug}.md"));
+
+    let now_iso = now_iso8601();
+    let (created_at, source_pages, exported_at) = match fs::read_to_string(&path) {
+        Ok(prev) => match parse_draft_frontmatter(slug, &prev) {
+            Ok(s) => (s.created_at, s.source_pages, s.exported_at),
+            Err(_) => (now_iso.clone(), Vec::new(), None),
+        },
+        Err(_) => (now_iso.clone(), Vec::new(), None),
+    };
+
+    let content = render_draft_markdown(
+        title,
+        target,
+        &source_pages,
+        &created_at,
+        &now_iso,
+        exported_at.as_deref(),
+        body,
+    );
+
+    let tmp = path.with_extension("md.tmp");
+    fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(path)
+}
+
+/// Slice E20 — read a draft into (summary, body). Body excludes the
+/// leading frontmatter fence. Returns `Invalid` when the file is
+/// missing (callers normally hit the handler 404 path before this).
+pub fn read_draft(paths: &WikiPaths, slug: &str) -> Result<(DraftSummary, String)> {
+    validate_wiki_slug(slug)?;
+    let path = paths
+        .wiki
+        .join(WIKI_DRAFTS_SUBDIR)
+        .join(format!("{slug}.md"));
+    if !path.is_file() {
+        return Err(WikiStoreError::Invalid(format!("draft not found: {slug}")));
+    }
+    let content =
+        fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let summary = parse_draft_frontmatter(slug, &content)?;
+    let body = extract_draft_body(&content);
+    Ok((summary, body))
+}
+
+/// Slice E20.2 — replace the `source_pages` list of a draft. Body
+/// + title + target + created_at + exported_at are all preserved;
+/// only source_pages + updated_at are touched. Atomic via .tmp +
+/// rename. Used by the source picker UI on every toggle.
+pub fn set_draft_source_pages(
+    paths: &WikiPaths,
+    slug: &str,
+    new_sources: &[String],
+) -> Result<()> {
+    validate_wiki_slug(slug)?;
+    let path = paths
+        .wiki
+        .join(WIKI_DRAFTS_SUBDIR)
+        .join(format!("{slug}.md"));
+    if !path.is_file() {
+        return Err(WikiStoreError::Invalid(format!("draft not found: {slug}")));
+    }
+    let prev = fs::read_to_string(&path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    let summary = parse_draft_frontmatter(slug, &prev)?;
+    let body = extract_draft_body(&prev);
+
+    let now_iso = now_iso8601();
+    let content = render_draft_markdown(
+        &summary.title,
+        &summary.target,
+        new_sources,
+        &summary.created_at,
+        &now_iso,
+        summary.exported_at.as_deref(),
+        &body,
+    );
+
+    let tmp = path.with_extension("md.tmp");
+    fs::write(&tmp, content.as_bytes()).map_err(|e| WikiStoreError::io(tmp.clone(), e))?;
+    fs::rename(&tmp, &path).map_err(|e| WikiStoreError::io(path.clone(), e))?;
+    Ok(())
+}
+
+/// Slice E20 — list all drafts, sorted by file mtime descending so
+/// the most recently edited surfaces first in the UI. Errors on
+/// individual files (corrupt frontmatter, etc.) are swallowed —
+/// they're surfaced through a follow-up `validate_drafts()` (not
+/// in scope for E20.1).
+pub fn list_drafts(paths: &WikiPaths) -> Result<Vec<DraftSummary>> {
+    let drafts_dir = paths.wiki.join(WIKI_DRAFTS_SUBDIR);
+    if !drafts_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<(DraftSummary, std::time::SystemTime)> = Vec::new();
+    for entry in fs::read_dir(&drafts_dir)
+        .map_err(|e| WikiStoreError::io(drafts_dir.clone(), e))?
+    {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let slug = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let summary = match parse_draft_frontmatter(&slug, &content) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mtime = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        entries.push((summary, mtime));
+    }
+    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(entries.into_iter().map(|(s, _)| s).collect())
+}
+
+/// Internal: build the on-disk markdown for a draft. Used by both
+/// `write_draft` and `set_draft_source_pages` (E20.2) so the format
+/// is generated in exactly one place.
+///
+/// Review I2 (E20.1) — title and target are sanitised against
+/// frontmatter-breaking characters here (newlines collapsed to
+/// spaces, leading whitespace trimmed). Handler-level rejection of
+/// invalid input is still the primary line, but this defence makes
+/// `render_draft_markdown` safe to call with any string.
+pub(crate) fn render_draft_markdown(
+    title: &str,
+    target: &str,
+    source_pages: &[String],
+    created_at: &str,
+    updated_at: &str,
+    exported_at: Option<&str>,
+    body: &str,
+) -> String {
+    let safe_title = sanitise_frontmatter_value(title);
+    let safe_target = sanitise_frontmatter_value(target);
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("type: draft\n");
+    out.push_str(&format!("title: {safe_title}\n"));
+    out.push_str(&format!("target: {safe_target}\n"));
+    if source_pages.is_empty() {
+        out.push_str("source_pages: []\n");
+    } else {
+        out.push_str("source_pages:\n");
+        for sp in source_pages {
+            // List items are sanitised too — slug values are
+            // pre-validated upstream but defence-in-depth applies.
+            let safe_sp = sanitise_frontmatter_value(sp);
+            out.push_str(&format!("  - {safe_sp}\n"));
+        }
+    }
+    out.push_str(&format!("created_at: {created_at}\n"));
+    out.push_str(&format!("updated_at: {updated_at}\n"));
+    if let Some(exp) = exported_at {
+        out.push_str(&format!("exported_at: {exp}\n"));
+    }
+    out.push_str("---\n\n");
+    out.push_str(body);
+    if !body.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Internal: extract the body (everything after the closing `---`
+/// fence) from a draft markdown string. Returns "" when the fence
+/// is missing or malformed (callers should already have validated
+/// via `parse_draft_frontmatter`).
+///
+/// Safety note: `split_once("\n---\n")` matches the FIRST occurrence
+/// of `\n---\n`. Drafts have an opening fence at line 0 (`---\n`),
+/// so the first `\n---\n` AFTER that is the closing fence. This is
+/// safe today because the draft frontmatter schema has no multi-line
+/// scalar values that could contain `---` on its own line. If a
+/// future field admits multi-line content, this needs to skip the
+/// opening fence first and look for the SECOND `\n---\n`.
+pub(crate) fn extract_draft_body(content: &str) -> String {
+    content
+        .split_once("\n---\n")
+        .and_then(|(_, after)| after.split_once('\n').map(|(_, body)| body.to_string()))
+        .unwrap_or_default()
 }
 
 /// Write a concept wiki page with explicit Purpose Lens frontmatter.
@@ -13985,6 +14336,193 @@ mod tests {
         assert_eq!(
             VERDICT_VALUES,
             &["should_continue", "should_let_go", "inconclusive"],
+        );
+    }
+
+    #[test]
+    fn init_wiki_creates_drafts_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        assert!(
+            paths.wiki.join(WIKI_DRAFTS_SUBDIR).is_dir(),
+            "expected wiki/drafts/ to be created on init",
+        );
+    }
+
+    #[test]
+    fn draft_targets_constant_is_canonical() {
+        // Drift-hazard parity with VERDICT_VALUES — handler + UI
+        // both rely on this exact list staying stable.
+        assert_eq!(DRAFT_TARGETS, &["xhs", "blog", "wechat", "other"]);
+    }
+
+    #[test]
+    fn draft_frontmatter_round_trips() {
+        let raw = "---\n\
+            type: draft\n\
+            title: My XHS Post\n\
+            target: xhs\n\
+            source_pages:\n  - notion-rebuild\n  - flow-state\n\
+            created_at: 2026-05-10T10:00:00Z\n\
+            updated_at: 2026-05-10T10:30:00Z\n\
+            ---\n\n\
+            # 正文 hook\n";
+        let summary = parse_draft_frontmatter("my-xhs-post", raw).unwrap();
+        assert_eq!(summary.slug, "my-xhs-post");
+        assert_eq!(summary.title, "My XHS Post");
+        assert_eq!(summary.target, "xhs");
+        assert_eq!(summary.source_pages, vec!["notion-rebuild", "flow-state"]);
+        assert_eq!(summary.created_at, "2026-05-10T10:00:00Z");
+        assert_eq!(summary.updated_at, "2026-05-10T10:30:00Z");
+        assert_eq!(summary.exported_at, None);
+    }
+
+    #[test]
+    fn draft_frontmatter_treats_missing_source_pages_as_empty() {
+        let raw = "---\n\
+            type: draft\n\
+            title: x\n\
+            target: blog\n\
+            created_at: 2026-05-10T10:00:00Z\n\
+            updated_at: 2026-05-10T10:00:00Z\n\
+            ---\n\nbody\n";
+        let s = parse_draft_frontmatter("x", raw).unwrap();
+        assert!(s.source_pages.is_empty());
+    }
+
+    #[test]
+    fn draft_frontmatter_picks_up_exported_at() {
+        let raw = "---\n\
+            type: draft\n\
+            title: t\n\
+            target: xhs\n\
+            created_at: 2026-05-10T10:00:00Z\n\
+            updated_at: 2026-05-10T10:00:00Z\n\
+            exported_at: 2026-05-10T11:00:00Z\n\
+            ---\n\nb\n";
+        let s = parse_draft_frontmatter("t", raw).unwrap();
+        assert_eq!(s.exported_at.as_deref(), Some("2026-05-10T11:00:00Z"));
+    }
+
+    #[test]
+    fn write_then_read_draft_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        let path = write_draft(
+            &paths,
+            "first-post",
+            "First Post",
+            "xhs",
+            "# hello\n\nbody\n",
+        )
+        .unwrap();
+        assert!(path.is_file());
+        let (summary, body) = read_draft(&paths, "first-post").unwrap();
+        assert_eq!(summary.title, "First Post");
+        assert_eq!(summary.target, "xhs");
+        assert_eq!(summary.source_pages, Vec::<String>::new());
+        assert!(summary.exported_at.is_none());
+        assert!(body.contains("# hello"));
+        assert!(body.contains("body"));
+    }
+
+    #[test]
+    fn write_draft_preserves_created_at_across_body_edits() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft(&paths, "p", "T", "xhs", "v1").unwrap();
+        let (before, _) = read_draft(&paths, "p").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        write_draft(&paths, "p", "T", "xhs", "v2").unwrap();
+        let (after, body_after) = read_draft(&paths, "p").unwrap();
+        assert_eq!(after.created_at, before.created_at, "created_at preserved");
+        assert!(body_after.contains("v2"));
+    }
+
+    #[test]
+    fn list_drafts_returns_all_drafts_sorted_by_mtime_desc() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft(&paths, "older", "Older", "xhs", "a").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_draft(&paths, "newer", "Newer", "blog", "b").unwrap();
+        let drafts = list_drafts(&paths).unwrap();
+        assert_eq!(drafts.len(), 2);
+        assert_eq!(drafts[0].slug, "newer");
+        assert_eq!(drafts[1].slug, "older");
+    }
+
+    #[test]
+    fn list_drafts_returns_empty_when_no_drafts() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        assert!(list_drafts(&paths).unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_draft_source_pages_replaces_list_preserves_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft(&paths, "p", "T", "xhs", "body content\n").unwrap();
+        set_draft_source_pages(
+            &paths,
+            "p",
+            &["a".to_string(), "b".to_string()],
+        )
+        .unwrap();
+        let (s, body) = read_draft(&paths, "p").unwrap();
+        assert_eq!(s.source_pages, vec!["a", "b"]);
+        assert!(body.contains("body content"));
+        assert_eq!(s.title, "T");
+        assert_eq!(s.target, "xhs");
+    }
+
+    #[test]
+    fn set_draft_source_pages_can_clear_to_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        write_draft(&paths, "p", "T", "xhs", "x").unwrap();
+        set_draft_source_pages(&paths, "p", &["a".to_string()]).unwrap();
+        set_draft_source_pages(&paths, "p", &[]).unwrap();
+        let (s, _) = read_draft(&paths, "p").unwrap();
+        assert!(s.source_pages.is_empty());
+    }
+
+    #[test]
+    fn set_draft_source_pages_preserves_exported_at() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_wiki(tmp.path()).unwrap();
+        let paths = WikiPaths::resolve(tmp.path());
+        // Manually create a draft with exported_at set (simulating
+        // a re-edit after export).
+        let drafts_dir = paths.wiki.join(WIKI_DRAFTS_SUBDIR);
+        std::fs::create_dir_all(&drafts_dir).unwrap();
+        std::fs::write(
+            drafts_dir.join("p.md"),
+            "---\n\
+             type: draft\n\
+             title: T\n\
+             target: xhs\n\
+             source_pages: []\n\
+             created_at: 2026-05-10T10:00:00Z\n\
+             updated_at: 2026-05-10T10:00:00Z\n\
+             exported_at: 2026-05-10T11:00:00Z\n\
+             ---\n\nbody\n",
+        )
+        .unwrap();
+        set_draft_source_pages(&paths, "p", &["a".to_string()]).unwrap();
+        let (s, _) = read_draft(&paths, "p").unwrap();
+        assert_eq!(
+            s.exported_at.as_deref(),
+            Some("2026-05-10T11:00:00Z"),
+            "exported_at preserved across source pin"
         );
     }
 

@@ -2016,9 +2016,28 @@ pub(crate) async fn apply_combined_proposal_handler(
 ///
 /// List every concept page under `wiki/concepts/`. Returns summaries
 /// (no body text) sorted by slug ascending.
-pub(crate) async fn list_wiki_pages_handler() -> Result<Json<serde_json::Value>, ApiError> {
+///
+/// Query parameter `?include_all=true` (E20.2 review J) returns
+/// pages from ALL categories (concept + people + topic + compare +
+/// inspiration), not just concepts. Default (false) preserves
+/// existing behavior for the WikiArticle / Dashboard / search
+/// callers that only care about concepts.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ListWikiPagesQuery {
+    #[serde(default)]
+    pub include_all: bool,
+}
+
+pub(crate) async fn list_wiki_pages_handler(
+    Query(query): Query<ListWikiPagesQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let paths = resolve_wiki_root_for_handler()?;
-    let pages = wiki_store::list_wiki_pages(&paths).map_err(|e| {
+    let pages = if query.include_all {
+        wiki_store::list_all_wiki_pages(&paths)
+    } else {
+        wiki_store::list_wiki_pages(&paths)
+    }
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -2476,6 +2495,591 @@ mod verdict_tests {
         .await;
         let err = result.expect_err("oversized reason should be rejected");
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Slice E20 — Draft workspace handlers.
+//
+// Drafts are derivative content composed from N source wiki pages.
+// Storage is `wiki/drafts/<slug>.md`; see wiki_store::write_draft for
+// the on-disk contract. Endpoints intentionally do NOT live under
+// `/api/wiki/pages/*` because drafts are not part of the wiki index.
+// ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct CreateDraftBody {
+    pub title: String,
+    pub target: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PutDraftBody {
+    pub title: String,
+    pub target: String,
+    pub body: String,
+}
+
+fn validate_draft_target(target: &str) -> Result<(), ApiError> {
+    if !wiki_store::DRAFT_TARGETS.contains(&target) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "target must be one of {:?}, got {target}",
+                    wiki_store::DRAFT_TARGETS
+                ),
+            }),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn list_drafts_handler() -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let drafts = wiki_store::list_drafts(&paths).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("list drafts failed: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({
+        "total_count": drafts.len(),
+        "drafts": drafts,
+    })))
+}
+
+pub(crate) async fn get_draft_handler(
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let (summary, body) = wiki_store::read_draft(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("draft not found: {e}"),
+            }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "summary": summary, "body": body })))
+}
+
+pub(crate) async fn post_draft_handler(
+    Json(body): Json<CreateDraftBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.title.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "title must not be empty".to_string(),
+            }),
+        ));
+    }
+    validate_draft_target(&body.target)?;
+    let paths = resolve_wiki_root_for_handler()?;
+    let slug = wiki_store::slugify(&body.title);
+    // Review I1 (E20.1) — reject if a draft with this slug already
+    // exists. Without this, two concurrent POSTs with the same title
+    // race in write_draft and the second silently clobbers the
+    // first's blank file. 409 Conflict is the right shape — the
+    // caller can retry with a different title (or open the
+    // existing draft from /drafts).
+    let existing_path = paths
+        .wiki
+        .join(wiki_store::WIKI_DRAFTS_SUBDIR)
+        .join(format!("{slug}.md"));
+    if existing_path.is_file() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: format!("draft with slug {slug} already exists"),
+            }),
+        ));
+    }
+    wiki_store::write_draft(&paths, &slug, &body.title, &body.target, "")
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("create draft failed: {e}"),
+                }),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true, "slug": slug })))
+}
+
+pub(crate) async fn put_draft_handler(
+    Path(slug): Path<String>,
+    Json(body): Json<PutDraftBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.title.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "title must not be empty".to_string(),
+            }),
+        ));
+    }
+    validate_draft_target(&body.target)?;
+    let paths = resolve_wiki_root_for_handler()?;
+    wiki_store::write_draft(&paths, &slug, &body.title, &body.target, &body.body)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("write draft failed: {e}"),
+                }),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct SetDraftSourcesBody {
+    pub source_pages: Vec<String>,
+}
+
+pub(crate) async fn post_draft_sources_handler(
+    Path(slug): Path<String>,
+    Json(body): Json<SetDraftSourcesBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    // Source slug validation: each must already exist as a wiki page.
+    // Reject the WHOLE update if any slug is missing — the picker
+    // shows users a list of existing pages, so a missing one means
+    // the page was deleted between picking and saving (rare but
+    // reportable, vs silently dropping).
+    for src in &body.source_pages {
+        if wiki_store::read_wiki_page(&paths, src).is_err() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("source page not found: {src}"),
+                }),
+            ));
+        }
+    }
+    wiki_store::set_draft_source_pages(&paths, &slug, &body.source_pages)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("set sources failed: {e}"),
+                }),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Slice E20.2 — best-effort export with explicit partial-success
+/// surfacing. For each pinned source page, append `expressed_in:
+/// draft:<slug>` (deduped by append_wiki_page_expressed_ref). When
+/// ALL sources succeed, stamp the draft with exported_at via
+/// patch_frontmatter_field. When any source fails (e.g. it was
+/// deleted between picking and export), DO NOT stamp exported_at —
+/// the UI surfaces the skipped list and the user can fix the
+/// missing source and re-export.
+///
+/// Review A — the previous version always stamped exported_at, so a
+/// draft could show "已导出 N 分钟前" in the list while N of M
+/// sources lacked the expressed_in writeback. exported_at now
+/// faithfully means "all pinned sources have this draft in their
+/// expressed_in".
+///
+/// Body is NOT returned; the client already has it cached and
+/// copies to clipboard locally.
+pub(crate) async fn post_draft_export_handler(
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let paths = resolve_wiki_root_for_handler()?;
+    let (summary, _body) = wiki_store::read_draft(&paths, &slug).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("draft not found: {e}"),
+            }),
+        )
+    })?;
+    let reference = format!("draft:{slug}");
+    let mut written = 0u32;
+    let mut skipped: Vec<String> = Vec::new();
+    for source in &summary.source_pages {
+        match wiki_store::append_wiki_page_expressed_ref(&paths, source, &reference) {
+            Ok(_) => written += 1,
+            Err(_) => skipped.push(source.clone()),
+        }
+    }
+
+    let now_iso = wiki_store::now_iso8601();
+    let mut exported_at_value: Option<String> = None;
+    if skipped.is_empty() {
+        // Full success — stamp exported_at via patch_frontmatter_field
+        // so the rest of the draft frontmatter (and body) is
+        // byte-preserved.
+        let path = paths
+            .wiki
+            .join(wiki_store::WIKI_DRAFTS_SUBDIR)
+            .join(format!("{slug}.md"));
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("read draft failed: {e}"),
+                }),
+            )
+        })?;
+        let updated = wiki_store::patch_frontmatter_field(
+            &content,
+            "exported_at",
+            Some(&now_iso),
+        );
+        std::fs::write(&path, updated).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("stamp exported_at failed: {e}"),
+                }),
+            )
+        })?;
+        exported_at_value = Some(now_iso);
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": skipped.is_empty(),
+        "exported_at": exported_at_value,
+        "source_count": summary.source_pages.len(),
+        "written": written,
+        "skipped": skipped,
+    })))
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+    use crate::WIKI_ENV_GUARD;
+
+    #[tokio::test]
+    async fn post_draft_creates_file_with_frontmatter() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+
+        let body = CreateDraftBody {
+            title: "First XHS".to_string(),
+            target: "xhs".to_string(),
+        };
+        let resp = post_draft_handler(Json(body)).await.expect("create succeeds");
+        let payload = resp.0;
+        let slug = payload["slug"].as_str().expect("slug returned").to_string();
+
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        let (summary, _body) = wiki_store::read_draft(&paths, &slug).unwrap();
+        assert_eq!(summary.title, "First XHS");
+        assert_eq!(summary.target, "xhs");
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_rejects_unknown_target() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+
+        let body = CreateDraftBody {
+            title: "x".to_string(),
+            target: "tiktok".to_string(),
+        };
+        let err = post_draft_handler(Json(body))
+            .await
+            .expect_err("unknown target rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_rejects_empty_title() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+
+        let body = CreateDraftBody {
+            title: "   ".to_string(),
+            target: "xhs".to_string(),
+        };
+        let err = post_draft_handler(Json(body))
+            .await
+            .expect_err("empty title rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn put_draft_body_preserves_created_at_and_writes_new_body() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::write_draft(&paths, "p", "Title", "xhs", "old\n").unwrap();
+        let (before, _) = wiki_store::read_draft(&paths, "p").unwrap();
+
+        // Note: now_iso8601 has second resolution, so we don't assert
+        // updated_at strictly differs (would flake under fast tests).
+        // The key invariant is: created_at preserved + body actually
+        // overwritten + the put returns ok.
+        let body = PutDraftBody {
+            title: "Title".to_string(),
+            target: "xhs".to_string(),
+            body: "new content\n".to_string(),
+        };
+        put_draft_handler(axum::extract::Path("p".to_string()), Json(body))
+            .await
+            .expect("put succeeds");
+
+        let (after, body_after) = wiki_store::read_draft(&paths, "p").unwrap();
+        assert_eq!(after.created_at, before.created_at, "created_at preserved");
+        assert!(body_after.contains("new content"), "body overwritten");
+        assert!(!body_after.contains("old"), "old body fully replaced");
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_returns_409_when_slug_already_exists() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+
+        // First create succeeds.
+        post_draft_handler(Json(CreateDraftBody {
+            title: "My Post".to_string(),
+            target: "xhs".to_string(),
+        }))
+        .await
+        .expect("first create succeeds");
+        // Second create with same title → same slug → 409.
+        let err = post_draft_handler(Json(CreateDraftBody {
+            title: "My Post".to_string(),
+            target: "xhs".to_string(),
+        }))
+        .await
+        .expect_err("duplicate slug rejected");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn list_drafts_handler_returns_count() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::write_draft(&paths, "a", "A", "xhs", "x").unwrap();
+        wiki_store::write_draft(&paths, "b", "B", "blog", "y").unwrap();
+
+        let resp = list_drafts_handler().await.expect("list succeeds");
+        let payload = resp.0;
+        assert_eq!(payload["total_count"], serde_json::json!(2));
+        assert_eq!(payload["drafts"].as_array().unwrap().len(), 2);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_sources_replaces_pinned_list() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        wiki_store::write_wiki_page(&paths, "src-a", "Src A", "x", "body\n", None)
+            .unwrap();
+        wiki_store::write_wiki_page(&paths, "src-b", "Src B", "x", "body\n", None)
+            .unwrap();
+        wiki_store::write_draft(&paths, "p", "T", "xhs", "body").unwrap();
+
+        let body = SetDraftSourcesBody {
+            source_pages: vec!["src-a".to_string(), "src-b".to_string()],
+        };
+        post_draft_sources_handler(axum::extract::Path("p".to_string()), Json(body))
+            .await
+            .expect("set sources succeeds");
+
+        let (summary, _) = wiki_store::read_draft(&paths, "p").unwrap();
+        assert_eq!(summary.source_pages, vec!["src-a", "src-b"]);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_sources_rejects_unknown_source() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        wiki_store::write_draft(&paths, "p", "T", "xhs", "body").unwrap();
+
+        let body = SetDraftSourcesBody {
+            source_pages: vec!["does-not-exist".to_string()],
+        };
+        let err = post_draft_sources_handler(
+            axum::extract::Path("p".to_string()),
+            Json(body),
+        )
+        .await
+        .expect_err("missing source rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_export_writes_expressed_in_to_each_source() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        wiki_store::write_wiki_page(&paths, "src-a", "Src A", "x", "body a\n", None)
+            .unwrap();
+        wiki_store::write_wiki_page(&paths, "src-b", "Src B", "x", "body b\n", None)
+            .unwrap();
+        wiki_store::write_draft(&paths, "post", "Post", "xhs", "the body").unwrap();
+        wiki_store::set_draft_source_pages(
+            &paths,
+            "post",
+            &["src-a".to_string(), "src-b".to_string()],
+        )
+        .unwrap();
+
+        let resp = post_draft_export_handler(axum::extract::Path("post".to_string()))
+            .await
+            .expect("export succeeds");
+        let payload = resp.0;
+        assert_eq!(payload["ok"], serde_json::Value::Bool(true));
+        assert!(payload["exported_at"].is_string());
+
+        let (summary_a, _) = wiki_store::read_wiki_page(&paths, "src-a").unwrap();
+        let (summary_b, _) = wiki_store::read_wiki_page(&paths, "src-b").unwrap();
+        assert!(
+            summary_a.expressed_in.iter().any(|r| r == "draft:post"),
+            "src-a expressed_in lacks draft:post: {:?}",
+            summary_a.expressed_in,
+        );
+        assert!(
+            summary_b.expressed_in.iter().any(|r| r == "draft:post"),
+            "src-b expressed_in lacks draft:post: {:?}",
+            summary_b.expressed_in,
+        );
+
+        let (draft_after, _) = wiki_store::read_draft(&paths, "post").unwrap();
+        assert!(draft_after.exported_at.is_some(), "exported_at stamped");
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_export_does_not_stamp_exported_at_when_a_source_is_missing() {
+        // Review A — partial-failure semantics: if any source page
+        // has been deleted between picking and export, exported_at
+        // must NOT be stamped, and the response must report skipped.
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        // Only one of the two source slugs actually exists on disk.
+        wiki_store::write_wiki_page(&paths, "real", "Real", "x", "body\n", None)
+            .unwrap();
+        wiki_store::write_draft(&paths, "p", "T", "xhs", "body").unwrap();
+        // Manually pin both sources (set_draft_source_pages handler
+        // would reject "ghost", but the file might have been
+        // deleted AFTER pinning).
+        let drafts_dir = paths.wiki.join(wiki_store::WIKI_DRAFTS_SUBDIR);
+        std::fs::write(
+            drafts_dir.join("p.md"),
+            "---\n\
+             type: draft\n\
+             title: T\n\
+             target: xhs\n\
+             source_pages:\n  - real\n  - ghost\n\
+             created_at: 2026-05-10T10:00:00Z\n\
+             updated_at: 2026-05-10T10:00:00Z\n\
+             ---\n\nbody\n",
+        )
+        .unwrap();
+
+        let resp =
+            post_draft_export_handler(axum::extract::Path("p".to_string()))
+                .await
+                .expect("handler returns success even on partial");
+        let payload = resp.0;
+        assert_eq!(payload["ok"], serde_json::Value::Bool(false), "ok=false signals partial");
+        assert!(payload["exported_at"].is_null(), "exported_at NOT stamped");
+        assert_eq!(payload["written"], serde_json::json!(1));
+        assert_eq!(
+            payload["skipped"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["ghost"],
+        );
+
+        // Real source still got the writeback.
+        let (real, _) = wiki_store::read_wiki_page(&paths, "real").unwrap();
+        assert!(real.expressed_in.iter().any(|r| r == "draft:p"));
+        // Draft itself NOT marked exported.
+        let (draft, _) = wiki_store::read_draft(&paths, "p").unwrap();
+        assert!(draft.exported_at.is_none(), "exported_at stays unset on partial");
+
+        std::env::remove_var("CLAWWIKI_HOME");
+    }
+
+    #[tokio::test]
+    async fn post_draft_export_is_idempotent_for_already_pinned_sources() {
+        let _g = WIKI_ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CLAWWIKI_HOME", tmp.path());
+        let paths = wiki_store::WikiPaths::resolve(tmp.path());
+        wiki_store::init_wiki(tmp.path()).unwrap();
+        wiki_store::write_wiki_page(&paths, "s", "S", "x", "b\n", None).unwrap();
+        wiki_store::write_draft(&paths, "p", "P", "xhs", "body").unwrap();
+        wiki_store::set_draft_source_pages(&paths, "p", &["s".to_string()]).unwrap();
+
+        post_draft_export_handler(axum::extract::Path("p".to_string()))
+            .await
+            .unwrap();
+        post_draft_export_handler(axum::extract::Path("p".to_string()))
+            .await
+            .unwrap();
+
+        let (summary, _) = wiki_store::read_wiki_page(&paths, "s").unwrap();
+        let count = summary
+            .expressed_in
+            .iter()
+            .filter(|r| r.as_str() == "draft:p")
+            .count();
+        assert_eq!(
+            count, 1,
+            "expressed_in dedup; expected exactly 1 entry, got {count}: {:?}",
+            summary.expressed_in,
+        );
 
         std::env::remove_var("CLAWWIKI_HOME");
     }
