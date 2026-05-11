@@ -7041,10 +7041,22 @@ pub fn validate_project_path(input: &str) -> Result<PathBuf, String> {
 
 /// Resolve credentials for the agentic loop in priority order:
 ///
-/// 1. `ANTHROPIC_API_KEY` env var → direct mode (no managed_auth)
-/// 2. Project's `.claude/settings.json` → `direct_api_key` field
-/// 3. managed_auth provider `codex-openai`
-/// 4. managed_auth provider `qwen-code`
+///   1. `ANTHROPIC_API_KEY` env var — universal override for power
+///      users debugging with a specific key.
+///   2. Project's `.claude/settings.json` `direct_api_key` field —
+///      explicit project-local setting.
+///   3. **`.claw/providers.json` active provider** — UI-configured,
+///      most specific intent. PROMOTED ahead of managed-auth in E22
+///      to fix the "Settings 测试 passes but chat 401s" trap (a
+///      stale OAuth token would silently shadow a freshly-saved
+///      provider, which the May 11 debugging session uncovered).
+///   4. managed_auth provider `codex-openai` — OAuth login flow.
+///   5. managed_auth provider `qwen-code` — OAuth login flow.
+///
+/// Rationale for the E22 promotion: managed-auth is the "I OAuth'd
+/// once, forgot about it" path; providers.json with `active` set is
+/// "I just clicked this in Settings." The most-recent-explicit
+/// intent should win.
 ///
 /// "Direct mode" returns a synthetic `DesktopManagedAuthRuntimeClient`
 /// pointing at the Anthropic API directly. The `code_tools_bridge`
@@ -7081,7 +7093,14 @@ async fn resolve_runtime_credentials(
         }
     }
 
-    // 3. Managed auth: codex-openai → qwen-code fallback chain.
+    // 3. .claw/providers.json — user-configured providers from the
+    //    settings UI. PROMOTED ahead of managed-auth (E22) so a
+    //    freshly-clicked 使用中 provider beats a stale OAuth token.
+    if let Some(client) = try_providers_json_active(project_path) {
+        return Ok(client);
+    }
+
+    // 4. Managed auth: codex-openai → qwen-code fallback chain.
     if let Ok(client) = state.managed_auth_runtime_client("codex-openai").await {
         return Ok(client);
     }
@@ -7089,19 +7108,34 @@ async fn resolve_runtime_credentials(
         return Ok(client);
     }
 
-    // 4. .claw/providers.json — user-configured providers from the
-    //    settings UI. For Anthropic-compatible gateways the agentic
-    //    loop can call the gateway directly since it already speaks the
-    //    native Anthropic Messages API.
-    //
-    //    The providers_config module was removed in S0.4 (codex_broker
-    //    owns this surface now), but we still support the on-disk JSON
-    //    file as a lightweight local-dev override. Parse it inline.
-    //
-    //    Try project_path first, then fall back to cwd. The settings UI
-    //    saves providers.json relative to cwd (desktop-server's working
-    //    directory), but session metadata may carry a different
-    //    project_path (e.g. the hardcoded DEFAULT_PROJECT_PATH).
+    Err(DesktopStateError::ProviderNotFound(
+        "no credentials available — set ANTHROPIC_API_KEY env var, add \
+         direct_api_key to .claude/settings.json, configure a provider in \
+         Settings, or run codex/qwen login"
+            .into(),
+    ))
+}
+
+/// Slice E22 — extracted from `resolve_runtime_credentials` so the
+/// providers.json path is independently testable AND can be invoked
+/// from `comprehensive_probe` without re-walking the priority chain.
+///
+/// Returns `Some(client)` when:
+///   - `<project_path>/.claw/providers.json` (or `<cwd>/.claw/...`)
+///     exists and parses,
+///   - `active` is non-empty and points at a present provider entry,
+///   - the entry has a non-empty `api_key`,
+///   - kind is one of "anthropic" / "openai_compat" (other kinds
+///     are silently skipped — defensive, mirrors the original behavior).
+///
+/// Search order: `project_path` first, then `cwd` if different.
+/// The settings UI saves providers.json relative to cwd (desktop-
+/// server's working directory), but session metadata may carry a
+/// different `project_path` (e.g. the hardcoded
+/// `DEFAULT_PROJECT_PATH`).
+pub(crate) fn try_providers_json_active(
+    project_path: &Path,
+) -> Option<DesktopManagedAuthRuntimeClient> {
     let search_roots: Vec<PathBuf> = {
         let mut roots = vec![project_path.to_path_buf()];
         if let Ok(cwd) = std::env::current_dir() {
@@ -7172,7 +7206,7 @@ async fn resolve_runtime_credentials(
              active={active_id:?} kind={kind:?} base_url={base_url:?} model={model:?}",
             root.display(),
         );
-        return Ok(DesktopManagedAuthRuntimeClient {
+        return Some(DesktopManagedAuthRuntimeClient {
             provider_id: format!("providers-json:{active_id}"),
             provider_kind,
             base_url,
@@ -7181,13 +7215,7 @@ async fn resolve_runtime_credentials(
             default_model: Some(model),
         });
     }
-
-    Err(DesktopStateError::ProviderNotFound(
-        "no credentials available — set ANTHROPIC_API_KEY env var, add \
-         direct_api_key to .claude/settings.json, configure a provider in \
-         Settings, or run codex/qwen login"
-            .into(),
-    ))
+    None
 }
 
 /// Build a synthetic `DesktopManagedAuthRuntimeClient` that points the
@@ -7242,6 +7270,350 @@ pub struct ProviderProbeResult {
     pub latency_ms: u64,
     pub error: Option<String>,
     pub model_echo: Option<String>,
+}
+
+// ── Slice E22 — comprehensive_probe (full-stack health check) ─────
+//
+// Today's debugging session uncovered that the existing
+// `probe_provider_entry` reads providers.json directly while the
+// chat path runs through `resolve_runtime_credentials`. When the
+// resolver picks a different source (env var, .claude/settings.json,
+// managed-auth OAuth token), the probe lies about whether chat will
+// work. `comprehensive_probe` runs the SAME resolver path chat uses,
+// fires a streaming chat-completion, measures TTFT + total latency,
+// and surfaces shadow detection so the UI can warn the user.
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProbeSource {
+    /// One of: "anthropic_env_or_settings", "providers_json",
+    /// "codex_oauth", "qwen_oauth", "unknown", "none". Mirrors the
+    /// priority-chain branch that produced the credentials.
+    pub kind: String,
+    /// For "providers_json": the entry id ("deepseek", etc.).
+    /// For others: a stable label ("codex-openai", "qwen-code",
+    /// "direct-anthropic").
+    pub id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProbeShadow {
+    /// true when the requested provider id (from the URL) doesn't
+    /// match the source the resolver actually picked.
+    pub detected: bool,
+    /// The id the user asked to test (from URL path).
+    pub requested_id: String,
+    /// What the resolver actually picked. Same shape as the top-level
+    /// `source`.
+    pub actual_source: ProbeSource,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ComprehensiveProbeResult {
+    pub ok: bool,
+    pub source: ProbeSource,
+    pub shadow: ProbeShadow,
+    /// First-token latency in ms (streaming). `None` when the call
+    /// errored before any chunk arrived.
+    pub ttft_ms: Option<u64>,
+    pub total_ms: u64,
+    /// HTTP status from the upstream provider. `None` for non-HTTP
+    /// errors (DNS, connect refused, timeout, no credentials).
+    pub http_status: Option<u16>,
+    pub error: Option<String>,
+    pub model_echo: Option<String>,
+}
+
+/// Slice E22 — classify a `DesktopManagedAuthRuntimeClient.provider_id`
+/// string into a structured source. Pure fn, separated from
+/// `comprehensive_probe` so the shadow-detection logic can be
+/// unit-tested without firing any LLM calls.
+pub fn classify_provider_source(provider_id: &str) -> ProbeSource {
+    if let Some(rest) = provider_id.strip_prefix("providers-json:") {
+        ProbeSource {
+            kind: "providers_json".to_string(),
+            id: rest.to_string(),
+        }
+    } else if provider_id == "codex-openai" {
+        ProbeSource {
+            kind: "codex_oauth".to_string(),
+            id: provider_id.to_string(),
+        }
+    } else if provider_id == "qwen-code" {
+        ProbeSource {
+            kind: "qwen_oauth".to_string(),
+            id: provider_id.to_string(),
+        }
+    } else if provider_id == "direct-anthropic" {
+        // Set by both ANTHROPIC_API_KEY env (priority 1) and
+        // .claude/settings.json direct_api_key (priority 2). The two
+        // are indistinguishable from the resolver's output alone;
+        // lump them into one source kind. UI surfaces a hint to
+        // check both.
+        ProbeSource {
+            kind: "anthropic_env_or_settings".to_string(),
+            id: provider_id.to_string(),
+        }
+    } else {
+        ProbeSource {
+            kind: "unknown".to_string(),
+            id: provider_id.to_string(),
+        }
+    }
+}
+
+/// Slice E22 — compute shadow detection given a requested provider
+/// id and the source the resolver picked. Pure fn, separated from
+/// `comprehensive_probe` for unit-testability.
+///
+/// Shadow rule: detected = true when the user asked to test
+/// provider X but the resolver actually returned a different
+/// effective source.
+///
+/// Reviewer fix (D): originally the rule was "anything not from
+/// providers.json is a shadow", which false-positived if the user
+/// requested e.g. `id="codex-openai"` (testing the OAuth-stored
+/// provider directly). Extended below to recognize each managed-
+/// auth source's canonical id as a non-shadow when the user asked
+/// for it explicitly.
+pub fn detect_provider_shadow(requested_id: &str, source: &ProbeSource) -> ProbeShadow {
+    let detected = match source.kind.as_str() {
+        "providers_json" => source.id != requested_id,
+        "codex_oauth" => requested_id != "codex-openai",
+        "qwen_oauth" => requested_id != "qwen-code",
+        "anthropic_env_or_settings" => requested_id != "direct-anthropic",
+        // "none" / "unknown" / future kinds — surface as shadow so
+        // the UI shows the actual source. The user clearly didn't
+        // ask for "none" or "unknown".
+        _ => true,
+    };
+    ProbeShadow {
+        detected,
+        requested_id: requested_id.to_string(),
+        actual_source: source.clone(),
+    }
+}
+
+/// Extract HTTP status from an `ApiError` if it's an Api error
+/// variant; None for transport / no-credentials / json errors.
+fn http_status_from_api_error(err: &api::ApiError) -> Option<u16> {
+    if let api::ApiError::Api { status, .. } = err {
+        Some(status.as_u16())
+    } else {
+        None
+    }
+}
+
+/// Slice E22 — runs the full chat path the production code uses and
+/// measures TTFT + total latency. See top-of-block comment for
+/// motivation.
+///
+/// `requested_provider_id` is the id from the URL path (e.g.
+/// "deepseek"). Used only for shadow detection — the resolver
+/// itself doesn't take a provider id; it picks based on priority
+/// chain. Shadow is true when the resolver returns a different
+/// source than the user asked to test.
+pub async fn comprehensive_probe(
+    state: &DesktopState,
+    project_path: &Path,
+    requested_provider_id: &str,
+) -> ComprehensiveProbeResult {
+    let started = std::time::Instant::now();
+
+    // 1. Resolve credentials via the same path chat uses.
+    let client = match resolve_runtime_credentials(state, project_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            let none_source = ProbeSource {
+                kind: "none".to_string(),
+                id: String::new(),
+            };
+            return ComprehensiveProbeResult {
+                ok: false,
+                source: none_source.clone(),
+                shadow: ProbeShadow {
+                    detected: true,
+                    requested_id: requested_provider_id.to_string(),
+                    actual_source: none_source,
+                },
+                ttft_ms: None,
+                total_ms: started.elapsed().as_millis() as u64,
+                http_status: None,
+                error: Some(format!("no credentials available: {e}")),
+                model_echo: None,
+            };
+        }
+    };
+
+    // 2. Classify source + detect shadow (pure logic, testable
+    //    independently).
+    let source = classify_provider_source(&client.provider_id);
+    let shadow = detect_provider_shadow(requested_provider_id, &source);
+
+    // 3. Build a streaming chat-completion probe. Use the resolved
+    //    client's default_model when present (providers.json sets it
+    //    explicitly); fall back to a sensible per-kind default
+    //    otherwise.
+    let model = client.default_model.clone().unwrap_or_else(|| match client.provider_kind {
+        DesktopManagedAuthProviderKind::AnthropicCompat => "claude-sonnet-4-5".to_string(),
+        DesktopManagedAuthProviderKind::OpenAiCompat => "gpt-4o-mini".to_string(),
+        // Codex / Qwen managed-auth use their own runtime defaults;
+        // we copy what the chat path uses by leaving it empty and
+        // letting the broker substitute.
+        _ => String::new(),
+    });
+
+    let provider_client = match build_provider_client_from_runtime(&client) {
+        Ok(c) => c,
+        Err(err) => {
+            return ComprehensiveProbeResult {
+                ok: false,
+                source,
+                shadow,
+                ttft_ms: None,
+                total_ms: started.elapsed().as_millis() as u64,
+                http_status: None,
+                error: Some(format!("failed to build provider client: {err}")),
+                model_echo: None,
+            };
+        }
+    };
+
+    let request = api::MessageRequest {
+        model,
+        max_tokens: 8,
+        messages: vec![api::InputMessage::user_text("ping")],
+        system: None,
+        tools: None,
+        tool_choice: None,
+        stream: true,
+    };
+
+    // 4. Fire the stream, measure TTFT (first-event), total, capture
+    //    error + http_status.
+    let stream_started = std::time::Instant::now();
+    let mut ttft_ms: Option<u64> = None;
+    let mut http_status: Option<u16> = None;
+    let mut error: Option<String> = None;
+    let model_echo: Option<String> = None;
+
+    let stream_result = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        provider_client.stream_message(&request),
+    )
+    .await;
+
+    match stream_result {
+        Err(_) => {
+            error = Some("request timed out after 60s".to_string());
+        }
+        Ok(Err(err)) => {
+            http_status = http_status_from_api_error(&err);
+            error = Some(err.to_string());
+        }
+        Ok(Ok(mut stream)) => {
+            // Pump events until first one (or until stream errors /
+            // closes). TTFT = time-to-first-event since stream open.
+            // We don't drain the entire response — first event is
+            // sufficient signal that auth + streaming both work.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                stream.next_event(),
+            )
+            .await
+            {
+                Err(_) => {
+                    error = Some("first chunk timed out after 60s".to_string());
+                }
+                Ok(Err(err)) => {
+                    http_status = http_status_from_api_error(&err);
+                    error = Some(err.to_string());
+                }
+                Ok(Ok(None)) => {
+                    error = Some("stream closed before any event arrived".to_string());
+                }
+                Ok(Ok(Some(_event))) => {
+                    ttft_ms = Some(stream_started.elapsed().as_millis() as u64);
+                }
+            }
+        }
+    }
+
+    let total_ms = started.elapsed().as_millis() as u64;
+    let ok = error.is_none() && http_status.unwrap_or(200) < 400;
+
+    ComprehensiveProbeResult {
+        ok,
+        source,
+        shadow,
+        ttft_ms,
+        total_ms,
+        http_status,
+        error,
+        model_echo,
+    }
+}
+
+/// Build a `ProviderClient` directly from a resolved runtime client.
+/// Mirrors `build_provider_client_from_entry` but takes the
+/// post-resolver `DesktopManagedAuthRuntimeClient` shape.
+///
+/// Review (E22.2 backend) — codex_oauth must NOT be lumped with
+/// AnthropicCompat. The codex runtime client points at
+/// `chatgpt.com/backend-api/codex` (Codex Responses API, JWT bearer)
+/// — Anthropic Messages API talks to a totally different endpoint
+/// with a totally different auth header. The production chat path
+/// routes codex through a separate code-tools bridge, which we
+/// can't easily replicate here. Surface the unsupported case as a
+/// clear Err so the health-check UI can display the right message
+/// instead of silently 404-ing against chatgpt.com.
+fn build_provider_client_from_runtime(
+    runtime: &DesktopManagedAuthRuntimeClient,
+) -> Result<api::ProviderClient, String> {
+    use api::{AnthropicClient, AuthSource, OpenAiCompatClient, OpenAiCompatConfig};
+    match runtime.provider_kind {
+        DesktopManagedAuthProviderKind::AnthropicCompat => {
+            let mut client = AnthropicClient::from_auth(AuthSource::ApiKey(
+                runtime.bearer_token.clone(),
+            ));
+            if !runtime.base_url.is_empty() {
+                client = client.with_base_url(runtime.base_url.clone());
+            }
+            Ok(api::ProviderClient::Anthropic(client))
+        }
+        // QwenCode managed-auth uses the OpenAI Chat Completions
+        // wire format with extra DashScope-specific headers. Lumping
+        // with OpenAiCompat is correct because the wire shape is
+        // identical; the extra_headers are dropped in this probe
+        // path (acceptable — DashScope auth header is the bearer
+        // token, not the headers).
+        DesktopManagedAuthProviderKind::OpenAiCompat
+        | DesktopManagedAuthProviderKind::QwenCode => {
+            if runtime.base_url.is_empty() {
+                return Err("openai_compat runtime client requires base_url".to_string());
+            }
+            if runtime.bearer_token.trim().is_empty() {
+                return Err("openai_compat runtime client requires bearer_token".to_string());
+            }
+            let client = OpenAiCompatClient::new(
+                runtime.bearer_token.clone(),
+                OpenAiCompatConfig::openai(),
+            )
+            .with_base_url(runtime.base_url.clone());
+            Ok(api::ProviderClient::OpenAi(client))
+        }
+        // Codex JWT speaks the Responses API at chatgpt.com — wrong
+        // protocol for any of our existing ProviderClient variants.
+        // The production chat path uses a dedicated code-tools
+        // bridge for this; the health check has no such bridge yet.
+        // Reject with a clear error so the UI can display "codex
+        // OAuth health check needs the chat path; open a chat to
+        // verify" rather than silently failing against chatgpt.com.
+        DesktopManagedAuthProviderKind::CodexOpenai => Err(
+            "Codex OAuth health check is not supported in this build — \
+             open a chat session to verify the token works"
+                .to_string(),
+        ),
+    }
 }
 
 pub async fn probe_provider_entry(entry: &providers_config::ProviderEntry) -> ProviderProbeResult {
@@ -9900,5 +10272,312 @@ mod tests {
             .expect("skill event should arrive")
             .expect("skill event channel should stay open");
         assert_eq!(received, event);
+    }
+
+    // ── Slice E22 — resolve_runtime_credentials priority chain tests ──
+    //
+    // Single shared mutex so env-mutating tests (ANTHROPIC_API_KEY,
+    // CODEX_HOME) can't race with each other across the test binary.
+    // Tests should always lock this BEFORE any std::env::set_var call.
+    static RESOLVE_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn write_providers_json(project: &std::path::Path, body: &str) {
+        let dir = project.join(".claw");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("providers.json"), body).unwrap();
+    }
+
+    #[test]
+    fn try_providers_json_active_returns_some_when_active_set() {
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"deepseek","providers":{"deepseek":{"kind":"openai_compat","base_url":"https://api.deepseek.com/v1","api_key":"sk-test","model":"deepseek-chat"}}}"#,
+        );
+        let client = super::try_providers_json_active(tmp.path())
+            .expect("providers.json with active should resolve");
+        assert_eq!(client.provider_id, "providers-json:deepseek");
+        assert_eq!(client.bearer_token, "sk-test");
+        assert_eq!(client.base_url, "https://api.deepseek.com/v1");
+        assert_eq!(client.default_model.as_deref(), Some("deepseek-chat"));
+    }
+
+    #[test]
+    fn try_providers_json_active_returns_none_when_no_file() {
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        // No .claw/providers.json on disk → None.
+        // Also temporarily move cwd to tmp so the cwd fallback path
+        // doesn't pick up the repo's real providers.json mid-test.
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let result = super::try_providers_json_active(tmp.path());
+        std::env::set_current_dir(prev_cwd).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn try_providers_json_active_returns_none_when_active_empty() {
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"","providers":{"x":{"kind":"anthropic","api_key":"k"}}}"#,
+        );
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let result = super::try_providers_json_active(tmp.path());
+        std::env::set_current_dir(prev_cwd).unwrap();
+        assert!(result.is_none(), "empty active should not resolve");
+    }
+
+    #[test]
+    fn try_providers_json_active_returns_none_when_active_entry_missing() {
+        // active points at a provider id that doesn't exist in
+        // the providers map — defensive fall-through.
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"missing","providers":{"other":{"kind":"anthropic","api_key":"k"}}}"#,
+        );
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let result = super::try_providers_json_active(tmp.path());
+        std::env::set_current_dir(prev_cwd).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn try_providers_json_active_returns_none_when_api_key_empty() {
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"x","providers":{"x":{"kind":"anthropic","api_key":"   "}}}"#,
+        );
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let result = super::try_providers_json_active(tmp.path());
+        std::env::set_current_dir(prev_cwd).unwrap();
+        assert!(result.is_none(), "empty api_key should not resolve");
+    }
+
+    #[tokio::test]
+    async fn resolve_runtime_credentials_picks_providers_json_when_available() {
+        // Slice E22 regression test: providers.json with active set
+        // should win over the (potentially stale) managed-auth
+        // fallback. This is the core fix.
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let tmp = tempfile::tempdir().unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"deepseek","providers":{"deepseek":{"kind":"openai_compat","base_url":"https://api.deepseek.com/v1","api_key":"sk-from-providers-json","model":"deepseek-chat"}}}"#,
+        );
+        let state = DesktopState::new();
+        // cwd-fallback search would otherwise pick up the repo's real
+        // .claw/providers.json — pin cwd to the test tmp dir so the
+        // assertion can be precise about WHICH file resolved.
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let result = super::resolve_runtime_credentials(&state, tmp.path()).await;
+        std::env::set_current_dir(prev_cwd).unwrap();
+        let client = result.expect("should resolve");
+        assert_eq!(client.provider_id, "providers-json:deepseek");
+        assert_eq!(client.bearer_token, "sk-from-providers-json");
+    }
+
+    #[tokio::test]
+    async fn resolve_runtime_credentials_env_var_still_wins_over_providers_json() {
+        // Sanity: priority #1 is still env var (universal override).
+        // Power users rely on this for ephemeral debugging.
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-env-override");
+        let tmp = tempfile::tempdir().unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"x","providers":{"x":{"kind":"anthropic","api_key":"sk-from-providers-json"}}}"#,
+        );
+        let state = DesktopState::new();
+        let result = super::resolve_runtime_credentials(&state, tmp.path()).await;
+        let client = result.expect("should resolve");
+        assert_eq!(client.provider_id, "direct-anthropic");
+        assert_eq!(client.bearer_token, "sk-env-override");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    // ── Slice E22 — comprehensive_probe pure-logic tests ──────────
+
+    #[test]
+    fn classify_provider_source_recognizes_providers_json() {
+        let s = super::classify_provider_source("providers-json:deepseek");
+        assert_eq!(s.kind, "providers_json");
+        assert_eq!(s.id, "deepseek");
+    }
+
+    #[test]
+    fn classify_provider_source_recognizes_codex_oauth() {
+        let s = super::classify_provider_source("codex-openai");
+        assert_eq!(s.kind, "codex_oauth");
+        assert_eq!(s.id, "codex-openai");
+    }
+
+    #[test]
+    fn classify_provider_source_recognizes_qwen_oauth() {
+        let s = super::classify_provider_source("qwen-code");
+        assert_eq!(s.kind, "qwen_oauth");
+    }
+
+    #[test]
+    fn classify_provider_source_recognizes_anthropic_direct() {
+        // Both ANTHROPIC_API_KEY env and .claude/settings.json
+        // direct_api_key produce the "direct-anthropic" id; the
+        // classifier lumps them under one kind because the source
+        // string alone can't distinguish them.
+        let s = super::classify_provider_source("direct-anthropic");
+        assert_eq!(s.kind, "anthropic_env_or_settings");
+    }
+
+    #[test]
+    fn classify_provider_source_falls_back_to_unknown() {
+        let s = super::classify_provider_source("future-source-kind");
+        assert_eq!(s.kind, "unknown");
+        assert_eq!(s.id, "future-source-kind");
+    }
+
+    #[test]
+    fn detect_provider_shadow_no_shadow_when_providers_json_id_matches() {
+        let source = super::ProbeSource {
+            kind: "providers_json".to_string(),
+            id: "deepseek".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("deepseek", &source);
+        assert!(!shadow.detected);
+        assert_eq!(shadow.requested_id, "deepseek");
+    }
+
+    #[test]
+    fn detect_provider_shadow_when_providers_json_id_differs() {
+        // User asked to test "deepseek" but resolver picked
+        // providers-json:other-entry — same source kind, different id.
+        // Surfaces as shadow because the user's intent didn't match.
+        let source = super::ProbeSource {
+            kind: "providers_json".to_string(),
+            id: "other-entry".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("deepseek", &source);
+        assert!(shadow.detected);
+        assert_eq!(shadow.actual_source.id, "other-entry");
+    }
+
+    #[test]
+    fn detect_provider_shadow_when_codex_oauth_overrides() {
+        // The actual reported bug case: user clicks 测试 on
+        // providers.json:deepseek; resolver returns codex_oauth.
+        let source = super::ProbeSource {
+            kind: "codex_oauth".to_string(),
+            id: "codex-openai".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("deepseek", &source);
+        assert!(shadow.detected);
+        assert_eq!(shadow.actual_source.kind, "codex_oauth");
+    }
+
+    #[test]
+    fn detect_provider_shadow_when_anthropic_direct_overrides() {
+        let source = super::ProbeSource {
+            kind: "anthropic_env_or_settings".to_string(),
+            id: "direct-anthropic".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("deepseek", &source);
+        assert!(shadow.detected);
+    }
+
+    // Review fix (D): the user CAN explicitly ask to health-check
+    // an OAuth source directly. When requested_id matches the
+    // managed-auth source's canonical id, NOT a shadow.
+    #[test]
+    fn detect_provider_shadow_no_shadow_when_user_explicitly_asks_for_codex_oauth() {
+        let source = super::ProbeSource {
+            kind: "codex_oauth".to_string(),
+            id: "codex-openai".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("codex-openai", &source);
+        assert!(!shadow.detected);
+    }
+
+    #[test]
+    fn detect_provider_shadow_no_shadow_when_user_explicitly_asks_for_qwen_code() {
+        let source = super::ProbeSource {
+            kind: "qwen_oauth".to_string(),
+            id: "qwen-code".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("qwen-code", &source);
+        assert!(!shadow.detected);
+    }
+
+    #[test]
+    fn detect_provider_shadow_no_shadow_when_user_explicitly_asks_for_direct_anthropic() {
+        let source = super::ProbeSource {
+            kind: "anthropic_env_or_settings".to_string(),
+            id: "direct-anthropic".to_string(),
+        };
+        let shadow = super::detect_provider_shadow("direct-anthropic", &source);
+        assert!(!shadow.detected);
+    }
+
+    #[tokio::test]
+    async fn comprehensive_probe_returns_no_credentials_when_resolver_fails() {
+        // No env, no settings.json, no providers.json — resolver
+        // returns ProviderNotFound; comprehensive_probe surfaces it
+        // as ok=false, source.kind="none", and the requested_id is
+        // preserved for the UI's shadow warning.
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let tmp = tempfile::tempdir().unwrap();
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let state = DesktopState::new();
+        let result =
+            super::comprehensive_probe(&state, tmp.path(), "deepseek").await;
+
+        std::env::set_current_dir(prev_cwd).unwrap();
+
+        assert!(!result.ok);
+        assert_eq!(result.source.kind, "none");
+        assert!(result.shadow.detected);
+        assert_eq!(result.shadow.requested_id, "deepseek");
+        assert_eq!(result.ttft_ms, None);
+        assert_eq!(result.http_status, None);
+        assert!(result.error.as_ref().unwrap().contains("no credentials"));
+    }
+
+    #[tokio::test]
+    async fn resolve_runtime_credentials_settings_json_still_wins_over_providers_json() {
+        // Sanity: priority #2 (.claude/settings.json direct_api_key)
+        // still beats providers.json. Explicit project-local setting
+        // should override UI-configured fallback.
+        let _g = RESOLVE_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"direct_api_key":"sk-from-claude-settings"}"#,
+        )
+        .unwrap();
+        write_providers_json(
+            tmp.path(),
+            r#"{"version":1,"active":"x","providers":{"x":{"kind":"anthropic","api_key":"sk-from-providers-json"}}}"#,
+        );
+        let state = DesktopState::new();
+        let result = super::resolve_runtime_credentials(&state, tmp.path()).await;
+        let client = result.expect("should resolve");
+        assert_eq!(client.provider_id, "direct-anthropic");
+        assert_eq!(client.bearer_token, "sk-from-claude-settings");
     }
 }
