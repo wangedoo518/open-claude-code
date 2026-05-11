@@ -37,7 +37,10 @@ export function AskHeader({
   const metricsLabel = turnStatus?.metricsLabel ?? "";
 
   return (
-    <header className="ask-chat-header">
+    // E24.2 — `group` class enables hover-reveal of the metrics
+    // span below. Keeps Buddy header readable at a glance — most
+    // users don't need 用时/token counts visible per turn.
+    <header className="ask-chat-header group">
       <div className="min-w-0">
         <div className="ask-chat-header-status">
           <span
@@ -65,7 +68,14 @@ export function AskHeader({
 
       <div className="flex shrink-0 items-center gap-1.5">
         {metricsLabel && (
-          <span className="ask-chat-header-metrics">
+          // E24.2 — opacity-0 by default, restored on header hover.
+          // The text stays in DOM (screen readers still announce
+          // it via the title attr fallback). Per
+          // specs/2026-05-11-display-density-spec.md §6.2.
+          <span
+            className="ask-chat-header-metrics opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+            title={metricsLabel}
+          >
             {metricsLabel}
           </span>
         )}

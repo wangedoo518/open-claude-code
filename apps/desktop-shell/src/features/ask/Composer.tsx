@@ -33,6 +33,7 @@ import {
   ArrowUp,
   Square,
   ChevronDown,
+  MoreHorizontal,
   Paperclip,
   X as XIcon,
   FileText,
@@ -305,6 +306,11 @@ export function Composer({
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showPermissionMenu, setShowPermissionMenu] = useState(false);
+  // E24 — collapse 4 advanced toolbar elements (代码/计划 modes,
+  // permission mode menu, ResponseModeChip, PurposeLensChip) behind
+  // a [···] popover. Default closed; opens on click; closes on
+  // outside click. See specs/2026-05-11-display-density-spec.md §6.2.
+  const [showAdvancedMenu, setShowAdvancedMenu] = useState(false);
   const [attachments, setAttachments] = useState<ProcessedAttachment[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -331,6 +337,7 @@ export function Composer({
     return () => { mountedRef.current = false; };
   }, []);
   const permMenuRef = useRef<HTMLDivElement>(null);
+  const advancedMenuRef = useRef<HTMLDivElement>(null);
   const composerRootRef = useRef<HTMLDivElement>(null);
   const refocusAfterSendRef = useRef(false);
   const rafRef = useRef<number>(0);
@@ -685,6 +692,24 @@ export function Composer({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showPermissionMenu]);
+
+  // E24 — close advanced menu on outside click. Mirrors the
+  // permission-menu pattern above. Note: clicks INSIDE the popover
+  // (e.g. opening the nested permission sub-menu) don't close the
+  // outer popover because they hit advancedMenuRef.current.
+  useEffect(() => {
+    if (!showAdvancedMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        advancedMenuRef.current &&
+        !advancedMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowAdvancedMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showAdvancedMenu]);
 
   const handleSend = useCallback(async () => {
     const trimmed = value.trim();
@@ -1059,95 +1084,128 @@ export function Composer({
               <ChevronDown className="size-3.5 rotate-[-90deg]" />
             </Button>
 
-            {/* Inline mode controls: keep capability, remove the extra bottom row. */}
+            {/* E24 — 4 advanced toggles (代码/计划 modes, permission
+                menu, ResponseModeChip, PurposeLensChip) collapsed
+                behind a [···] popover. Default closed; click to
+                reveal. Per specs/2026-05-11-display-density-spec.md §6.2. */}
             <div className="mx-1 h-4 w-px bg-border" />
-            <div className="ask-composer-mode-group flex items-center rounded-md border border-border/50">
+            <div className="relative" ref={advancedMenuRef}>
               <button
                 type="button"
                 className={cn(
-                  "flex items-center gap-1 rounded-l-md px-2 py-1 text-[11px] transition-colors",
-                  !isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+                  "flex items-center justify-center rounded-md px-1.5 py-1 transition-colors hover:bg-accent",
+                  showAdvancedMenu ? "bg-accent text-foreground" : "text-muted-foreground",
                 )}
-                onClick={() => setPlanMode(false)}
+                onClick={() => setShowAdvancedMenu((prev) => !prev)}
                 disabled={inputBlocked}
-                title="代码模式：直接执行操作（写文件、改 wiki、调工具）"
+                aria-label="高级选项"
+                title="高级选项：代码/计划模式 · 权限模式 · 响应模式 · Purpose Lens"
               >
-                <Code2 className="size-3" />
-                代码
-              </button>
-              <button
-                type="button"
-                className={cn(
-                  "flex items-center gap-1 rounded-r-md px-2 py-1 text-[11px] transition-colors",
-                  isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
-                )}
-                onClick={() => setPlanMode(true)}
-                disabled={inputBlocked}
-                title="计划模式：只规划步骤，不会动你的文件 / wiki，确认后再执行"
-              >
-                <FileSearch className="size-3" />
-                计划
-              </button>
-            </div>
-
-            <div className="relative" ref={permMenuRef}>
-              <button
-                type="button"
-                className={cn(
-                  "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors hover:bg-accent",
-                  showPermissionMenu ? "bg-accent text-foreground" : "text-muted-foreground"
-                )}
-                style={modeConfig.color ? { color: modeConfig.color } : undefined}
-                onClick={() => setShowPermissionMenu((prev) => !prev)}
-                disabled={inputBlocked}
-                title={`${modeConfig.label}：${modeConfig.desc}（点击切换其他权限模式）`}
-              >
-                <ModeIcon className="size-3" />
-                <span>{modeConfig.label}</span>
+                <MoreHorizontal className="size-3.5" />
               </button>
 
-              {showPermissionMenu && (
-                <div className="ask-floating-menu absolute bottom-full left-0 mb-1 w-[240px] rounded-lg border border-border bg-popover p-1 shadow-lg">
-                  <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    权限模式
+              {showAdvancedMenu && (
+                <div className="ask-floating-menu absolute bottom-full left-0 mb-1 flex flex-col gap-2 rounded-lg border border-border bg-popover p-2 shadow-lg">
+                  <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    模式
                   </div>
-                  {PERMISSION_MODES.map((mode) => {
-                    const Icon = mode.icon;
-                    const isActive = permissionMode === mode.value;
-                    return (
-                      <button
-                        key={mode.value}
-                        type="button"
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                          isActive ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
-                        )}
-                        onClick={() => { setPermissionMode(mode.value); setShowPermissionMenu(false); }}
-                      >
-                        <Icon className="size-3 shrink-0" style={mode.color ? { color: mode.color } : undefined} />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[11px] font-medium">{mode.label}</div>
-                          <div className="text-[10px] text-muted-foreground">{mode.desc}</div>
+                  <div className="ask-composer-mode-group flex items-center rounded-md border border-border/50 self-start">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex items-center gap-1 rounded-l-md px-2 py-1 text-[11px] transition-colors",
+                        !isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+                      )}
+                      onClick={() => setPlanMode(false)}
+                      disabled={inputBlocked}
+                      title="代码模式：直接执行操作（写文件、改 wiki、调工具）"
+                    >
+                      <Code2 className="size-3" />
+                      代码
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex items-center gap-1 rounded-r-md px-2 py-1 text-[11px] transition-colors",
+                        isPlanMode ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+                      )}
+                      onClick={() => setPlanMode(true)}
+                      disabled={inputBlocked}
+                      title="计划模式：只规划步骤，不会动你的文件 / wiki，确认后再执行"
+                    >
+                      <FileSearch className="size-3" />
+                      计划
+                    </button>
+                  </div>
+
+                  <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    权限
+                  </div>
+                  <div className="relative self-start" ref={permMenuRef}>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors hover:bg-accent",
+                        showPermissionMenu ? "bg-accent text-foreground" : "text-muted-foreground"
+                      )}
+                      style={modeConfig.color ? { color: modeConfig.color } : undefined}
+                      onClick={() => setShowPermissionMenu((prev) => !prev)}
+                      disabled={inputBlocked}
+                      title={`${modeConfig.label}：${modeConfig.desc}（点击切换其他权限模式）`}
+                    >
+                      <ModeIcon className="size-3" />
+                      <span>{modeConfig.label}</span>
+                    </button>
+
+                    {showPermissionMenu && (
+                      <div className="ask-floating-menu absolute bottom-full left-0 mb-1 w-[240px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+                        <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          权限模式
                         </div>
-                        {isActive && <div className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: mode.color ?? "var(--claude-orange)" }} />}
-                      </button>
-                    );
-                  })}
+                        {PERMISSION_MODES.map((mode) => {
+                          const Icon = mode.icon;
+                          const isActive = permissionMode === mode.value;
+                          return (
+                            <button
+                              key={mode.value}
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                                isActive ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                              )}
+                              onClick={() => { setPermissionMode(mode.value); setShowPermissionMenu(false); }}
+                            >
+                              <Icon className="size-3 shrink-0" style={mode.color ? { color: mode.color } : undefined} />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[11px] font-medium">{mode.label}</div>
+                                <div className="text-[10px] text-muted-foreground">{mode.desc}</div>
+                              </div>
+                              {isActive && <div className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: mode.color ?? "var(--claude-orange)" }} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    上下文 · Purpose
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ResponseModeChip
+                      mode={effectiveMode}
+                      confidence={classification.confidence}
+                      onChange={(next) => setOverrideMode(next === classification.mode ? null : next)}
+                    />
+                    <PurposeLensChip
+                      value={selectedPurpose}
+                      onChange={setSelectedPurpose}
+                      disabled={inputBlocked}
+                    />
+                  </div>
                 </div>
               )}
             </div>
-
-            <ResponseModeChip
-              mode={effectiveMode}
-              confidence={classification.confidence}
-              onChange={(next) => setOverrideMode(next === classification.mode ? null : next)}
-            />
-
-            <PurposeLensChip
-              value={selectedPurpose}
-              onChange={setSelectedPurpose}
-              disabled={inputBlocked}
-            />
           </div>
 
           {/* Send / Stop button */}
