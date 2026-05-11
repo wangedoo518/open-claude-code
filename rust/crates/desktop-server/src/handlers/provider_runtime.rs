@@ -483,6 +483,34 @@ pub(crate) async fn test_provider_handler(
     })))
 }
 
+/// Slice E22 — full-stack provider health check. Wraps
+/// `desktop_core::comprehensive_probe` so the UI can predict
+/// whether a real chat will work. Distinct from
+/// `test_provider_handler` (which probes providers.json directly,
+/// non-streaming, and bypasses the production resolver chain) —
+/// see plan `2026-05-11-provider-health-check-plan.md` for full
+/// rationale.
+///
+/// Status codes:
+///   - 200 with full result on success OR upstream auth/transport
+///     failure (the `ok` field in the body distinguishes; status
+///     200 means "we reached the resolver and ran a probe").
+///   - 500 only when the handler itself errors (project path
+///     resolution, etc.).
+pub(crate) async fn health_check_provider_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project =
+        resolve_project_path_for_providers(params.get("project_path").map(String::as_str))?;
+    let result =
+        desktop_core::comprehensive_probe(state.desktop(), &project, &id).await;
+    Ok(Json(
+        serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 pub(crate) async fn list_provider_templates_handler() -> Json<serde_json::Value> {
     let templates = desktop_core::providers_config::builtin_templates();
     let items: Vec<serde_json::Value> = templates

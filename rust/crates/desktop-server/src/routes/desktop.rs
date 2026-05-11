@@ -215,4 +215,8 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/desktop/providers/{id}/test",
             post(test_provider_handler),
         )
+        .route(
+            "/api/desktop/providers/{id}/health-check",
+            post(health_check_provider_handler),
+        )
 }

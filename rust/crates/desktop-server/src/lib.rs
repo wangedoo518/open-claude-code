@@ -57,7 +57,7 @@ pub(crate) use handlers::provider_runtime::{
     list_providers_handler, managed_auth_accounts, managed_auth_providers, poll_codex_login,
     poll_managed_auth_login, refresh_codex_auth_profile, refresh_managed_auth_account,
     remove_codex_auth_profile, remove_managed_auth_account, set_managed_auth_default_account,
-    test_provider_handler, upsert_provider_handler,
+    health_check_provider_handler, test_provider_handler, upsert_provider_handler,
 };
 pub(crate) use handlers::wechat::{
     cancel_kefu_pipeline_handler, cancel_wechat_login_handler, create_kefu_account_handler,
