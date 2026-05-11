@@ -21,6 +21,7 @@ Approved implementation plans for `desktop-shell` should be referenced from here
 - [Decision Curation Implementation Plan](./2026-05-08-decision-curation-plan.md)
 - [Draft Workspace Implementation Plan](./2026-05-10-draft-workspace-plan.md)
 - [Draft HTML Render Implementation Plan](./2026-05-10-draft-html-render-plan.md)
+- [Provider Health Check Implementation Plan](./2026-05-11-provider-health-check-plan.md)
 - [Buddy Tolaria Deep Product Design Implementation Plan](./2026-04-29-buddy-tolaria-deep-product-design-implementation-plan.md)
 - [ClaudeWiki WeChat Customer-Service Ingress Plan](./2026-04-10-claudewiki-wechat-customer-service-ingress-plan.md)
 - [Desktop Shell Open Source Boundary And API Key Gateway Plan](./2026-04-12-desktop-shell-open-source-gateway-plan.md)
