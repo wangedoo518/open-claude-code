@@ -2,14 +2,12 @@ import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { registerPageVitality } from "@/features/ask/citation-tracker";
 import {
-  AlertTriangle,
+  Activity,
   Archive,
   ArrowRight,
   Bot,
   CalendarCheck,
-  CheckCircle2,
-  ClipboardList,
-  FileText,
+  ChevronDown,
   GitBranch,
   HeartPulse,
   History,
@@ -156,7 +154,11 @@ export function DashboardPage() {
   }, [pagesQuery.data?.pages]);
 
   const pendingInbox = inboxQuery.data?.pending_count ?? 0;
-  const stats = statsQuery.data;
+  // E23 — `stats` was used by the deleted MiniStat row at the page
+  // bottom; its content (wiki_count / raw_count) is now surfaced
+  // by the StatusBar instead. Keep the query firing because other
+  // computations still depend on it indirectly via React Query
+  // cache pre-warming (e.g. /wiki list page lands warm).
   const patrol = patrolQuery.data;
   const git = gitQuery.data;
   const latestGitAudit = gitAuditQuery.data?.entries[0] ?? null;
@@ -363,25 +365,31 @@ export function DashboardPage() {
     tone: "neutral" as const,
   };
 
+  // E23 — Home Pulse rebuild. Reordered so the user's first viewport
+  // shows the Top 3 actions list + a compact 3-stat inline row;
+  // detail panels (purpose digest / entropy / ROI / external AI)
+  // collapse to <details> so they don't dilute the primary action.
+  // Rationale: docs/desktop-shell/specs/2026-05-11-display-density-spec.md §6.1.
+  const knowledgeQualityIssues =
+    schemaViolations + stalePages + orphanPages + lifecyclePatrolCount;
+  const gitChanged = git?.changed_count ?? 0;
+
   return (
     <main className="min-h-full overflow-y-auto bg-background px-6 py-5 text-foreground">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
-        <header className="border-b border-border/50 pb-5">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
+        <header className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
                 Home / Pulse
               </div>
-              <h1 className="mt-2 text-[28px] font-semibold tracking-normal">
+              <h1 className="mt-1 text-page-title tracking-normal">
                 {headline}
               </h1>
-              <p className="mt-2 max-w-2xl text-[13px] leading-6 text-muted-foreground">
-                Buddy 把今天的摄入、维护、知识质量、Git/Vault 和外部 AI 权限压成一张体检单。
-              </p>
             </div>
             <Link
               to={primaryAction.href}
-              className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-[13px] font-medium text-primary-foreground"
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3.5 text-[13px] font-medium text-primary-foreground"
             >
               {primaryAction.label}
               <ArrowRight className="size-4" />
@@ -396,106 +404,125 @@ export function DashboardPage() {
           </div>
         )}
 
-        <section className="grid gap-3 lg:grid-cols-3">
-          <HealthCard
-            icon={Inbox}
-            title="待审阅"
-            value={pendingInbox}
-            unit="条"
-            status={pendingInbox > 0 ? "需要处理" : "正常"}
-            tone={pendingInbox > 0 ? "warning" : "success"}
-            href="/inbox"
-          />
-          <HealthCard
-            icon={ShieldCheck}
-            title="知识质量"
-            value={schemaViolations + stalePages + orphanPages + lifecyclePatrolCount}
-            unit="项"
-            status={
-              schemaViolations + stalePages + orphanPages + lifecyclePatrolCount > 0
-                ? "有风险"
-                : "正常"
-            }
-            tone={
-              schemaViolations + stalePages + orphanPages + lifecyclePatrolCount > 0
-                ? "warning"
-                : "success"
-            }
-            href="/wiki"
-          />
-          <HealthCard
-            icon={GitBranch}
-            title="Buddy Vault / Git"
-            value={git?.changed_count ?? 0}
-            unit="改动"
-            status={gitHealthLabel(git, Boolean(gitQuery.error))}
-            tone={
-              !git || gitQuery.error || !git.git_available || !git.initialized || git.dirty
-                ? "warning"
-                : "success"
-            }
-            href="/connections"
-          />
+        {/* §6.1 promotion #1: Top 3 actions move from middle of page
+            to position 2 (right after header). Full width, primary
+            visual weight. */}
+        <section className="rounded-lg border border-border bg-card px-4 py-4">
+          <div className="flex items-center gap-2">
+            <HeartPulse className="size-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">
+              {isFreshVault ? "其它入口" : "Top 3 建议动作"}
+            </h2>
+          </div>
+          <div className="mt-3 space-y-2">
+            {/*
+              Slice 51 audit: hero CTA at the top of the page is
+              always `topActions[0]`. Rendering the same item again
+              as Top-3 #1 looked like two competing primary entries
+              on empty Vault. Skip the first row so the "Top 3" list
+              always reads "what else can I do" — never duplicates
+              the hero. Numbering offsets accordingly.
+            */}
+            {topActions.slice(1).map((action, idx) => (
+              <Link
+                key={`${action.href}-${action.label}`}
+                to={action.href}
+                className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2.5 text-[13px] transition-colors hover:border-primary/40 hover:bg-muted/30"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span
+                    className="grid size-6 shrink-0 place-items-center rounded bg-muted text-[11px] text-muted-foreground"
+                    aria-hidden="true"
+                  >
+                    {idx + 2}
+                  </span>
+                  <span className="truncate">{action.label}</span>
+                </span>
+                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
+              </Link>
+            ))}
+          </div>
         </section>
 
-        <PurposeWeeklyDigest
-          items={purposeDigest.items}
-          missingPurposeCount={purposeDigest.missingPurposeCount}
-          loading={pagesQuery.isLoading}
-        />
+        {/* §6.1 demotion #1: 3 HealthCard tall cards (~100px each)
+            collapsed to one inline flex row (~32px total). Same data
+            (待审阅 / 知识质量 / Git 改动) but now glanceable instead
+            of dominating the viewport. */}
+        <section className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-card px-3 py-2 text-[12px]">
+          <Link
+            to="/inbox"
+            className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <Inbox className="size-3.5" />
+            <span className="text-base font-semibold tabular-nums text-foreground">
+              {pendingInbox}
+            </span>
+            <span>待审阅</span>
+            {pendingInbox > 0 && (
+              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                需要处理
+              </span>
+            )}
+          </Link>
+          <span className="h-4 w-px bg-border/60" aria-hidden="true" />
+          <Link
+            to="/wiki"
+            className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <ShieldCheck className="size-3.5" />
+            <span className="text-base font-semibold tabular-nums text-foreground">
+              {knowledgeQualityIssues}
+            </span>
+            <span>知识质量</span>
+            {knowledgeQualityIssues > 0 && (
+              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                有风险
+              </span>
+            )}
+          </Link>
+          <span className="h-4 w-px bg-border/60" aria-hidden="true" />
+          <Link
+            to="/connections"
+            className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <GitBranch className="size-3.5" />
+            <span className="text-base font-semibold tabular-nums text-foreground">
+              {gitChanged}
+            </span>
+            <span>Git 改动</span>
+            {gitChanged > 0 && (
+              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                有未提交
+              </span>
+            )}
+          </Link>
+        </section>
 
-        <EntropyPulsePanel
-          summary={entropyPulse}
-          patrolSuggestions={lifecyclePatrolSuggestions}
-          loading={pagesQuery.isLoading}
-        />
+        {/* §6.1 demotion #2-5: 4 detail panels collapsed to <details>.
+            Each summary acts as a section header; click to expand. */}
+        <CollapsibleSection icon={HeartPulse} title="本周目的的流动">
+          <PurposeWeeklyDigest
+            items={purposeDigest.items}
+            missingPurposeCount={purposeDigest.missingPurposeCount}
+            loading={pagesQuery.isLoading}
+          />
+        </CollapsibleSection>
 
-        <RoiPulsePanel pages={roiPages} rawCount={totalRaw} />
+        <CollapsibleSection icon={Activity} title="减熵脉冲">
+          <EntropyPulsePanel
+            summary={entropyPulse}
+            patrolSuggestions={lifecyclePatrolSuggestions}
+            loading={pagesQuery.isLoading}
+          />
+        </CollapsibleSection>
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="rounded-lg border border-border bg-card px-5 py-5">
-            <div className="flex items-center gap-2">
-              <HeartPulse className="size-4 text-primary" />
-              <h2 className="text-[15px] font-medium">
-                {isFreshVault ? "其它入口" : "Top 3 建议动作"}
-              </h2>
-            </div>
-            <div className="mt-4 space-y-2">
-              {/*
-                Slice 51 audit: hero CTA at the top of the page is
-                always `topActions[0]`. Rendering the same item again
-                as Top-3 #1 looked like two competing primary entries
-                on empty Vault. Skip the first row so the "Top 3" list
-                always reads "what else can I do" — never duplicates
-                the hero. Numbering offsets accordingly.
-              */}
-              {topActions.slice(1).map((action, idx) => (
-                <Link
-                  key={`${action.href}-${action.label}`}
-                  to={action.href}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-3 text-[13px] transition-colors hover:border-primary/40 hover:bg-muted/30"
-                >
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span
-                      className="grid size-6 shrink-0 place-items-center rounded bg-muted text-[11px] text-muted-foreground"
-                      aria-hidden="true"
-                    >
-                      {idx + 2}
-                    </span>
-                    <span className="truncate">{action.label}</span>
-                  </span>
-                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
-                </Link>
-              ))}
-            </div>
-          </div>
+        <CollapsibleSection icon={TrendingUp} title="投入回报">
+          <RoiPulsePanel pages={roiPages} rawCount={totalRaw} />
+        </CollapsibleSection>
 
-          <div className="rounded-lg border border-border bg-card px-5 py-5">
-            <div className="flex items-center gap-2">
-              <Bot className="size-4 text-primary" />
-              <h2 className="text-[15px] font-medium">外部 AI 权限</h2>
-            </div>
-            <div className="mt-4 space-y-2 text-[12px] text-muted-foreground">
+        <CollapsibleSection icon={Bot} title="外部 AI 权限 · 最近表达 · Git">
+          <div className="space-y-4 text-[12px] text-muted-foreground">
+            <div className="space-y-2">
               <StatusRow label="默认模式" value="只读" />
               <StatusRow
                 label="会话授权"
@@ -515,20 +542,20 @@ export function DashboardPage() {
                 value={git?.dirty ? `${git.changed_count} 改动待提交` : "已同步本地历史"}
               />
             </div>
-            <div className="mt-5 border-t border-border/60 pt-4">
-              <div className="flex items-center gap-2">
-                <MessageCircle className="size-4 text-primary" />
-                <h2 className="text-[15px] font-medium">最近表达</h2>
+            <div className="border-t border-border/60 pt-3">
+              <div className="mb-2 flex items-center gap-2 text-foreground">
+                <MessageCircle className="size-3.5 text-primary" />
+                <span className="text-sm font-medium text-foreground">最近表达</span>
               </div>
               <RecentExpressionPulse
                 items={recentExpressions}
                 loading={pagesQuery.isLoading}
               />
             </div>
-            <div className="mt-5 border-t border-border/60 pt-4">
-              <div className="flex items-center gap-2">
-                <History className="size-4 text-primary" />
-                <h2 className="text-[15px] font-medium">最近 Git 操作</h2>
+            <div className="border-t border-border/60 pt-3">
+              <div className="mb-2 flex items-center gap-2 text-foreground">
+                <History className="size-3.5 text-primary" />
+                <span className="text-sm font-medium text-foreground">最近 Git 操作</span>
               </div>
               <GitAuditPulse
                 entry={latestGitAudit}
@@ -537,22 +564,45 @@ export function DashboardPage() {
               />
             </div>
           </div>
-        </section>
+        </CollapsibleSection>
 
-        <section className="grid gap-3 md:grid-cols-5">
-          <MiniStat icon={FileText} label="知识页" value={stats?.wiki_count ?? 0} />
-          <MiniStat icon={ClipboardList} label="原始素材" value={stats?.raw_count ?? 0} />
-          <MiniStat icon={MessageCircle} label="今日摄入" value={stats?.today_ingest_count ?? 0} />
-          <MiniStat
-            icon={History}
-            label="来源可追溯"
-            value={sourcedPageCount}
-            href="/wiki?source=sourced"
-          />
-          <MiniStat icon={AlertTriangle} label="Schema 风险" value={schemaViolations} />
-        </section>
+        {/* §6.1 deletion: the 5-tile MiniStat row at the bottom
+            duplicated info already covered by the compact stat row +
+            the StatusBar. Removed to stop noise. */}
       </div>
     </main>
+  );
+}
+
+/**
+ * E23 — section wrapper used by Home to fold the "look at data"
+ * panels behind a click. Native <details> means keyboard-accessible
+ * + zero JS state. We suppress the default disclosure triangle and
+ * render a chevron in the summary line for visual consistency.
+ */
+function CollapsibleSection({
+  icon: Icon,
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  icon: LucideIcon;
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details
+      className="group rounded-lg border border-border bg-card open:bg-card"
+      open={defaultOpen}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-foreground text-foreground hover:bg-muted/30 [&::-webkit-details-marker]:hidden">
+        <Icon className="size-4 text-primary" />
+        <span>{title}</span>
+        <ChevronDown className="ml-auto size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-border px-4 py-4">{children}</div>
+    </details>
   );
 }
 
@@ -972,67 +1022,10 @@ function countExternalAiGrants(
   return grants?.filter((grant) => grant.enabled && grant.level === level).length ?? 0;
 }
 
-function gitHealthLabel(
-  git:
-    | {
-        git_available: boolean;
-        initialized: boolean;
-        dirty: boolean;
-        changed_count: number;
-      }
-    | undefined,
-  hasError: boolean,
-) {
-  if (hasError) return "不可用";
-  if (!git) return "检查中";
-  if (!git.git_available) return "未安装 Git";
-  if (!git.initialized) return "未启用";
-  if (git.dirty) return "有未提交";
-  return "干净";
-}
-
-function HealthCard({
-  icon: Icon,
-  title,
-  value,
-  unit,
-  status,
-  tone,
-  href,
-}: {
-  icon: LucideIcon;
-  title: string;
-  value: number;
-  unit: string;
-  status: string;
-  tone: "success" | "warning";
-  href: string;
-}) {
-  const toneClass =
-    tone === "success"
-      ? "text-[var(--color-success)] bg-[var(--color-success)]/10"
-      : "text-[var(--color-warning)] bg-[var(--color-warning)]/10";
-  return (
-    <Link
-      to={href}
-      className="rounded-lg border border-border bg-card px-4 py-4 transition-colors hover:border-primary/40 hover:bg-muted/30"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="grid size-9 place-items-center rounded-md bg-muted text-muted-foreground">
-          <Icon className="size-4" />
-        </span>
-        <span className={`rounded px-2 py-1 text-[11px] leading-none ${toneClass}`}>
-          {status}
-        </span>
-      </div>
-      <div className="mt-5 flex items-end gap-1">
-        <span className="text-[30px] font-semibold leading-none">{value}</span>
-        <span className="pb-1 text-[12px] text-muted-foreground">{unit}</span>
-      </div>
-      <div className="mt-2 text-[13px] text-muted-foreground">{title}</div>
-    </Link>
-  );
-}
+// E23 — gitHealthLabel + HealthCard removed in favor of the
+// CollapsibleSection + compact stat row inline at the top of
+// DashboardPage. The data they showed (待审 / 知识质量 / Git 改动)
+// is now rendered as 3 inline links with a 60% smaller footprint.
 
 function StatusRow({ label, value }: { label: string; value: string }) {
   return (
@@ -1115,46 +1108,5 @@ function formatGitAuditTime(timestampMs: number): string {
   }).format(new Date(timestampMs));
 }
 
-function MiniStat({
-  icon: Icon,
-  label,
-  value,
-  href,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: number;
-  href?: string;
-}) {
-  const content = (
-    <>
-      <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-        <Icon className="size-3.5" />
-        <span>{label}</span>
-      </div>
-      <div className="mt-3 flex items-center gap-2">
-        <span className="text-[24px] font-semibold">{value}</span>
-        {value === 0 ? (
-          <span className="text-[var(--color-success)]">
-            <CheckCircle2 className="size-4" />
-          </span>
-        ) : null}
-      </div>
-    </>
-  );
-  const className =
-    "rounded-lg border border-border bg-card px-4 py-4" +
-    (href ? " transition-colors hover:border-primary/40 hover:bg-muted/30" : "");
-  if (href) {
-    return (
-      <Link to={href} className={className}>
-        {content}
-      </Link>
-    );
-  }
-  return (
-    <div className={className}>
-      {content}
-    </div>
-  );
-}
+// E23 — MiniStat removed (the 5-tile bottom row duplicated info
+// already in the StatusBar + the compact stat row at top of page).
