@@ -509,6 +509,14 @@ export interface ProviderTestResult {
   model_echo?: string | null;
 }
 
+/**
+ * @deprecated Slice E22 replaced this with `healthCheckProvider`. The
+ * legacy probe reads providers.json directly (single non-streaming
+ * request, no source/shadow surfacing) — it can falsely greenlight
+ * a provider that managed-auth or env vars are shadowing. Migrate
+ * UI callers to `healthCheckProvider`. Slated for removal in E23
+ * once no consumers remain.
+ */
 export async function testProvider(
   id: string,
   projectPath?: string
@@ -519,5 +527,61 @@ export async function testProvider(
   return fetchJson<ProviderTestResult>(
     `/api/desktop/providers/${encodeURIComponent(id)}/test${query}`,
     { method: "POST" }
+  );
+}
+
+/**
+ * Slice E22 — full-stack provider health check.
+ *
+ * Mirrors `desktop_core::ComprehensiveProbeResult`. Distinct from
+ * `ProviderTestResult` (the legacy `testProvider`): the legacy probe
+ * reads providers.json directly; the health check goes through the
+ * SAME `resolve_runtime_credentials` path chat uses, fires a real
+ * streaming chat-completion, measures TTFT, and surfaces "shadow"
+ * detection when the resolver picks a different source than the
+ * entry the user asked to test.
+ */
+export interface ProbeSource {
+  /**
+   * One of: "anthropic_env_or_settings" | "providers_json" |
+   * "codex_oauth" | "qwen_oauth" | "unknown" | "none".
+   */
+  kind: string;
+  /**
+   * For providers_json: the entry id ("deepseek", etc.).
+   * For other kinds: a stable label ("codex-openai", "direct-anthropic").
+   */
+  id: string;
+}
+
+export interface ProbeShadow {
+  detected: boolean;
+  requested_id: string;
+  actual_source: ProbeSource;
+}
+
+export interface HealthCheckResult {
+  ok: boolean;
+  source: ProbeSource;
+  shadow: ProbeShadow;
+  /** First-token latency in ms; null when the call errored before any chunk. */
+  ttft_ms: number | null;
+  total_ms: number;
+  /** HTTP status from upstream provider; null for non-HTTP errors. */
+  http_status: number | null;
+  error: string | null;
+  model_echo: string | null;
+}
+
+export async function healthCheckProvider(
+  id: string,
+  projectPath?: string,
+): Promise<HealthCheckResult> {
+  const query = projectPath
+    ? `?project_path=${encodeURIComponent(projectPath)}`
+    : "";
+  return fetchJson<HealthCheckResult>(
+    `/api/desktop/providers/${encodeURIComponent(id)}/health-check${query}`,
+    { method: "POST" },
   );
 }

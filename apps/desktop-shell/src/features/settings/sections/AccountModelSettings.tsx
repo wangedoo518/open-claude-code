@@ -32,12 +32,12 @@ import {
   getSettings,
   listProviders,
   listProviderTemplates,
-  testProvider,
+  healthCheckProvider,
   upsertProvider,
   type DesktopProviderSummary,
   type DesktopProviderTemplate,
+  type HealthCheckResult,
   type ProviderKind,
-  type ProviderTestResult,
 } from "@/api/desktop/settings";
 import { settingsKeys } from "../api/query";
 import {
@@ -114,7 +114,11 @@ export function AccountModelSettings({
   const [pendingDelete, setPendingDelete] =
     useState<DesktopProviderSummary | null>(null);
   const [providerError, setProviderError] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, ProviderTestResult>>({});
+  // E22 — health check (replaces legacy testProvider). Same shape used by
+  // MultiProviderSettings. Both Settings surfaces must use the same probe
+  // so the user can't get contradictory verdicts from clicking 健康检查
+  // on different screens.
+  const [healthResults, setHealthResults] = useState<Record<string, HealthCheckResult>>({});
   const codexLoginStatusRef = useRef<string | null>(null);
   const qwenLoginStatusRef = useRef<string | null>(null);
 
@@ -198,15 +202,31 @@ export function AccountModelSettings({
     onError: (err) => setProviderError(errorMessage(err)),
   });
 
-  const testMutation = useMutation({
-    mutationFn: (id: string) => testProvider(id, projectPath),
+  // E22 — health check mutation. The handler returns 200 with structured
+  // payload even when chat fails (the `ok` field distinguishes), so
+  // onError fires only for true network faults.
+  const healthMutation = useMutation({
+    mutationFn: (id: string) => healthCheckProvider(id, projectPath),
     onSuccess: (result, id) => {
-      setTestResults((prev) => ({ ...prev, [id]: result }));
+      setHealthResults((prev) => ({ ...prev, [id]: result }));
     },
     onError: (err, id) => {
-      setTestResults((prev) => ({
+      setHealthResults((prev) => ({
         ...prev,
-        [id]: { ok: false, latency_ms: 0, error: errorMessage(err) },
+        [id]: {
+          ok: false,
+          source: { kind: "none", id: "" },
+          shadow: {
+            detected: true,
+            requested_id: id,
+            actual_source: { kind: "none", id: "" },
+          },
+          ttft_ms: null,
+          total_ms: 0,
+          http_status: null,
+          error: errorMessage(err),
+          model_echo: null,
+        },
       }));
     },
   });
@@ -568,8 +588,8 @@ export function AccountModelSettings({
                 key={provider.id}
                 provider={provider}
                 isActive={provider.id === activeProviderId}
-                testResult={testResults[provider.id]}
-                testing={testMutation.isPending && testMutation.variables === provider.id}
+                healthResult={healthResults[provider.id]}
+                testing={healthMutation.isPending && healthMutation.variables === provider.id}
                 activating={
                   activateMutation.isPending && activateMutation.variables === provider.id
                 }
@@ -580,7 +600,7 @@ export function AccountModelSettings({
                 }}
                 onTest={() => {
                   setProviderError(null);
-                  testMutation.mutate(provider.id);
+                  healthMutation.mutate(provider.id);
                 }}
                 onEdit={() => {
                   setProviderError(null);
@@ -845,7 +865,7 @@ function OfficialAccountRow({
 function ProviderCompactRow({
   provider,
   isActive,
-  testResult,
+  healthResult,
   testing,
   activating,
   deleting,
@@ -856,7 +876,7 @@ function ProviderCompactRow({
 }: {
   provider: DesktopProviderSummary;
   isActive: boolean;
-  testResult?: ProviderTestResult;
+  healthResult?: HealthCheckResult;
   testing: boolean;
   activating: boolean;
   deleting: boolean;
@@ -890,7 +910,7 @@ function ProviderCompactRow({
           <Pill tone="tech">
             {provider.kind === "anthropic" ? "Anthropic" : "OpenAI 兼容"}
           </Pill>
-          <TestResultPill result={testResult} testing={testing} />
+          <HealthCheckPill result={healthResult} testing={testing} />
         </div>
         <p className="account-model-provider-meta">
           {provider.model} · 输出上限 {provider.max_tokens} ·{" "}
@@ -1131,18 +1151,54 @@ function Pill({
   return <span className={`account-model-pill account-model-pill--${tone}`}>{children}</span>;
 }
 
-function TestResultPill({
+/**
+ * E22 — compact pill for the AccountModelSettings provider row.
+ * Surfaces the same health-check shape as MultiProviderSettings's
+ * `HealthCheckBadge` but in a smaller form factor (one or two pills
+ * instead of a multi-row block — this surface is space-constrained).
+ *
+ * On success: shows TTFT + total latency.
+ * On shadow: shows ⚠️ pill with the resolved source as title (full
+ * fix hint lives in the multi-provider badge; here we direct users
+ * to "see Settings → 账户与模型 → 高级" via tooltip).
+ */
+function HealthCheckPill({
   result,
   testing,
 }: {
-  result?: ProviderTestResult;
+  result?: HealthCheckResult;
   testing: boolean;
 }) {
   if (testing) {
-    return <Pill tone="idle">测试中</Pill>;
+    return <Pill tone="idle">检查中</Pill>;
   }
   if (!result) return null;
-  return <Pill tone={result.ok ? "active" : "warning"}>{result.ok ? `${result.latency_ms}ms` : "失败"}</Pill>;
+  const showShadow =
+    result.shadow.detected &&
+    result.source.kind !== "none" &&
+    result.source.kind !== "unknown";
+  return (
+    <>
+      <Pill tone={result.ok ? "active" : "warning"}>
+        {result.ok
+          ? result.ttft_ms !== null
+            ? `首字 ${result.ttft_ms}ms`
+            : `${result.total_ms}ms`
+          : result.http_status !== null
+            ? `HTTP ${result.http_status}`
+            : "失败"}
+      </Pill>
+      {showShadow && (
+        <Pill tone="warning">
+          <span
+            title={`chat 实际会用 ${result.shadow.actual_source.kind}（${result.shadow.actual_source.id}）— 不是你测的 ${result.shadow.requested_id}`}
+          >
+            ⚠️ 被 {result.shadow.actual_source.kind} 抢用
+          </span>
+        </Pill>
+      )}
+    </>
+  );
 }
 
 function IconButton({

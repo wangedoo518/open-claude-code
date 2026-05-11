@@ -30,14 +30,14 @@ import {
   activateProvider,
   deleteProvider,
   getSettings,
+  healthCheckProvider,
   listProviders,
   listProviderTemplates,
-  testProvider,
   upsertProvider,
   type DesktopProviderSummary,
   type DesktopProviderTemplate,
+  type HealthCheckResult,
   type ProviderKind,
-  type ProviderTestResult,
 } from "@/api/desktop/settings";
 
 /**
@@ -63,9 +63,12 @@ export function MultiProviderSettings() {
   const [pendingDelete, setPendingDelete] =
     useState<DesktopProviderSummary | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
-  // Latest test result per provider id (ephemeral — not persisted)
-  const [testResults, setTestResults] = useState<
-    Record<string, ProviderTestResult>
+  // E22 — latest health-check result per provider id. Replaces the
+  // earlier shallow `testProvider` (cheap ping); the health check
+  // runs the SAME resolver + streaming chat path production uses,
+  // so its result actually predicts whether chat will work.
+  const [healthResults, setHealthResults] = useState<
+    Record<string, HealthCheckResult>
   >({});
 
   // P1-3 — canonical project_path plumbing. Must match the source of
@@ -131,16 +134,33 @@ export function MultiProviderSettings() {
     onError: (err) => setFlashError(errorMessage(err)),
   });
 
-  const testMutation = useMutation({
-    mutationFn: (id: string) => testProvider(id, projectPath),
+  // E22 — health check mutation. The handler returns 200 with a
+  // structured payload even when the underlying chat call fails
+  // (the `ok` field in the body distinguishes), so onError fires
+  // only for true network/server faults.
+  const healthMutation = useMutation({
+    mutationFn: (id: string) => healthCheckProvider(id, projectPath),
     onSuccess: (result, id) => {
-      setTestResults((prev) => ({ ...prev, [id]: result }));
+      setHealthResults((prev) => ({ ...prev, [id]: result }));
     },
     onError: (err, id) => {
-      // Store a synthetic failed result so the card can still render red state.
-      setTestResults((prev) => ({
+      // Synthetic failed result so the card can still render red state.
+      setHealthResults((prev) => ({
         ...prev,
-        [id]: { ok: false, latency_ms: 0, error: errorMessage(err) },
+        [id]: {
+          ok: false,
+          source: { kind: "none", id: "" },
+          shadow: {
+            detected: true,
+            requested_id: id,
+            actual_source: { kind: "none", id: "" },
+          },
+          ttft_ms: null,
+          total_ms: 0,
+          http_status: null,
+          error: errorMessage(err),
+          model_echo: null,
+        },
       }));
     },
   });
@@ -188,7 +208,7 @@ export function MultiProviderSettings() {
               key={p.id}
               provider={p}
               isActive={p.id === activeId}
-              testResult={testResults[p.id]}
+              healthResult={healthResults[p.id]}
               onActivate={() => {
                 setFlashError(null);
                 activateMutation.mutate(p.id);
@@ -204,7 +224,7 @@ export function MultiProviderSettings() {
               }}
               onTest={() => {
                 setFlashError(null);
-                testMutation.mutate(p.id);
+                healthMutation.mutate(p.id);
               }}
               activating={
                 activateMutation.isPending &&
@@ -215,7 +235,7 @@ export function MultiProviderSettings() {
                 deleteMutation.variables === p.id
               }
               testing={
-                testMutation.isPending && testMutation.variables === p.id
+                healthMutation.isPending && healthMutation.variables === p.id
               }
             />
           ))}
@@ -317,7 +337,7 @@ function EmptyState({ onAddClick }: { onAddClick: () => void }) {
 function ProviderCard({
   provider,
   isActive,
-  testResult,
+  healthResult,
   onActivate,
   onDelete,
   onEdit,
@@ -328,7 +348,7 @@ function ProviderCard({
 }: {
   provider: DesktopProviderSummary;
   isActive: boolean;
-  testResult: ProviderTestResult | undefined;
+  healthResult: HealthCheckResult | undefined;
   onActivate: () => void;
   onDelete: () => void;
   onEdit: () => void;
@@ -361,7 +381,7 @@ function ProviderCard({
                 ACTIVE
               </span>
             )}
-            <TestResultBadge result={testResult} testing={testing} />
+            <HealthCheckBadge result={healthResult} testing={testing} />
           </div>
           <div className="text-caption text-muted-foreground">
             <code className="rounded bg-muted px-1 py-0.5">{provider.id}</code>
@@ -398,14 +418,18 @@ function ProviderCard({
             variant="outline"
             onClick={onTest}
             disabled={testing}
-            title="发送一个极小的 ping 请求（约 20 tokens），验证 API key / base_url / 模型名是否有效。"
+            title={
+              "运行真实的健康检查：走和 chat 一样的 resolve_runtime_credentials → " +
+              "流式 chat-completion → 测 TTFT。会显示 chat 实际会用的 credential 来源；" +
+              "如果别的 source（OAuth token / env var）抢了这条 provider，会高亮警告。"
+            }
           >
             {testing ? (
               <Loader2 className="mr-1 size-3 animate-spin" />
             ) : (
               <Zap className="mr-1 size-3" />
             )}
-            测试
+            健康检查
           </Button>
           <Button size="sm" variant="ghost" onClick={onEdit}>
             <Pencil className="mr-1 size-3" />
@@ -431,56 +455,168 @@ function ProviderCard({
   );
 }
 
-function TestResultBadge({
+/**
+ * Slice E22.3 — surfaces the new comprehensive_probe result with
+ * three things the legacy TestResultBadge couldn't show:
+ *   - the resolved credential source (so the user sees which path
+ *     chat will actually use, not just "the providers.json entry
+ *     I tested"),
+ *   - first-token latency (TTFT), which is what users perceive as
+ *     responsiveness — total latency includes streaming-tail time
+ *     that doesn't matter for UX,
+ *   - shadow detection: the resolver picked a different source
+ *     than the entry the user asked to test (e.g. a stale
+ *     ~/.codex/auth.json shadowing a freshly configured DeepSeek
+ *     entry, which is the trap E22 is designed to surface).
+ *
+ * Renders as a row of pill badges + an inline amber warning when
+ * a shadow is detected. Per-source actionable hints in
+ * `shadowFixHint` point at the file/env to fix.
+ */
+function HealthCheckBadge({
   result,
   testing,
 }: {
-  result: ProviderTestResult | undefined;
+  result: HealthCheckResult | undefined;
   testing: boolean;
 }) {
   if (testing) {
     return (
       <span className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-caption text-muted-foreground">
         <Loader2 className="size-3 animate-spin" />
-        测试中…
+        检查中… (通常 5–15 秒，最多 60 秒)
       </span>
     );
   }
   if (!result) return null;
-  if (result.ok) {
-    return (
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {result.ok ? (
+        <span
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption font-semibold"
+          style={{
+            backgroundColor:
+              "color-mix(in srgb, var(--color-success) 12%, transparent)",
+            color: "var(--color-success)",
+          }}
+          title={
+            result.model_echo
+              ? `模型回显：${result.model_echo}`
+              : "chat 路径流式调用成功"
+          }
+        >
+          <CheckCircle className="size-3" />
+          通
+          {result.ttft_ms !== null && (
+            <span className="font-normal opacity-80">
+              · 首字 {result.ttft_ms}ms
+            </span>
+          )}
+          <span className="font-normal opacity-80">
+            · 总 {result.total_ms}ms
+          </span>
+        </span>
+      ) : (
+        <span
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption font-semibold"
+          style={{
+            backgroundColor:
+              "color-mix(in srgb, var(--color-error) 12%, transparent)",
+            color: "var(--color-error)",
+          }}
+          title={
+            result.error
+              ? `${result.error}${result.http_status !== null ? ` (HTTP ${result.http_status})` : ""}`
+              : "健康检查失败"
+          }
+        >
+          <XCircle className="size-3" />
+          不通
+          {result.http_status !== null && (
+            <span className="font-normal opacity-80">
+              · HTTP {result.http_status}
+            </span>
+          )}
+        </span>
+      )}
       <span
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption font-semibold"
-        style={{
-          backgroundColor:
-            "color-mix(in srgb, var(--color-success) 12%, transparent)",
-          color: "var(--color-success)",
-        }}
-        title={
-          result.model_echo
-            ? `模型回显：${result.model_echo}`
-            : "连接测试成功"
-        }
+        className="rounded bg-muted px-1.5 py-0.5 text-caption text-muted-foreground"
+        title="chat 实际会用的 credential 来源（resolve_runtime_credentials 优先级链选中的那个）"
       >
-        <CheckCircle className="size-3" />
-        {result.latency_ms}ms
+        来源: {sourceLabel(result.source)}
       </span>
-    );
-  }
+      {result.shadow.detected &&
+        result.source.kind !== "none" &&
+        result.source.kind !== "unknown" && (
+          // Review fix (C/E22.3) — also exclude "unknown" so a future
+          // managed-auth source not yet in the classifier doesn't
+          // produce a spurious "shadow" warning until the classifier
+          // catches up.
+          <ShadowWarning shadow={result.shadow} />
+        )}
+      {!result.ok && result.error && (
+        <details className="text-caption text-muted-foreground">
+          <summary className="cursor-pointer">详细错误</summary>
+          <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted/40 p-2 text-[10px] leading-snug">
+            {result.error}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ShadowWarning({ shadow }: { shadow: HealthCheckResult["shadow"] }) {
+  // Review fix (F/E22.3) — drop the `#d97706` literal fallback;
+  // --color-warning is defined in both light + dark @theme blocks
+  // (per LR-4) so the fallback is dead code and would also disagree
+  // with the theme tokens if it ever fired.
   return (
     <span
-      className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption font-semibold"
+      className="flex items-start gap-1 rounded border px-1.5 py-0.5 text-caption font-semibold"
       style={{
+        borderColor: "color-mix(in srgb, var(--color-warning) 35%, transparent)",
         backgroundColor:
-          "color-mix(in srgb, var(--color-error) 12%, transparent)",
-        color: "var(--color-error)",
+          "color-mix(in srgb, var(--color-warning) 10%, transparent)",
+        color: "var(--color-warning)",
       }}
-      title={result.error ?? "连接测试失败"}
+      title={`你测的是 ${shadow.requested_id}，但 chat 实际会走 ${sourceLabel(shadow.actual_source)}。${shadowFixHint(shadow.actual_source.kind)}`}
     >
-      <XCircle className="size-3" />
-      失败
+      ⚠️ 配了但没在用
     </span>
   );
+}
+
+function sourceLabel(source: HealthCheckResult["source"]): string {
+  switch (source.kind) {
+    case "providers_json":
+      return `providers.json:${source.id}`;
+    case "codex_oauth":
+      return "Codex OAuth (~/.codex/auth.json)";
+    case "qwen_oauth":
+      return "Qwen OAuth";
+    case "anthropic_env_or_settings":
+      return "ANTHROPIC_API_KEY / .claude/settings.json";
+    case "none":
+      return "(none)";
+    default:
+      return source.id || source.kind;
+  }
+}
+
+function shadowFixHint(actualKind: string): string {
+  switch (actualKind) {
+    case "codex_oauth":
+      return "去 ~/.codex/auth.json 删掉过期的 OAuth token，或在 Settings 里登出 OpenAI 账号。";
+    case "qwen_oauth":
+      return "在 Settings 里登出 Qwen Code 账号。";
+    case "anthropic_env_or_settings":
+      return "你设置了 ANTHROPIC_API_KEY 环境变量或 .claude/settings.json 里配了 direct_api_key — 取消其中之一。";
+    case "none":
+      return "没有可用的 credential — 配置一个 provider 或设置 ANTHROPIC_API_KEY。";
+    default:
+      return "检查环境变量、~/.claude/settings.json、~/.codex/auth.json。";
+  }
 }
 
 function ProviderForm({
