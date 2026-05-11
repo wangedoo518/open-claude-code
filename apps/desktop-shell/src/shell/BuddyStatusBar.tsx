@@ -74,27 +74,40 @@ export function BuddyStatusBar() {
       : "success";
 
   return (
+    // E25 — icon-only by default; full label on hover via title attr.
+    // Vault group (left) is global state (待处理 / Inbox / Git);
+    // session group (right) is current-context state. A 1px separator
+    // between them makes the visual grouping unambiguous.
+    // Per docs/desktop-shell/specs/2026-05-11-display-density-spec.md §4.
     <footer className="ds-status-bar" aria-label="Buddy 状态栏">
       <div className="ds-status-bar-left">
         <StatusItem
           icon={HeartPulse}
-          label={healthTone === "success" ? "外脑健康" : `待处理 ${pending + riskCount}`}
+          label={healthTone === "success" ? "外脑健康" : "待处理"}
+          count={healthTone === "success" ? undefined : pending + riskCount}
           tone={healthTone}
           to="/"
         />
         <StatusItem
           icon={Inbox}
-          label={`Inbox ${pending}`}
+          label="Inbox"
+          count={pending > 0 ? pending : undefined}
           tone={pending > 0 ? "warning" : "muted"}
           to="/inbox"
         />
         <StatusItem
           icon={GitBranch}
           label={gitLabel}
+          count={
+            git && git.git_available && git.initialized && git.dirty
+              ? git.changed_count
+              : undefined
+          }
           tone={gitTone}
           to="/connections#git"
         />
       </div>
+      <div aria-hidden="true" className="ds-status-bar-divider" />
       <div className="ds-status-bar-right">
         <StatusItem
           icon={PermissionIcon}
@@ -110,6 +123,7 @@ export function BuddyStatusBar() {
               ? `外部 AI ${activeExternalAiGrants} 授权`
               : "外部 AI 只读"
           }
+          count={activeExternalAiGrants > 0 ? activeExternalAiGrants : undefined}
           tone={activeExternalAiGrants > 0 ? "warning" : "muted"}
           to="/connections#external-ai"
         />
@@ -122,7 +136,8 @@ export function BuddyStatusBar() {
         {stats && (
           <StatusItem
             icon={CheckCircle2}
-            label={`${stats.wiki_count} 页 / ${stats.raw_count} 素材`}
+            label={`${stats.wiki_count} 页 · ${stats.raw_count} 素材`}
+            count={stats.wiki_count}
             tone="muted"
             to="/wiki"
           />
@@ -158,20 +173,30 @@ function gitStatusLabel(
 function StatusItem({
   icon: Icon,
   label,
+  count,
   tone,
   style,
   to,
 }: {
   icon: LucideIcon;
   label: string;
+  /** Optional inline count badge (kept visible alongside the icon
+   * because counts are the primary glanceable signal). */
+  count?: number;
   tone: "success" | "warning" | "muted";
   style?: CSSProperties;
   to?: string;
 }) {
+  // E25 — icon + optional count visible by default; full text label
+  // shown only on hover via the title attribute. Keeps the bar
+  // readable at a glance without 8 simultaneous text strings.
+  const tooltip = count !== undefined ? `${label} · ${count}` : label;
   const content = (
     <>
-      <Icon className="size-3" />
-      <span>{label}</span>
+      <Icon className="size-3.5" />
+      {count !== undefined && (
+        <span className="ds-status-item-count">{count}</span>
+      )}
     </>
   );
   if (to) {
@@ -181,14 +206,21 @@ function StatusItem({
         data-tone={tone}
         style={style}
         to={to}
-        title={label}
+        title={tooltip}
+        aria-label={tooltip}
       >
         {content}
       </Link>
     );
   }
   return (
-    <span className="ds-status-item" data-tone={tone} style={style}>
+    <span
+      className="ds-status-item"
+      data-tone={tone}
+      style={style}
+      title={tooltip}
+      aria-label={tooltip}
+    >
       {content}
     </span>
   );

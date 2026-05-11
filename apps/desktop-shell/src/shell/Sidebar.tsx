@@ -96,13 +96,19 @@ export function AppSidebar() {
             />
           ))}
           <div className="ds-rail-separator" aria-hidden="true" />
-          {tuneItems.map((route) => (
-            <RailItem
-              key={route.key}
-              route={route}
-              active={isActive(location.pathname, route.path)}
-            />
-          ))}
+          {/* E26 — tune-group icons get muted opacity by default to
+              signal "secondary path"; restored on hover/active. The
+              separator above is the visual delimiter between daily
+              and tune. Per specs/2026-05-11-display-density-spec.md §5. */}
+          <div className="ds-rail-group" data-rail-group="tune">
+            {tuneItems.map((route) => (
+              <RailItem
+                key={route.key}
+                route={route}
+                active={isActive(location.pathname, route.path)}
+              />
+            ))}
+          </div>
         </div>
         <div className="ds-rail-spacer" />
         {/* Rail footer · just Settings. The pre-DS1.1 `WeChatStatusBadge`
