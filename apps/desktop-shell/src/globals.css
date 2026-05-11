@@ -12,7 +12,13 @@
   --font-size-body-sm: 12px;   /* text-body-sm — buttons, settings rows */
   --font-size-body: 13px;      /* text-body   — primary content text */
   --font-size-subhead: 14px;   /* text-subhead — section headings */
-  --font-size-head: 15px;      /* text-head   — page titles */
+  --font-size-head: 15px;      /* text-head   — small page titles */
+  /* NOTE (post-E27 review): the --font-size-* namespace above does
+     NOT generate Tailwind 4 utility classes (Tailwind 4 reads
+     --text-{name} for that). Keeping the variables as raw CSS
+     custom properties for code that references them via
+     `var(--font-size-foo)`, but new typography utilities are
+     defined as plain CSS rules below — see .text-page-title. */
 
   /* ── ClawWiki v3 warm palette (OkLCH, Round-1) ──────────────────
    * Default = light mode. Parchment bg, Ivory cards (never pure white).
@@ -87,6 +93,21 @@
   --color-terminal-user: oklch(0.6634 0.1531 248.9);        /* Focus Blue */
   --color-terminal-tool: oklch(0.6 0.08 60);                /* warm amber (Claude palette) */
   --color-terminal-error: oklch(0.5191 0.1669 25.1);        /* Crimson */
+}
+
+/* E27 — semantic page-level title utility. Bundles size + weight +
+   color + line-height so every page-level H1 reads identically.
+   Plain CSS (NOT @theme) because Tailwind 4 only generates utilities
+   from --text-{name} tokens, and even then never bundles weight or
+   color. PR review check:
+     grep -rnE "text-\[[0-9]" apps/desktop-shell/src/ | grep -E "h1\|h2"
+     → must not show new arbitrary-value page titles after this lands.
+   See specs/2026-05-11-display-density-spec.md §2. */
+.text-page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-foreground);
+  line-height: 1.3;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -3142,10 +3163,28 @@
   padding: 0;
 }
 .ds-rail-separator {
-  width: 24px;
+  /* E26 — bumped width + opacity so the visual delimiter between
+     daily and tune sections actually reads at a glance. Was 24px /
+     12% — too subtle on the warm Ivory rail. */
+  width: 32px;
   height: 1px;
-  margin: 6px 0;
-  background: rgba(44, 44, 42, 0.12);
+  margin: 8px 0;
+  background: color-mix(in srgb, var(--color-border) 100%, transparent);
+  opacity: 0.6;
+}
+
+/* E26 — tune-group container; muted-by-default so daily icons
+   visually dominate. Hover/active restores full opacity. */
+.ds-rail-group {
+  display: contents;
+}
+.ds-rail-group[data-rail-group="tune"] .ds-rail-btn {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+.ds-rail-group[data-rail-group="tune"] .ds-rail-btn:hover,
+.ds-rail-group[data-rail-group="tune"] .ds-rail-btn[data-active="true"] {
+  opacity: 1;
 }
 .ds-rail-btn {
   display: flex;
@@ -3364,11 +3403,13 @@
 
 .ds-status-bar {
   display: flex;
-  height: 30px;
+  height: 28px;
   flex-shrink: 0;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  /* E25 — switched from space-between to flex-start so the
+     divider sits visually between the two groups (instead of
+     hugging the right edge with a gap collapse). */
+  gap: 8px;
   border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
   background: color-mix(in srgb, var(--color-card) 92%, var(--color-background));
   padding: 0 10px;
@@ -3376,22 +3417,53 @@
   font-size: 11px;
 }
 
-.ds-status-bar-left,
-.ds-status-bar-right {
+.ds-status-bar-left {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+}
+
+.ds-status-bar-right {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* E25 — vertical 1px separator between vault group (left) and
+   session group (right). Sized to align with icon centerline. */
+.ds-status-bar-divider {
+  width: 1px;
+  height: 14px;
+  background: color-mix(in srgb, var(--color-border) 80%, transparent);
+  align-self: center;
+  margin: 0 4px;
 }
 
 .ds-status-item {
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   border-radius: 4px;
-  padding: 2px 3px;
+  padding: 3px 5px;
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+/* E25 — small count badge next to the icon (the only text shown
+   inline by default; full label is hover-only via title attr). */
+.ds-status-item-count {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 a.ds-status-item {
@@ -3399,7 +3471,7 @@ a.ds-status-item {
 }
 
 a.ds-status-item:hover {
-  background: color-mix(in srgb, currentColor 9%, transparent);
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .ds-status-item[data-tone="success"] {
