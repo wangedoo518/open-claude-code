@@ -46,7 +46,7 @@ function SpecialFilePage({ kind }: { kind: "index" | "log" }) {
 
   return (
     <div className="mx-auto max-w-[720px] px-8 py-6">
-      <h1 className="mb-4 text-[24px] leading-[1.3] text-foreground">
+      <h1 className="mb-4 text-page-title leading-[1.3]">
         {kind === "index" ? "Wiki" : "Changelog"}
       </h1>
       {content ? (

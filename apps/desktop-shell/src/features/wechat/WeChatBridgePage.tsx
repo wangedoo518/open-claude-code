@@ -269,8 +269,8 @@ export function WeChatBridgePage() {
           连接外脑 · 微信
         </div>
         <h1
-          className="mt-1 text-[28px] leading-tight text-foreground"
-          style={{ fontFamily: "var(--font-serif, \"Lora\", Georgia, serif)", fontWeight: 500, letterSpacing: "-0.2px" }}
+          className="mt-1 text-page-title leading-tight"
+          style={{ fontFamily: "var(--font-serif, \"Lora\", Georgia, serif)", letterSpacing: "-0.2px" }}
         >
           让微信里的内容自动流进来
         </h1>

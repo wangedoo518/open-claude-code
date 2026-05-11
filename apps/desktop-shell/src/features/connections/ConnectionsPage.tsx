@@ -522,7 +522,7 @@ export function ConnectionsPage() {
             <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
               Connections
             </div>
-            <h1 className="mt-1 text-[22px] font-semibold tracking-normal">
+            <h1 className="mt-1 text-page-title tracking-normal">
               连接
             </h1>
             <p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted-foreground">

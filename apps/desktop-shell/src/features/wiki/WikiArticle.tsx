@@ -471,7 +471,7 @@ export function WikiArticle({ slug }: WikiArticleProps) {
       <div className="mx-auto max-w-[960px] px-8 py-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-[22px] leading-[1.3] text-[var(--color-foreground)]">
+            <h1 className="text-page-title leading-[1.3]">
               {summary.title}
             </h1>
             <p className="mt-1 text-[12px] text-muted-foreground">
@@ -596,7 +596,7 @@ export function WikiArticle({ slug }: WikiArticleProps) {
   return (
     <div className="mx-auto max-w-[720px] px-8 py-6">
       {/* Title — component-spec.md §3.2 */}
-      <h1 className="mb-2 text-[24px] leading-[1.3] text-[var(--color-foreground)]">
+      <h1 className="mb-2 text-page-title leading-[1.3]">
         {summary.title}
       </h1>
 
