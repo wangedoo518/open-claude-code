@@ -43,6 +43,11 @@ import {
 } from "./entropy-pulse";
 import { RoiPulsePanel } from "./RoiPulsePanel";
 import type { RoiPageSummary } from "./roi-pulse";
+import { Sparkline } from "@/components/Sparkline";
+import { bucketInboxByDay } from "./inbox-trend";
+import { categorizeAction } from "./action-category";
+import { pickObservation } from "./today-observation";
+import { TodayObservationCard } from "./TodayObservationCard";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const EXPRESSIBLE_CATEGORIES = new Set(["concept", "people", "topic", "compare"]);
@@ -154,6 +159,18 @@ export function DashboardPage() {
   }, [pagesQuery.data?.pages]);
 
   const pendingInbox = inboxQuery.data?.pending_count ?? 0;
+  // E28.1 — 7-day inbox trend for the compact stat row sparkline.
+  // Bucketing happens client-side from existing inbox-list data —
+  // no extra query, no backend dep. Recomputes only when inbox
+  // entries array reference changes (React Query refetch swap).
+  const inboxTrend = useMemo(
+    () =>
+      bucketInboxByDay(inboxQuery.data?.entries ?? [], {
+        now: Date.now(),
+        days: 7,
+      }),
+    [inboxQuery.data?.entries],
+  );
   // E23 — `stats` was used by the deleted MiniStat row at the page
   // bottom; its content (wiki_count / raw_count) is now surfaced
   // by the StatusBar instead. Keep the query firing because other
@@ -187,6 +204,34 @@ export function DashboardPage() {
     [pagesQuery.data?.pages, patrol],
   );
   const lifecyclePatrolCount = countPatrolLifecycleSuggestions(patrol);
+  // E28.3 — single in-context observation surfaced as a hero card
+  // between the page header and Top 3 actions. Rule-driven via
+  // pickObservation; new observation kinds = append to its
+  // OBSERVATIONS table. recentExpressions.length is an
+  // approximation (top-3 by created_at desc) but good enough for
+  // the binary "express-streak vs no-export" branch.
+  const observation = useMemo(
+    () =>
+      pickObservation({
+        now: Date.now(),
+        pendingInbox,
+        gitDirty: Boolean(git?.dirty),
+        gitChangedCount: git?.changed_count ?? 0,
+        lastGitCommitMs: latestGitAudit?.timestamp_ms ?? null,
+        lifecyclePatrolCount,
+        recentExpressionCount7d: recentExpressions.length,
+        totalPages: pagesQuery.data?.pages?.length ?? 0,
+      }),
+    [
+      pendingInbox,
+      git?.dirty,
+      git?.changed_count,
+      latestGitAudit?.timestamp_ms,
+      lifecyclePatrolCount,
+      recentExpressions.length,
+      pagesQuery.data?.pages?.length,
+    ],
+  );
   const entropyReviewCount = entropyPulse.reviewToday.length;
   const activeExternalAiGrants =
     externalAiQuery.data?.grants.filter((grant) => grant.enabled).length ?? 0;
@@ -404,6 +449,13 @@ export function DashboardPage() {
           </div>
         )}
 
+        {/* E28.3 — single in-context "今日观察" hero card. Sits
+            between header and Top 3 actions; gives the page a
+            visual anchor and reads "today's reality" before the
+            action list. Per docs/desktop-shell/plans/
+            2026-05-11-pulse-visual-variety-plan.md §E28.3. */}
+        <TodayObservationCard observation={observation} hideDefault={false} />
+
         {/* §6.1 promotion #1: Top 3 actions move from middle of page
             to position 2 (right after header). Full width, primary
             visual weight. */}
@@ -421,26 +473,53 @@ export function DashboardPage() {
               as Top-3 #1 looked like two competing primary entries
               on empty Vault. Skip the first row so the "Top 3" list
               always reads "what else can I do" — never duplicates
-              the hero. Numbering offsets accordingly.
+              the hero. Numbering starts at 1 because the hero CTA
+              is a button (not a numbered item) — was `idx + 2`
+              before E28 review, which left the user staring at "2"
+              and "3" with no "1" anywhere on the page (E28 review).
             */}
-            {topActions.slice(1).map((action, idx) => (
-              <Link
-                key={`${action.href}-${action.label}`}
-                to={action.href}
-                className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2.5 text-[13px] transition-colors hover:border-primary/40 hover:bg-muted/30"
-              >
-                <span className="flex min-w-0 items-center gap-3">
+            {topActions.slice(1).map((action, idx) => {
+              // E28.2 — each row gets a category icon + tone-tinted
+              // 3px left bar so the eye reads "kind of action" not
+              // "yet another text row". Tones come from the warm
+              // palette (terracotta / warning gold / success green
+              // / muted gray) — never blue or pink.
+              const category = categorizeAction(action.href);
+              const Icon = category.icon;
+              return (
+                <Link
+                  key={`${action.href}-${action.label}`}
+                  to={action.href}
+                  className="group relative flex items-center justify-between gap-3 overflow-hidden rounded-md border border-border/60 bg-background py-2.5 pl-4 pr-3 text-[13px] transition-colors hover:border-primary/40 hover:bg-muted/30"
+                >
                   <span
-                    className="grid size-6 shrink-0 place-items-center rounded bg-muted text-[11px] text-muted-foreground"
                     aria-hidden="true"
-                  >
-                    {idx + 2}
+                    className="absolute inset-y-0 left-0 w-[3px]"
+                    style={{
+                      backgroundColor: `color-mix(in srgb, var(--${category.tone}) 70%, transparent)`,
+                    }}
+                  />
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span
+                      className="grid size-6 shrink-0 place-items-center rounded text-[11px] text-muted-foreground"
+                      style={{
+                        backgroundColor: `color-mix(in srgb, var(--${category.tone}) 12%, transparent)`,
+                      }}
+                      aria-hidden="true"
+                    >
+                      {idx + 1}
+                    </span>
+                    <Icon
+                      className="size-3.5 shrink-0"
+                      style={{ color: `var(--${category.tone})` }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{action.label}</span>
                   </span>
-                  <span className="truncate">{action.label}</span>
-                </span>
-                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
-              </Link>
-            ))}
+                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              );
+            })}
           </div>
         </section>
 
@@ -458,6 +537,15 @@ export function DashboardPage() {
               {pendingInbox}
             </span>
             <span>待审阅</span>
+            {/* E28.1 — 7-day trend sparkline. 48×14 fits inline
+                without bumping the row height. Renders nothing on
+                empty data (component-level guard). */}
+            <Sparkline
+              data={inboxTrend}
+              width={48}
+              height={14}
+              ariaLabel="过去 7 天 inbox 趋势"
+            />
             {pendingInbox > 0 && (
               <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
                 需要处理
