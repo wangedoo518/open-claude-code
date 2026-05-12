@@ -3836,3 +3836,190 @@ pub(crate) async fn delete_wiki_raw_handler(
     })?;
     Ok(Json(serde_json::json!({ "ok": true, "deleted": id })))
 }
+
+// ── E29 Phase A · drag-drop upload ────────────────────────────────────
+//
+// `POST /api/wiki/raw/upload` — multipart file ingest used by the
+// Inbox drop zone. Accepts ONE field named `file` (any binary) plus
+// optional `source` / `origin` text fields. Plain `.txt` / `.md`
+// shortcut to a UTF-8 read so Python isn't required; everything else
+// is dispatched to `wiki_ingest::markitdown` (28+ formats via the
+// `markitdown_worker.py` Python sidecar — falls back with a clear
+// error if Python or the `markitdown` package isn't installed).
+//
+// Reuses the exact same `write_raw_entry` + `append_new_raw_task` +
+// `fire_inbox_notify` triple that `ingest_wiki_raw_handler` uses for
+// paste/wechat-text, so the resulting RawEntry is indistinguishable
+// from other ingest paths downstream.
+
+/// Strip path traversal + control chars from a user-provided filename
+/// before using it as part of the temp-file path. Keeps the original
+/// filename intact in the entry's frontmatter via the slug seed.
+fn sanitize_upload_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+pub(crate) async fn upload_wiki_raw_handler(
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // ── 1. Parse multipart fields ─────────────────────────────────
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut file_name: Option<String> = None;
+    let mut source = "drag-drop".to_string();
+    let mut origin = "desktop drag-drop".to_string();
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("malformed multipart: {e}"),
+            }),
+        )
+    })? {
+        match field.name().unwrap_or("") {
+            "file" => {
+                file_name = field.file_name().map(|s| s.to_string());
+                let bytes = field.bytes().await.map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: format!("read upload body: {e}"),
+                        }),
+                    )
+                })?;
+                file_bytes = Some(bytes.to_vec());
+            }
+            "source" => {
+                if let Ok(s) = field.text().await {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        source = trimmed.to_string();
+                    }
+                }
+            }
+            "origin" => {
+                if let Ok(s) = field.text().await {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        origin = trimmed.to_string();
+                    }
+                }
+            }
+            _ => {
+                // Drain unknown fields so the multipart stream
+                // advances cleanly.
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    let bytes = file_bytes.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "missing 'file' field in multipart body".to_string(),
+            }),
+        )
+    })?;
+    let file_name = file_name.unwrap_or_else(|| "unnamed.bin".to_string());
+
+    if bytes.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "uploaded file is empty".to_string(),
+            }),
+        ));
+    }
+
+    // ── 2. Stash bytes to a temp file (extractors take Path) ─────
+    let stash_path = std::env::temp_dir().join(format!(
+        "buddy-upload-{}-{}",
+        std::process::id(),
+        sanitize_upload_filename(&file_name),
+    ));
+    std::fs::write(&stash_path, &bytes).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("write temp file: {e}"),
+            }),
+        )
+    })?;
+
+    // ── 3. Extract: plain-text shortcut, else markitdown ─────────
+    let body = {
+        let lower = file_name.to_lowercase();
+        let res: Result<String, String> = if lower.ends_with(".txt") || lower.ends_with(".md") {
+            String::from_utf8(bytes.clone()).map_err(|e| format!("not UTF-8 text: {e}"))
+        } else {
+            wiki_ingest::markitdown::extract_via_markitdown(&stash_path)
+                .await
+                .map(|r| {
+                    if r.title.trim().is_empty() {
+                        r.body
+                    } else {
+                        format!("# {}\n\n{}", r.title, r.body)
+                    }
+                })
+                .map_err(|e| format!("markitdown: {e}"))
+        };
+        // Best-effort cleanup; ignore failure (Windows may briefly
+        // hold the file).
+        let _ = std::fs::remove_file(&stash_path);
+        res.map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: format!("{e} (file: {file_name})"),
+                }),
+            )
+        })?
+    };
+
+    if body.trim().is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse {
+                error: format!("extracted body is empty (file: {file_name})"),
+            }),
+        ));
+    }
+
+    // ── 4. Persist via wiki_store ─────────────────────────────────
+    let paths = resolve_wiki_root_for_handler()?;
+    let slug_seed = format!("📎 {file_name}");
+    let frontmatter = wiki_store::RawFrontmatter::for_paste(&source, None);
+    let entry = wiki_store::write_raw_entry(&paths, &source, &slug_seed, &body, &frontmatter)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("write_raw_entry failed: {e}"),
+                }),
+            )
+        })?;
+
+    // ── 5. Inbox bookkeeping — mirror the paste handler ──────────
+    if let Err(err) = wiki_store::append_new_raw_task(&paths, &entry, &origin) {
+        eprintln!(
+            "[warn] raw entry {} written but inbox append failed: {err}",
+            entry.id
+        );
+    } else {
+        fire_inbox_notify();
+    }
+
+    Ok(Json(serde_json::json!({
+        "raw_entry": raw_entry_to_json(&entry),
+        "file_name": file_name,
+    })))
+}

@@ -6,6 +6,15 @@ pub(crate) fn install(router: Router<AppState>) -> Router<AppState> {
             "/api/wiki/raw",
             get(list_wiki_raw_handler).post(ingest_wiki_raw_handler),
         )
+        // E29 Phase A — drag-drop multipart upload. axum's default body
+        // limit is 2 MiB which would reject medium-sized PDFs/DOCX; lift
+        // to 50 MiB (markitdown itself caps at 10 MiB Python stdout, so
+        // a 50 MiB binary leaves enough headroom for the extracted text).
+        .route(
+            "/api/wiki/raw/upload",
+            post(upload_wiki_raw_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
         .route(
             "/api/wiki/raw/{id}",
             get(get_wiki_raw_handler).delete(delete_wiki_raw_handler),
