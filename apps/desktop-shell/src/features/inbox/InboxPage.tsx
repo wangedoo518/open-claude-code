@@ -143,7 +143,9 @@ export type IntelligentEntry = InboxEntry & {
   crossDomain: CrossDomainInference;
 };
 
-const inboxKeys = {
+// Exported so sibling components (e.g. InboxDropZone) can invalidate
+// the same query after a successful side-effect.
+export const inboxKeys = {
   list: () => ["wiki", "inbox", "list"] as const,
 };
 
