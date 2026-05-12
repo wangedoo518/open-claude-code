@@ -284,14 +284,20 @@ impl MessageHandler for DesktopAgentHandler {
         let user_text = match extract_first_text(&message) {
             Some(t) if !t.trim().is_empty() => t,
             _ => {
-                // Non-text message (image/voice/file). For Phase 2b we don't
-                // support these — reply with a hint and move on.
+                // Non-text message (file / image / voice / video). We don't
+                // attempt the iLink CDN download path — the protocol is not
+                // documented in this codebase and reverse-engineering via
+                // URL probing exhausted (see plan
+                // docs/desktop-shell/plans/2026-05-12-wechat-file-ingestion-plan.md
+                // for the gate findings). Instead, redirect the user to
+                // Buddy's native drag-drop ingest in the desktop Inbox,
+                // which handles 28+ file formats via markitdown.
                 let reply = build_text_reply(
                     &from_user_id,
                     &context_token,
-                    "（暂不支持非文本消息，请发送文字）",
+                    "（暂不支持微信直接发文件 —— 请把文件拖入 Buddy 桌面应用的 Inbox 区域，支持 PDF/DOCX/PPT/XLSX/图片/音视频 等格式）",
                 );
-                if let Err(e) = send_message_with_retry(client, reply, "non-text-reply").await {
+                if let Err(e) = send_message_with_retry(client, reply, "non-text-redirect").await {
                     eprintln!("[wechat agent] reply send failed: {e}");
                 }
                 return Ok(());
