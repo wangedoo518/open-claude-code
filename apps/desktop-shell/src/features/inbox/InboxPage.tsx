@@ -90,6 +90,7 @@ import { DuplicateGuardBanner } from "@/features/inbox/components/DuplicateGuard
 import { DuplicateGuardDialog } from "@/features/inbox/components/DuplicateGuardDialog";
 import { InboxLineageSummary } from "@/features/inbox/components/InboxLineageSummary";
 import { InboxInspector } from "@/features/inbox/components/InboxInspector";
+import { InboxDropZone } from "./InboxDropZone";
 import {
   computeQueueIntelligence,
   defaultLifecycleForEntropyGroup,
@@ -1135,6 +1136,13 @@ export function InboxPage() {
             label={gitMetric.label}
           />
         </section>
+
+        {/* E29 — drag-drop file ingest. Sits between metrics and the
+            entries list so it's discoverable but doesn't push the list
+            below the fold. */}
+        <div className="my-3">
+          <InboxDropZone />
+        </div>
 
         {focusState === "missing" && (
           <div className="inbox-redesign-banner">
