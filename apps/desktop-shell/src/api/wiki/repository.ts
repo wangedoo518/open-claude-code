@@ -127,6 +127,60 @@ export async function listInboxEntries(): Promise<InboxListResponse> {
 }
 
 /**
+ * E29 — response shape for `POST /api/wiki/raw/upload`.
+ */
+export interface UploadInboxFileResponse {
+  raw_entry: RawEntry;
+  file_name: string;
+}
+
+/**
+ * E29 — POST `/api/wiki/raw/upload` (multipart-form).
+ *
+ * Uploads ANY file (server-side dispatches to wiki_ingest::markitdown
+ * for the 28+ supported formats, with a UTF-8 shortcut for .txt/.md).
+ * Used by the Inbox drop zone. Returns the resulting RawEntry so the
+ * caller can refresh the inbox list optimistically.
+ *
+ * We bypass `fetchJson` because:
+ *   1. `Content-Type: multipart/form-data; boundary=...` must be set
+ *      by the browser, not us (boundary auto-generated from FormData).
+ *   2. Error envelope is `{ error }` rather than the generic
+ *      `{ error, details }` that `fetchJson` expects.
+ */
+export async function uploadInboxFile(
+  file: File,
+  opts?: { source?: string; origin?: string },
+): Promise<UploadInboxFileResponse> {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  if (opts?.source) fd.append("source", opts.source);
+  if (opts?.origin) fd.append("origin", opts.origin);
+
+  const base = await getDesktopApiBase();
+  const resp = await fetch(`${base}/api/wiki/raw/upload`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      const j = (await resp.json()) as { error?: string };
+      if (j.error) detail = j.error;
+    } catch {
+      try {
+        const txt = await resp.text();
+        if (txt) detail = txt;
+      } catch {
+        // keep generic
+      }
+    }
+    throw new Error(detail);
+  }
+  return (await resp.json()) as UploadInboxFileResponse;
+}
+
+/**
  * POST `/api/wiki/inbox/:id/resolve` — approve or reject a pending
  * task. Server validates the action and returns the updated entry.
  */
